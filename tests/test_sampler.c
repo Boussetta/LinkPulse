@@ -2,9 +2,9 @@
 
 #include "linkpulse/sampler.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 /* ---- table-driven fake data sources, shared by the scripted scenarios below ---- */
 
 #define MAX_FAKE_STEPS 8
