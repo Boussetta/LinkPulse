@@ -38,13 +38,10 @@ static int list_interfaces(void)
     for (size_t i = 0; i < list.count; ++i) {
         const lp_iface_t *iface = &list.items[i];
         char flags[64];
-        snprintf(flags, sizeof(flags), "%s%s%s%s",
-                 iface->is_up ? "up " : "down ",
-                 iface->is_loopback ? "loopback " : "",
-                 iface->is_virtual ? "virtual " : "",
+        snprintf(flags, sizeof(flags), "%s%s%s%s", iface->is_up ? "up " : "down ",
+                 iface->is_loopback ? "loopback " : "", iface->is_virtual ? "virtual " : "",
                  (have_active && strcmp(iface->name, active) == 0) ? "*default*" : "");
-        printf("%-32s %16llu %16llu  %s\n", iface->name,
-               (unsigned long long)iface->rx_bytes,
+        printf("%-32s %16llu %16llu  %s\n", iface->name, (unsigned long long)iface->rx_bytes,
                (unsigned long long)iface->tx_bytes, flags);
     }
 

@@ -12,8 +12,9 @@
 
 /* One network interface and its cumulative byte counters at a point in time. */
 typedef struct {
-    char name[LP_IFNAME_MAX];     /* OS identifier: "eth0" on Unix, or the adapter alias on Windows */
-    char description[LP_IFDESC_MAX]; /* human-readable name; may equal `name` depending on platform */
+    char name[LP_IFNAME_MAX]; /* OS identifier: "eth0" on Unix, or the adapter alias on Windows */
+    char description[LP_IFDESC_MAX]; /* human-readable name; may equal `name` depending on platform
+                                      */
     uint64_t rx_bytes;
     uint64_t tx_bytes;
     bool is_up;
