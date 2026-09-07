@@ -70,9 +70,17 @@ static void apply_line(lp_config_t *config, char *line)
     } else if (strcmp(key, "iface") == 0) {
         snprintf(config->iface_name, sizeof(config->iface_name), "%s", value);
     } else if (strcmp(key, "include_virtual") == 0) {
-        config->include_virtual = (strcmp(value, "1") == 0);
+        if (strcmp(value, "1") == 0) {
+            config->include_virtual = true;
+        } else if (strcmp(value, "0") == 0) {
+            config->include_virtual = false;
+        }
     } else if (strcmp(key, "use_bits") == 0) {
-        config->use_bits = (strcmp(value, "1") == 0);
+        if (strcmp(value, "1") == 0) {
+            config->use_bits = true;
+        } else if (strcmp(value, "0") == 0) {
+            config->use_bits = false;
+        }
     } else if (strcmp(key, "interval_ms") == 0) {
         char *end = NULL;
         const unsigned long parsed = strtoul(value, &end, 10);
