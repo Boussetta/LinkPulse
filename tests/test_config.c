@@ -38,15 +38,21 @@ static void test_parse_ignores_unknown_and_malformed(void)
 {
     lp_config_t config;
     lp_config_defaults(&config);
+    config.include_virtual = true;
+    config.use_bits = true;
 
     lp_config_parse(&config, "not_a_key_value_line\n"
                              "unknown_key=123\n"
                              "mode=bogus\n"
+                             "include_virtual=bogus\n"
+                             "use_bits=bogus\n"
                              "interval_ms=not_a_number\n"
                              "interval_ms=0\n");
 
-    /* All malformed/unknown: every field stays at its default. */
+    /* All malformed/unknown: known keys with malformed values must leave existing fields unchanged. */
     LP_CHECK(config.mode == LP_IFACE_SELECT_AUTO);
+    LP_CHECK(config.include_virtual);
+    LP_CHECK(config.use_bits);
     LP_CHECK(config.interval_ms == 1000);
 }
 
