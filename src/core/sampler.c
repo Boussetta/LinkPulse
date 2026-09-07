@@ -72,9 +72,10 @@ static lp_sampler_target_t *find_target(lp_sampler_t *sampler, const char *name)
    interfaces). Tracking each interface independently -- rather than diffing
    one aggregate sum -- means one interface's counter reset, or its
    appearance/disappearance, can never be masked by (or itself mask) another
-   interface's traffic. A brand-new interface, or one whose counters just
-   decreased (reset/replaced adapter), contributes 0 for this poll only --
-   never affects any other interface's contribution. */
+   interface's traffic. RX and TX are also judged independently of each other:
+   a brand-new interface, or a counter that just decreased (reset/replaced
+   adapter), contributes 0 for that direction only, this poll only -- it does
+   not suppress the other direction if that one is still counting up normally. */
 static void accumulate_target_delta(lp_sampler_t *sampler, const char *name, uint64_t current_rx,
                                     uint64_t current_tx, uint64_t *delta_rx, uint64_t *delta_tx)
 {
@@ -89,9 +90,13 @@ static void accumulate_target_delta(lp_sampler_t *sampler, const char *name, uin
     }
 
     entry->seen_this_poll = true;
-    if (entry->initialized && current_rx >= entry->rx_bytes && current_tx >= entry->tx_bytes) {
-        *delta_rx += current_rx - entry->rx_bytes;
-        *delta_tx += current_tx - entry->tx_bytes;
+    if (entry->initialized) {
+        if (current_rx >= entry->rx_bytes) {
+            *delta_rx += current_rx - entry->rx_bytes;
+        }
+        if (current_tx >= entry->tx_bytes) {
+            *delta_tx += current_tx - entry->tx_bytes;
+        }
     }
     entry->rx_bytes = current_rx;
     entry->tx_bytes = current_tx;

@@ -169,6 +169,29 @@ static void test_counter_reset_yields_zero_then_resumes(void)
     LP_CHECK(sample.tx_bytes_per_sec == 1000);
 }
 
+static void test_one_counter_reset_does_not_suppress_the_other(void)
+{
+    reset_fakes();
+    g_fake_snapshots[0] = (fake_snapshot_t){{{"eth0", 5000, 1000, false, false}}, 1};
+    g_fake_clock_values[0] = 0;
+    /* Only RX resets; TX keeps counting up normally -- TX's real growth must
+       still be reported even though RX is absorbed as a reset this poll. */
+    g_fake_snapshots[1] = (fake_snapshot_t){{{"eth0", 100, 1500, false, false}}, 1};
+    g_fake_clock_values[1] = 1000000000ULL;
+
+    lp_sampler_t sampler;
+    lp_sampler_config_t config = {LP_IFACE_SELECT_MANUAL, "eth0", false};
+    lp_sampler_init(&sampler, &config);
+    install_fakes(&sampler);
+
+    lp_rate_sample_t sample;
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    LP_CHECK(sample.rx_bytes_per_sec == 0);   /* RX reset absorbed */
+    LP_CHECK(sample.tx_bytes_per_sec == 500); /* TX's real delta, not suppressed by RX */
+}
+
 static void test_all_mode_excludes_loopback_and_virtual(void)
 {
     reset_fakes();
@@ -444,6 +467,7 @@ int main(void)
 {
     test_manual_basic_rate();
     test_counter_reset_yields_zero_then_resumes();
+    test_one_counter_reset_does_not_suppress_the_other();
     test_all_mode_excludes_loopback_and_virtual();
     test_all_mode_new_iface_does_not_mask_existing_traffic();
     test_all_mode_one_iface_reset_does_not_mask_another();
