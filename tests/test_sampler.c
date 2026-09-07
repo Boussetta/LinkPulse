@@ -48,6 +48,12 @@ static void reset_fakes(void)
 
 static lp_status_t fake_snapshot_fn(lp_iface_list_t *out)
 {
+    LP_CHECK(g_fake_snapshot_index < MAX_FAKE_STEPS);
+    if (g_fake_snapshot_index >= MAX_FAKE_STEPS) {
+        out->items = NULL;
+        out->count = 0;
+        return LP_ERR_IO;
+    }
     const fake_snapshot_t *snap = &g_fake_snapshots[g_fake_snapshot_index];
     ++g_fake_snapshot_index;
 
@@ -74,6 +80,10 @@ static lp_status_t fake_snapshot_fn(lp_iface_list_t *out)
 
 static uint64_t fake_clock_fn(void)
 {
+    LP_CHECK(g_fake_clock_index < MAX_FAKE_STEPS);
+    if (g_fake_clock_index >= MAX_FAKE_STEPS) {
+        return 0;
+    }
     const uint64_t value = g_fake_clock_values[g_fake_clock_index];
     ++g_fake_clock_index;
     return value;
@@ -81,11 +91,19 @@ static uint64_t fake_clock_fn(void)
 
 static lp_status_t fake_default_iface_fn(char *name_out, size_t name_cap)
 {
+    LP_CHECK(g_fake_default_iface_index < MAX_FAKE_STEPS);
+    if (g_fake_default_iface_index >= MAX_FAKE_STEPS) {
+        return LP_ERR_IO;
+    }
     const lp_status_t status = g_fake_default_iface_status[g_fake_default_iface_index];
     const char *name = g_fake_default_iface_values[g_fake_default_iface_index];
     ++g_fake_default_iface_index;
     if (status != LP_OK) {
         return status;
+    }
+    LP_CHECK(name != NULL);
+    if (name == NULL) {
+        return LP_ERR_IO;
     }
     snprintf(name_out, name_cap, "%s", name);
     return LP_OK;
@@ -179,6 +197,44 @@ static void test_all_mode_excludes_loopback_and_virtual(void)
     LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
     LP_CHECK(sample.rx_bytes_per_sec == 2000);
     LP_CHECK(sample.tx_bytes_per_sec == 1000);
+}
+
+static void test_all_mode_resets_baseline_when_iface_count_changes(void)
+{
+    reset_fakes();
+    /* Only eth0 present initially. */
+    g_fake_snapshots[0] = (fake_snapshot_t){{{"eth0", 100, 50, false, false}}, 1};
+    g_fake_clock_values[0] = 0;
+    /* A second adapter appears mid-run, bringing its own pre-existing counters:
+       without a reset this would look like a huge traffic spike. */
+    g_fake_snapshots[1] = (fake_snapshot_t){{
+                                                {"eth0", 150, 75, false, false},
+                                                {"eth1", 500000, 250000, false, false},
+                                            },
+                                            2};
+    g_fake_clock_values[1] = 1000000000ULL;
+    g_fake_snapshots[2] = (fake_snapshot_t){{
+                                                {"eth0", 250, 175, false, false},
+                                                {"eth1", 501000, 250500, false, false},
+                                            },
+                                            2};
+    g_fake_clock_values[2] = 2000000000ULL;
+
+    lp_sampler_t sampler;
+    lp_sampler_config_t config = {LP_IFACE_SELECT_ALL, "", false};
+    lp_sampler_init(&sampler, &config);
+    install_fakes(&sampler);
+
+    lp_rate_sample_t sample;
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    LP_CHECK(sample.rx_bytes_per_sec == 0); /* membership changed: fresh baseline, no rate yet */
+    LP_CHECK(sample.tx_bytes_per_sec == 0);
+
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    LP_CHECK(sample.rx_bytes_per_sec == 1100); /* (100+1000) bytes over 1s */
+    LP_CHECK(sample.tx_bytes_per_sec == 600);  /* (100+500) bytes over 1s */
 }
 
 static void test_auto_mode_resets_baseline_on_iface_change(void)
@@ -344,6 +400,7 @@ int main(void)
     test_manual_basic_rate();
     test_counter_reset_yields_zero_then_resumes();
     test_all_mode_excludes_loopback_and_virtual();
+    test_all_mode_resets_baseline_when_iface_count_changes();
     test_auto_mode_resets_baseline_on_iface_change();
     test_auto_mode_propagates_default_route_failure();
     test_manual_mode_missing_interface_is_not_found();
