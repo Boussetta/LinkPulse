@@ -244,6 +244,38 @@ static void test_manual_mode_missing_interface_is_not_found(void)
     LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_ERR_NOT_FOUND);
 }
 
+static void test_poll_rejects_missing_sources(void)
+{
+    reset_fakes();
+
+    lp_sampler_t sampler;
+    lp_sampler_config_t config = {LP_IFACE_SELECT_MANUAL, "eth0", false};
+    lp_sampler_init(&sampler, &config); /* sources left unset */
+
+    lp_rate_sample_t sample;
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_ERR_INVALID_ARG);
+}
+
+static void test_history_rejects_null_and_zero_cap(void)
+{
+    reset_fakes();
+    g_fake_snapshots[0] = (fake_snapshot_t){{{"eth0", 100, 100, false, false}}, 1};
+    g_fake_clock_values[0] = 0;
+
+    lp_sampler_t sampler;
+    lp_sampler_config_t config = {LP_IFACE_SELECT_MANUAL, "eth0", false};
+    lp_sampler_init(&sampler, &config);
+    install_fakes(&sampler);
+
+    lp_rate_sample_t sample;
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+
+    lp_rate_sample_t buffer[1];
+    LP_CHECK(lp_sampler_history(&sampler, buffer, 0) == 0);
+    LP_CHECK(lp_sampler_history(&sampler, NULL, 1) == 0);
+    LP_CHECK(lp_sampler_history(NULL, buffer, 1) == 0);
+}
+
 /* ---- history ring buffer: procedural fakes, independent of the table above ---- */
 
 static uint64_t g_hist_clock_ns;
@@ -301,6 +333,10 @@ static void test_history_wraps_at_capacity(void)
 
     lp_rate_sample_t partial[3];
     LP_CHECK(lp_sampler_history(&sampler, partial, 3) == 3);
+    /* A partial request must return the most recent samples, not the oldest. */
+    LP_CHECK(partial[2].timestamp_ns == history[count - 1].timestamp_ns);
+    LP_CHECK(partial[1].timestamp_ns == history[count - 2].timestamp_ns);
+    LP_CHECK(partial[0].timestamp_ns == history[count - 3].timestamp_ns);
 }
 
 int main(void)
@@ -311,6 +347,8 @@ int main(void)
     test_auto_mode_resets_baseline_on_iface_change();
     test_auto_mode_propagates_default_route_failure();
     test_manual_mode_missing_interface_is_not_found();
+    test_poll_rejects_missing_sources();
+    test_history_rejects_null_and_zero_cap();
     test_history_wraps_at_capacity();
     LP_TEST_RETURN();
 }
