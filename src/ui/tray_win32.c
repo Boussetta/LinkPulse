@@ -6,6 +6,7 @@
 #include "linkpulse/net.h"
 #include "linkpulse/sampler.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -109,14 +110,17 @@ static HICON render_icon(uint64_t rx_bps, uint64_t tx_bps, bool use_bits)
     HDC mem_dc = CreateCompatibleDC(NULL);
     HBITMAP old_bmp = (HBITMAP)SelectObject(mem_dc, color_bmp);
     SetBkMode(mem_dc, TRANSPARENT);
-    /* Matches the taskbar's own clock text color for the current theme; plain
-       white was nearly invisible on the (default) light taskbar. */
-    SetTextColor(mem_dc, is_taskbar_light_theme() ? RGB(0, 0, 0) : RGB(255, 255, 255));
+    /* Drawn in a sentinel color, not the final one: GDI text never touches the
+       alpha channel, so text and background would otherwise both end up
+       alpha=0. Detected below by exact color match and turned into real
+       per-pixel alpha, then recolored to the theme's actual text color. */
+    SetTextColor(mem_dc, RGB(255, 255, 255));
 
     LOGFONTA lf;
     memset(&lf, 0, sizeof(lf));
     lf.lfHeight = -(size / 2 - 1);
     lf.lfWeight = FW_BOLD;
+    lf.lfQuality = NONANTIALIASED_QUALITY;            /* crisp on/off pixels, easy to alpha-key */
     snprintf(lf.lfFaceName, LF_FACESIZE, "Segoe UI"); /* same family as the taskbar clock */
     HFONT font = CreateFontIndirectA(&lf);
     HFONT old_font = (HFONT)SelectObject(mem_dc, font);
@@ -135,6 +139,25 @@ static HICON render_icon(uint64_t rx_bps, uint64_t tx_bps, bool use_bits)
     DeleteObject(font);
     SelectObject(mem_dc, old_bmp);
     DeleteDC(mem_dc);
+
+    /* Turn the sentinel-colored text pixels into real alpha, recolored to the
+       theme's actual text color; everything else stays fully transparent. If
+       every pixel were left at alpha=0, Windows falls back to interpreting the
+       (all-zero, i.e. "opaque") AND mask below, rendering a solid black square. */
+    const COLORREF theme_color = is_taskbar_light_theme() ? RGB(0, 0, 0) : RGB(255, 255, 255);
+    const BYTE theme_r = GetRValue(theme_color);
+    const BYTE theme_g = GetGValue(theme_color);
+    const BYTE theme_b = GetBValue(theme_color);
+    uint8_t *pixels = (uint8_t *)bits;
+    for (int i = 0; i < size * size; ++i) {
+        uint8_t *pixel = pixels + (i * 4); /* B, G, R, A */
+        if (pixel[0] == 0xFF && pixel[1] == 0xFF && pixel[2] == 0xFF) {
+            pixel[0] = theme_b;
+            pixel[1] = theme_g;
+            pixel[2] = theme_r;
+            pixel[3] = 0xFF;
+        }
+    }
 
     /* Content is irrelevant for a 32bpp icon with a real alpha channel, but
        CreateIconIndirect still requires a mask bitmap of matching dimensions. */
