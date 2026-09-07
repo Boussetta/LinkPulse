@@ -61,6 +61,19 @@ static void format_compact_rate(uint64_t bytes_per_sec, bool use_bits, char *out
     }
 }
 
+/* The taskbar (and its clock/tray icons) follow "SystemUsesLightTheme", not the
+   separate "AppsUseLightTheme" value that only affects app windows. Defaults
+   to light (Windows' own default) if the value is missing. */
+static bool is_taskbar_light_theme(void)
+{
+    DWORD value = 1;
+    DWORD size = sizeof(value);
+    const LONG result = RegGetValueA(
+        HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+        "SystemUsesLightTheme", RRF_RT_REG_DWORD, NULL, &value, &size);
+    return result != ERROR_SUCCESS || value != 0;
+}
+
 /* Renders a small 32bpp icon with the download rate on top and upload on the
    bottom, both abbreviated to fit. Caller destroys the returned icon. */
 static HICON render_icon(uint64_t rx_bps, uint64_t tx_bps, bool use_bits)
@@ -96,13 +109,15 @@ static HICON render_icon(uint64_t rx_bps, uint64_t tx_bps, bool use_bits)
     HDC mem_dc = CreateCompatibleDC(NULL);
     HBITMAP old_bmp = (HBITMAP)SelectObject(mem_dc, color_bmp);
     SetBkMode(mem_dc, TRANSPARENT);
-    SetTextColor(mem_dc, RGB(255, 255, 255));
+    /* Matches the taskbar's own clock text color for the current theme; plain
+       white was nearly invisible on the (default) light taskbar. */
+    SetTextColor(mem_dc, is_taskbar_light_theme() ? RGB(0, 0, 0) : RGB(255, 255, 255));
 
     LOGFONTA lf;
     memset(&lf, 0, sizeof(lf));
     lf.lfHeight = -(size / 2 - 1);
     lf.lfWeight = FW_BOLD;
-    snprintf(lf.lfFaceName, LF_FACESIZE, "Tahoma");
+    snprintf(lf.lfFaceName, LF_FACESIZE, "Segoe UI"); /* same family as the taskbar clock */
     HFONT font = CreateFontIndirectA(&lf);
     HFONT old_font = (HFONT)SelectObject(mem_dc, font);
 
