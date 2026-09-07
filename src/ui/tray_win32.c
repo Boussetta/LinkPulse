@@ -283,6 +283,17 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
     case WM_CREATE:
         SetTimer(hwnd, LP_TRAY_TIMER_ID, state->interval_ms, NULL);
         return 0;
+    case WM_SETTINGCHANGE:
+        /* Windows broadcasts this with lParam pointing to "ImmersiveColorSet"
+           when the user toggles light/dark mode; without it, the icon would
+           only pick up the new theme on the next timer tick (up to
+           interval_ms late). Other setting-change broadcasts fall through to
+           DefWindowProcA below instead of being silently swallowed. */
+        if (lparam != 0 && lstrcmpiA((LPCSTR)lparam, "ImmersiveColorSet") == 0) {
+            refresh_icon_and_tooltip(state);
+            return 0;
+        }
+        return DefWindowProcA(hwnd, msg, wparam, lparam);
     case WM_TIMER:
         if (wparam == LP_TRAY_TIMER_ID) {
             refresh_icon_and_tooltip(state);

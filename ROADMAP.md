@@ -95,7 +95,10 @@ Rules:
 
 - [ ] Config file (INI via vendored `inih`) under `%APPDATA%\LinkPulse`
 - [ ] Settings dialog from a Win32 dialog resource
-- [ ] Light/dark tray adaptation (`AppsUseLightTheme` registry value + `WM_SETTINGCHANGE`)
+- [x] Light/dark tray adaptation: `SystemUsesLightTheme` registry value (the one that actually
+      governs the taskbar/tray, not `AppsUseLightTheme` which only affects app window chrome),
+      re-checked instantly on `WM_SETTINGCHANGE` ("ImmersiveColorSet") rather than waiting for
+      the next timer tick
 - [ ] Logging with rotation; `--debug` flag
 - [ ] Start-on-login via `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
 - [ ] Release workflow publishing a signed-ready `linkpulse.exe`
