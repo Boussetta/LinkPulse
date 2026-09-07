@@ -21,5 +21,9 @@ int main(void)
     check_rate(125, true, "1.0 Kb/s"); /* 125 B/s * 8 = 1000 b/s, which crosses into Kb/s */
     check_rate(125000, true, "1.0 Mb/s");
 
+    /* Rounding-boundary regression: 999951 B/s must roll over to "1.0 MB/s", not
+       round to the misleading "1000.0 KB/s". */
+    check_rate(999951, false, "1.0 MB/s");
+
     LP_TEST_RETURN();
 }
