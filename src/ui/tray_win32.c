@@ -96,16 +96,15 @@ static int measure_text_width(HDC dc, int font_height, const char *text)
     return extent.cx;
 }
 
-/* Largest font height (bounded by max_height) at which both `a` and `b` fit
-   within `max_width`. A fixed guess can't work here: whatever height fits a
-   short string ("1") clips a long one ("1.2M") against the bitmap's actual
-   edge, which no clipping flag can prevent -- there's no pixel memory beyond it. */
-static int fit_font_height(HDC dc, int max_width, int max_height, const char *a, const char *b)
+/* Largest font height (bounded by max_height) at which `text` fits within
+   max_width. A fixed guess can't work here: whatever height fits a short
+   string ("1") clips a long one ("1.2M") against the bitmap's actual edge,
+   which no clipping flag can prevent -- there's no pixel memory beyond it. */
+static int fit_font_height(HDC dc, int max_width, int max_height, const char *text)
 {
     int height = max_height;
     while (height > 5) {
-        if (measure_text_width(dc, height, a) <= max_width &&
-            measure_text_width(dc, height, b) <= max_width) {
+        if (measure_text_width(dc, height, text) <= max_width) {
             return height;
         }
         --height;
@@ -113,9 +112,9 @@ static int fit_font_height(HDC dc, int max_width, int max_height, const char *a,
     return 5;
 }
 
-/* Renders a small 32bpp icon with the download rate on top and upload on the
-   bottom, both abbreviated to fit. Caller destroys the returned icon. */
-static HICON render_icon(uint64_t rx_bps, uint64_t tx_bps, bool use_bits)
+/* Renders a small 32bpp icon showing the download rate, abbreviated to fit.
+   Caller destroys the returned icon. */
+static HICON render_icon(uint64_t rx_bps, bool use_bits)
 {
     const int size = GetSystemMetrics(SM_CXSMICON);
     if (size <= 0) {
@@ -155,18 +154,15 @@ static HICON render_icon(uint64_t rx_bps, uint64_t tx_bps, bool use_bits)
     SetTextColor(mem_dc, RGB(255, 255, 255));
 
     char down_str[8];
-    char up_str[8];
     format_compact_rate(rx_bps, use_bits, down_str, sizeof(down_str));
-    format_compact_rate(tx_bps, use_bits, up_str, sizeof(up_str));
 
     /* No fixed font size can work for every string this can produce ("1", "999",
        "1.2M", ...): a size that fits "1" would clip "1.2M" against the bitmap's
        actual edge (no clipping flag can draw past that -- there's no pixel
        memory beyond it), and a size chosen for the worst case would look tiny
-       for short values. Measure both strings and use the largest height that
-       fits the wider of the two, so it's never guessed and never overflows. */
-    const int max_height = size * 13 / 20;
-    const int font_height = fit_font_height(mem_dc, size, max_height, down_str, up_str);
+       for short values. Measure the string and use the largest height that
+       fits it, so it's never guessed and never overflows. */
+    const int font_height = fit_font_height(mem_dc, size, size, down_str);
 
     LOGFONTA lf;
     memset(&lf, 0, sizeof(lf));
@@ -177,10 +173,8 @@ static HICON render_icon(uint64_t rx_bps, uint64_t tx_bps, bool use_bits)
     HFONT font = CreateFontIndirectA(&lf);
     HFONT old_font = (HFONT)SelectObject(mem_dc, font);
 
-    RECT top_rect = {0, 0, size, size / 2};
-    RECT bottom_rect = {0, size / 2, size, size};
-    DrawTextA(mem_dc, down_str, -1, &top_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
-    DrawTextA(mem_dc, up_str, -1, &bottom_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
+    RECT full_rect = {0, 0, size, size};
+    DrawTextA(mem_dc, down_str, -1, &full_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
 
     SelectObject(mem_dc, old_font);
     DeleteObject(font);
@@ -301,8 +295,7 @@ static void refresh_icon_and_tooltip(lp_tray_state_t *state)
     const bool paused = InterlockedCompareExchange(&state->paused, 0, 0) != 0;
     const bool use_bits = InterlockedCompareExchange(&state->use_bits, 0, 0) != 0;
 
-    HICON new_icon = render_icon(has_sample ? sample.rx_bytes_per_sec : 0,
-                                 has_sample ? sample.tx_bytes_per_sec : 0, use_bits);
+    HICON new_icon = render_icon(has_sample ? sample.rx_bytes_per_sec : 0, use_bits);
     if (new_icon != NULL) {
         state->nid.hIcon = new_icon;
         if (state->current_icon != NULL) {
@@ -423,7 +416,7 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
     g_tray.nid.uID = LP_TRAY_ICON_UID;
     g_tray.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_tray.nid.uCallbackMessage = WM_LP_TRAYICON;
-    g_tray.current_icon = render_icon(0, 0, use_bits);
+    g_tray.current_icon = render_icon(0, use_bits);
     g_tray.nid.hIcon = g_tray.current_icon;
     snprintf(g_tray.nid.szTip, sizeof(g_tray.nid.szTip), "LinkPulse\nstarting...");
     Shell_NotifyIconA(NIM_ADD, &g_tray.nid);
