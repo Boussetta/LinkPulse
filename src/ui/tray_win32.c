@@ -366,9 +366,20 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
     g_tray.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_tray.nid.uCallbackMessage = WM_LP_TRAYICON;
     g_tray.current_icon = render_icon(NULL, 0);
+    if (g_tray.current_icon == NULL) {
+        LP_ERROR("failed to render initial tray icon");
+        DestroyWindow(g_tray.hwnd);
+        CloseHandle(single_instance_mutex);
+        return 1;
+    }
     g_tray.nid.hIcon = g_tray.current_icon;
     snprintf(g_tray.nid.szTip, sizeof(g_tray.nid.szTip), "LinkPulse\nstarting...");
-    Shell_NotifyIconA(NIM_ADD, &g_tray.nid);
+    if (!Shell_NotifyIconA(NIM_ADD, &g_tray.nid)) {
+        LP_ERROR("failed to add tray icon");
+        DestroyWindow(g_tray.hwnd);
+        CloseHandle(single_instance_mutex);
+        return 1;
+    }
 
     g_tray.thread = CreateThread(NULL, 0, sampler_thread_proc, &g_tray, 0, NULL);
     if (g_tray.thread == NULL) {
