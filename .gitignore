@@ -5,7 +5,10 @@ compile_commands.json
 CMakeUserPresets.json
 
 # Editors
-.vscode/
+.vscode/*
+!.vscode/
+!.vscode/launch.json
+!.vscode/tasks.json
 .idea/
 *.swp
 
