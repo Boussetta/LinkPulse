@@ -27,14 +27,25 @@ lp_status_t lp_config_load(lp_config_t *config)
 {
     lp_config_defaults(config);
 
-    char path[MAX_PATH];
-    if (!config_path(path, sizeof(path))) {
+    char appdata[MAX_PATH];
+    const DWORD appdata_len = GetEnvironmentVariableA("APPDATA", appdata, sizeof(appdata));
+    if (appdata_len == 0 || appdata_len >= sizeof(appdata)) {
         return LP_OK; /* no %APPDATA%: defaults are still a valid, working config */
+    }
+
+    char path[MAX_PATH];
+    const int written = snprintf(path, sizeof(path), "%s\\LinkPulse\\config.ini", appdata);
+    if (written < 0 || (size_t)written >= sizeof(path)) {
+        return LP_OK;
     }
 
     FILE *file = fopen(path, "rb");
     if (file == NULL) {
-        return LP_OK; /* first run: no config file yet */
+        const DWORD attrs = GetFileAttributesA(path);
+        if (attrs == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND) {
+            return LP_OK; /* first run: no config file yet */
+        }
+        return LP_ERR_IO;
     }
 
     char text[4096];
