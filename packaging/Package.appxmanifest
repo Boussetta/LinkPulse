@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSIX manifest for LinkPulse (classic Win32 desktop app, packaged via the
+  Desktop Bridge / Windows.FullTrustApplication entry point -- no .NET, no
+  WinRT dependency at runtime).
+
+  Placeholders that MUST be replaced before submitting to the Store:
+    - Identity/@Publisher: must match the certificate subject associated
+      with your Partner Center account (reserving the app name gives you
+      the exact value to use here).
+    - Properties/PublisherDisplayName.
+    - Identity/@Version: bump for each Store submission.
+  The tile/logo assets under Assets/ are placeholder art (see
+  packaging/Assets/README.md) and must be replaced with real designed
+  assets before certification.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <Identity
+    Name="LinkPulse"
+    Publisher="CN=CHANGE-ME-TO-YOUR-PARTNER-CENTER-PUBLISHER-CN"
+    Version="0.1.0.0" />
+
+  <Properties>
+    <DisplayName>LinkPulse</DisplayName>
+    <PublisherDisplayName>CHANGE-ME</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.22621.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-US" />
+  </Resources>
+
+  <Applications>
+    <Application Id="LinkPulseTray" Executable="linkpulse-tray.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="LinkPulse"
+        Description="Lightweight network bandwidth monitor for the system tray"
+        BackgroundColor="#0B6085"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+        <uap:SplashScreen Image="Assets\SplashScreen.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

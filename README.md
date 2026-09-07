@@ -52,6 +52,46 @@ tests/               CTest
 `src/core` must never include `windows.h`. Keeping that boundary is what makes
 the logic testable without a live network.
 
+## Packaging
+
+### Installer (Inno Setup — primary, free)
+
+`packaging/LinkPulse.iss` builds a normal `LinkPulseSetup.exe`: install to
+`%LocalAppData%\Programs\LinkPulse` (no admin/UAC needed), Start Menu
+shortcut, optional desktop shortcut, and an uninstaller registered in
+"Add/Remove Programs" that also cleans up the autostart registry entry if it
+was enabled. Requires [Inno Setup](https://jrsoftware.org/isdl.php) on
+Windows:
+
+```powershell
+cmake --preset msvc
+cmake --build --preset msvc-release
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\LinkPulse.iss
+```
+
+Produces `build\installer\LinkPulseSetup.exe`.
+
+### MSIX (Microsoft Store — deferred)
+
+`packaging/` also contains a `Package.appxmanifest`, placeholder tile art
+under `Assets/` (see [packaging/Assets/README.md](packaging/Assets/README.md)),
+and `build-msix.ps1` for a future Store submission. This path needs a paid
+Partner Center developer account and is deliberately not the near-term
+priority — see [ROADMAP.md](ROADMAP.md). Run on Windows, from a Developer
+PowerShell:
+
+```powershell
+cmake --preset msvc
+cmake --build --preset msvc-release
+.\packaging\build-msix.ps1
+```
+
+Before a real Store submission, replace the placeholder `Publisher`/
+`PublisherDisplayName` in the manifest with the values from your Partner
+Center app reservation, and replace the placeholder tile art.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+
