@@ -4,6 +4,7 @@
 #include "linkpulse/net.h"
 #include "linkpulse/status.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -20,6 +21,8 @@
 #define LP_FILENO fileno
 #define LP_CLOSE close
 #endif
+
+static atomic_flag g_stderr_capture_lock = ATOMIC_FLAG_INIT;
 
 static void test_status_strings(void)
 {
@@ -63,10 +66,14 @@ static void read_stream(FILE *stream, char *buffer, size_t buffer_size)
 
 static void with_captured_stderr(FILE *capture, void (*fn)(void))
 {
+    while (atomic_flag_test_and_set_explicit(&g_stderr_capture_lock, memory_order_acquire)) {
+    }
+
     const int stderr_fd = LP_FILENO(stderr);
     const int saved_stderr = LP_DUP(stderr_fd);
     LP_CHECK(saved_stderr >= 0);
     if (saved_stderr < 0) {
+        atomic_flag_clear_explicit(&g_stderr_capture_lock, memory_order_release);
         return;
     }
 
@@ -75,6 +82,7 @@ static void with_captured_stderr(FILE *capture, void (*fn)(void))
     LP_CHECK(redirect_status >= 0);
     if (redirect_status < 0) {
         LP_CLOSE(saved_stderr);
+        atomic_flag_clear_explicit(&g_stderr_capture_lock, memory_order_release);
         return;
     }
 
@@ -83,6 +91,7 @@ static void with_captured_stderr(FILE *capture, void (*fn)(void))
 
     LP_CHECK(LP_DUP2(saved_stderr, stderr_fd) >= 0);
     LP_CLOSE(saved_stderr);
+    atomic_flag_clear_explicit(&g_stderr_capture_lock, memory_order_release);
 }
 
 static void log_hidden_debug_message(void)
