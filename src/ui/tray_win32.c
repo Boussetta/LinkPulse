@@ -318,8 +318,8 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
     case WM_DESTROY: {
         lp_config_t config_to_save;
         config_to_save.mode = state->sampler.config.mode;
-        snprintf(config_to_save.iface_name, sizeof(config_to_save.iface_name), "%s",
-                 state->sampler.config.iface_name);
+        memcpy(config_to_save.iface_name, state->sampler.config.iface_name,
+               sizeof(config_to_save.iface_name));
         config_to_save.include_virtual = state->sampler.config.include_virtual;
         config_to_save.use_bits = InterlockedCompareExchange(&state->use_bits, 0, 0) != 0;
         config_to_save.interval_ms = state->interval_ms;
