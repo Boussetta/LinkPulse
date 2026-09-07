@@ -1,0 +1,20 @@
+build/
+out/
+.cache/
+compile_commands.json
+CMakeUserPresets.json
+
+# Editors
+.vscode/*
+!.vscode/
+!.vscode/launch.json
+!.vscode/tasks.json
+.idea/
+*.swp
+
+# MSVC
+*.pdb
+*.ilk
+*.obj
+*.exe
+.vs/
