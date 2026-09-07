@@ -238,7 +238,7 @@ static void test_all_mode_new_iface_does_not_mask_existing_traffic(void)
     LP_CHECK(sample.tx_bytes_per_sec == 600);  /* (100+500) bytes over 1s */
 }
 
-static void test_all_mode_one_iface_reset_does_not_mask_another(void)
+static void test_all_mode_one_iface_reset_resets_aggregate_for_poll(void)
 {
     reset_fakes();
     g_fake_snapshots[0] = (fake_snapshot_t){{
@@ -256,6 +256,12 @@ static void test_all_mode_one_iface_reset_does_not_mask_another(void)
                                             },
                                             2};
     g_fake_clock_values[1] = 1000000000ULL;
+    g_fake_snapshots[2] = (fake_snapshot_t){{
+                                                {"eth0", 250, 120, false, false},
+                                                {"eth1", 2100, 1100, false, false},
+                                            },
+                                            2};
+    g_fake_clock_values[2] = 2000000000ULL;
 
     lp_sampler_t sampler;
     lp_sampler_config_t config = {LP_IFACE_SELECT_ALL, "", false};
@@ -266,9 +272,12 @@ static void test_all_mode_one_iface_reset_does_not_mask_another(void)
     LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
 
     LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
-    /* eth0 contributes 0 (reset absorbed); eth1 contributes its real 1000/500 delta. */
-    LP_CHECK(sample.rx_bytes_per_sec == 1000);
-    LP_CHECK(sample.tx_bytes_per_sec == 500);
+    LP_CHECK(sample.rx_bytes_per_sec == 0);
+    LP_CHECK(sample.tx_bytes_per_sec == 0);
+
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    LP_CHECK(sample.rx_bytes_per_sec == 1200);
+    LP_CHECK(sample.tx_bytes_per_sec == 600);
 }
 
 static void test_auto_mode_resets_baseline_on_iface_change(void)
@@ -435,7 +444,7 @@ int main(void)
     test_counter_reset_yields_zero_then_resumes();
     test_all_mode_excludes_loopback_and_virtual();
     test_all_mode_new_iface_does_not_mask_existing_traffic();
-    test_all_mode_one_iface_reset_does_not_mask_another();
+    test_all_mode_one_iface_reset_resets_aggregate_for_poll();
     test_auto_mode_resets_baseline_on_iface_change();
     test_auto_mode_propagates_default_route_failure();
     test_manual_mode_missing_interface_is_not_found();

@@ -76,7 +76,8 @@ static lp_sampler_target_t *find_target(lp_sampler_t *sampler, const char *name)
    interface, or one whose counters just decreased (reset/replaced adapter),
    contributes 0 for this poll only. */
 static void accumulate_target_delta(lp_sampler_t *sampler, const char *name, uint64_t current_rx,
-                                    uint64_t current_tx, uint64_t *delta_rx, uint64_t *delta_tx)
+                                    uint64_t current_tx, uint64_t *delta_rx, uint64_t *delta_tx,
+                                    bool *counter_went_backwards)
 {
     lp_sampler_target_t *entry = find_target(sampler, name);
     if (entry == NULL) {
@@ -90,6 +91,9 @@ static void accumulate_target_delta(lp_sampler_t *sampler, const char *name, uin
 
     entry->seen_this_poll = true;
     if (entry->initialized) {
+        if (current_rx < entry->rx_bytes || current_tx < entry->tx_bytes) {
+            *counter_went_backwards = true;
+        }
         if (current_rx >= entry->rx_bytes) *delta_rx += current_rx - entry->rx_bytes;
         if (current_tx >= entry->tx_bytes) *delta_tx += current_tx - entry->tx_bytes;
     }
@@ -129,6 +133,7 @@ static lp_status_t resolve_deltas(lp_sampler_t *sampler, const lp_iface_list_t *
     *delta_tx = 0;
 
     if (sampler->config.mode == LP_IFACE_SELECT_ALL) {
+        bool any_counter_went_backwards = false;
         for (size_t i = 0; i < list->count; ++i) {
             const lp_iface_t *iface = &list->items[i];
             if (iface->is_loopback) {
@@ -138,7 +143,11 @@ static lp_status_t resolve_deltas(lp_sampler_t *sampler, const lp_iface_list_t *
                 continue;
             }
             accumulate_target_delta(sampler, iface->name, iface->rx_bytes, iface->tx_bytes,
-                                    delta_rx, delta_tx);
+                                    delta_rx, delta_tx, &any_counter_went_backwards);
+        }
+        if (any_counter_went_backwards) {
+            *delta_rx = 0;
+            *delta_tx = 0;
         }
         evict_untracked_targets(sampler);
         return LP_OK;
@@ -161,7 +170,9 @@ static lp_status_t resolve_deltas(lp_sampler_t *sampler, const lp_iface_list_t *
         return LP_ERR_NOT_FOUND;
     }
 
-    accumulate_target_delta(sampler, target, found->rx_bytes, found->tx_bytes, delta_rx, delta_tx);
+    bool counter_went_backwards = false;
+    accumulate_target_delta(sampler, target, found->rx_bytes, found->tx_bytes, delta_rx, delta_tx,
+                            &counter_went_backwards);
     evict_untracked_targets(sampler);
     return LP_OK;
 }
