@@ -88,9 +88,7 @@ lp_status_t lp_net_default_iface(char *name_out, size_t name_cap)
     SOCKADDR_INET destination;
     memset(&destination, 0, sizeof(destination));
     destination.Ipv4.sin_family = AF_INET;
-    if (InetPtonA(AF_INET, "8.8.8.8", &destination.Ipv4.sin_addr) != 1) {
-        return LP_ERR_IO;
-    }
+    destination.Ipv4.sin_addr.S_un.S_addr = htonl(0x08080808); /* 8.8.8.8 */
 
     MIB_IPFORWARD_ROW2 route;
     SOCKADDR_INET best_source;
