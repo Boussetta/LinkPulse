@@ -73,7 +73,9 @@ static bool is_taskbar_light_theme(void)
    Caller destroys the returned icon. */
 static HICON render_icon(const uint64_t *history, size_t history_count)
 {
-    const int size = GetSystemMetrics(SM_CXSMICON);
+    const int cx = GetSystemMetrics(SM_CXSMICON);
+    const int cy = GetSystemMetrics(SM_CYSMICON);
+    const int size = (cx > 0 && cy > 0) ? ((cx < cy) ? cx : cy) : 0;
     if (size <= 0) {
         return NULL;
     }
