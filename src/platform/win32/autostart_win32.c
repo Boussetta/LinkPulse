@@ -15,7 +15,10 @@ bool lp_autostart_is_enabled(void)
         ERROR_SUCCESS) {
         return false;
     }
-    const LONG result = RegQueryValueExA(key, LP_AUTOSTART_VALUE, NULL, NULL, NULL, NULL);
+    DWORD type = 0;
+    DWORD size = 0;
+    const LONG result =
+        RegQueryValueExA(key, LP_AUTOSTART_VALUE, NULL, &type, NULL, &size);
     RegCloseKey(key);
     return result == ERROR_SUCCESS;
 }
