@@ -132,11 +132,19 @@ int main(int argc, char **argv)
                 print_usage();
                 return 2;
             }
-            interval_ms = (unsigned)strtoul(argv[++i], NULL, 10);
-            if (interval_ms == 0) {
+            const char *value = argv[++i];
+            char *end = NULL;
+            const unsigned long parsed = strtoul(value, &end, 10);
+            if (value[0] == '\0' || *end != '\0') {
+                fprintf(stderr, "--interval must be a whole number of milliseconds, got '%s'\n",
+                        value);
+                return 2;
+            }
+            if (parsed == 0) {
                 fprintf(stderr, "--interval must be a positive number of milliseconds\n");
                 return 2;
             }
+            interval_ms = (unsigned)parsed;
         } else {
             fprintf(stderr, "unknown option: %s\n\n", argv[i]);
             print_usage();
