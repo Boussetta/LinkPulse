@@ -101,7 +101,7 @@ if(LINKPULSE_CLANG_FORMAT)
     VERBATIM)
 
   add_custom_target(format-check
-    COMMAND ${LINKPULSE_CLANG_FORMAT} --dry-run --Werror ${LINKPULSE_FORMAT_SOURCES}
+    COMMAND ${LINKPULSE_CLANG_FORMAT} --style=file --fallback-style=none --dry-run --Werror ${LINKPULSE_FORMAT_SOURCES}
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMENT "Checking formatting with clang-format"
     VERBATIM)
