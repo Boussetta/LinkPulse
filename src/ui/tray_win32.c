@@ -118,7 +118,7 @@ static HICON render_icon(uint64_t rx_bps, uint64_t tx_bps, bool use_bits)
 
     LOGFONTA lf;
     memset(&lf, 0, sizeof(lf));
-    lf.lfHeight = -(size / 2 - 1);
+    lf.lfHeight = -(size / 2); /* fills each half-icon row as much as the square allows */
     lf.lfWeight = FW_BOLD;
     lf.lfQuality = NONANTIALIASED_QUALITY;            /* crisp on/off pixels, easy to alpha-key */
     snprintf(lf.lfFaceName, LF_FACESIZE, "Segoe UI"); /* same family as the taskbar clock */
@@ -132,8 +132,8 @@ static HICON render_icon(uint64_t rx_bps, uint64_t tx_bps, bool use_bits)
 
     RECT top_rect = {0, 0, size, size / 2};
     RECT bottom_rect = {0, size / 2, size, size};
-    DrawTextA(mem_dc, down_str, -1, &top_rect, DT_CENTER | DT_SINGLELINE | DT_NOCLIP);
-    DrawTextA(mem_dc, up_str, -1, &bottom_rect, DT_CENTER | DT_SINGLELINE | DT_NOCLIP);
+    DrawTextA(mem_dc, down_str, -1, &top_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
+    DrawTextA(mem_dc, up_str, -1, &bottom_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
 
     SelectObject(mem_dc, old_font);
     DeleteObject(font);
