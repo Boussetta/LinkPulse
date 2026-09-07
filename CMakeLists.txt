@@ -95,7 +95,7 @@ if(LINKPULSE_CLANG_FORMAT)
     "${CMAKE_SOURCE_DIR}/tests/*.h")
 
   add_custom_target(format
-    COMMAND ${LINKPULSE_CLANG_FORMAT} -i ${LINKPULSE_FORMAT_SOURCES}
+    COMMAND ${LINKPULSE_CLANG_FORMAT} --style=file --fallback-style=none -i ${LINKPULSE_FORMAT_SOURCES}
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMENT "Formatting sources with clang-format"
     VERBATIM)
