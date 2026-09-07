@@ -3,7 +3,7 @@
 These tile/logo images are **programmatically generated placeholders**
 (solid brand-color background + "LP" text), not final designed assets.
 They exist so `packaging/Package.appxmanifest` references valid files and
-the packaging script produces an installable MSIX for local testing.
+the packaging script produces an unsigned MSIX (or staged layout) for local testing.
 
 Before a real Store submission, replace all of these with properly
 designed artwork (see the [Microsoft tile/icon asset guidelines](https://learn.microsoft.com/windows/apps/design/style/iconography/app-icon-construction)):
