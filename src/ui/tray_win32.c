@@ -1,5 +1,6 @@
 #include "linkpulse/tray.h"
 
+#include "linkpulse/autostart.h"
 #include "linkpulse/clock.h"
 #include "linkpulse/config.h"
 #include "linkpulse/format.h"
@@ -20,7 +21,8 @@
 
 #define IDM_PAUSE 2001
 #define IDM_UNITS_BITS 2002
-#define IDM_EXIT 2003
+#define IDM_AUTOSTART 2003
+#define IDM_EXIT 2004
 
 /* Enough points to fill the icon at the largest realistic SM_CXSMICON (24px at
    125% scaling); render_icon only ever reads the last `size` of them. */
@@ -193,10 +195,13 @@ static void show_context_menu(lp_tray_state_t *state)
 
     const bool paused = InterlockedCompareExchange(&state->paused, 0, 0) != 0;
     const bool use_bits = InterlockedCompareExchange(&state->use_bits, 0, 0) != 0;
+    const bool autostart = lp_autostart_is_enabled();
 
     AppendMenuA(menu, MF_STRING | (paused ? MF_CHECKED : 0), IDM_PAUSE,
                 paused ? "Resume" : "Pause");
     AppendMenuA(menu, MF_STRING | (use_bits ? MF_CHECKED : 0), IDM_UNITS_BITS, "Show bits/s");
+    AppendMenuA(menu, MF_STRING | (autostart ? MF_CHECKED : 0), IDM_AUTOSTART,
+                "Start with Windows");
     AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(menu, MF_STRING, IDM_EXIT, "Exit");
 
@@ -217,6 +222,11 @@ static void show_context_menu(lp_tray_state_t *state)
         break;
     case IDM_UNITS_BITS:
         InterlockedExchange(&state->use_bits, use_bits ? 0 : 1);
+        break;
+    case IDM_AUTOSTART:
+        if (lp_autostart_set(!autostart) != LP_OK) {
+            LP_WARN("failed to %s start-on-login", autostart ? "disable" : "enable");
+        }
         break;
     case IDM_EXIT:
         DestroyWindow(state->hwnd);
