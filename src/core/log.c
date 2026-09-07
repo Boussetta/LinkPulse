@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <time.h>
 
-static atomic_int g_level = ATOMIC_VAR_INIT(LP_LOG_INFO);
+static atomic_int g_level = LP_LOG_INFO;
 static atomic_flag g_log_lock = ATOMIC_FLAG_INIT;
 
 void lp_log_set_level(lp_log_level_t level)
