@@ -14,6 +14,23 @@
 #define LP_VERSION "0.0.0-unknown" /* overridden by the CMake project version */
 #endif
 
+/* Set from the console-control handler, which runs on its own thread; checked
+   once per loop iteration in watch_rate(). */
+static volatile LONG g_stop_requested;
+
+static BOOL WINAPI handle_console_event(DWORD event)
+{
+    switch (event) {
+    case CTRL_C_EVENT:
+    case CTRL_BREAK_EVENT:
+    case CTRL_CLOSE_EVENT:
+        InterlockedExchange(&g_stop_requested, 1);
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
 static void print_usage(void)
 {
     printf("LinkPulse " LP_VERSION " - local network activity monitor\n\n"
@@ -68,7 +85,11 @@ static int watch_rate(const lp_sampler_config_t *config, bool use_bits, unsigned
                                           lp_clock_monotonic_ns};
     lp_sampler_set_sources(&sampler, &sources);
 
-    for (;;) {
+    if (!SetConsoleCtrlHandler(handle_console_event, TRUE)) {
+        LP_WARN("failed to install console control handler; Ctrl+C may not exit cleanly");
+    }
+
+    while (!InterlockedCompareExchange(&g_stop_requested, 0, 0)) {
         lp_rate_sample_t sample;
         const lp_status_t status = lp_sampler_poll(&sampler, &sample);
         if (status == LP_ERR_NOT_FOUND) {
@@ -87,6 +108,9 @@ static int watch_rate(const lp_sampler_config_t *config, bool use_bits, unsigned
         }
         Sleep(interval_ms);
     }
+
+    printf("\n");
+    return 0;
 }
 
 int main(int argc, char **argv)
