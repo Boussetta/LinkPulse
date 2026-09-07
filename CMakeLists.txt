@@ -52,6 +52,8 @@ target_compile_definitions(lp_platform PUBLIC _WIN32_WINNT=0x0A00 WIN32_LEAN_AND
 # --- executable ----------------------------------------------------------------
 add_executable(linkpulse src/cli/main.c)
 target_link_libraries(linkpulse PRIVATE lp_platform lp_warnings)
+# Single source of truth for the version string, consumed by --version.
+target_compile_definitions(linkpulse PRIVATE LP_VERSION="${PROJECT_VERSION}")
 
 # Keep the debugger's program path independent of the selected generator.
 set(LINKPULSE_DEPLOY_DIR "${CMAKE_SOURCE_DIR}/out/windows")
@@ -63,10 +65,13 @@ add_custom_command(TARGET linkpulse POST_BUILD
   VERBATIM)
 
 if(MSVC)
+  # TARGET_PDB_FILE expands empty for configs without debug info (e.g. plain
+  # Release), so the copy is delegated to a script that skips missing files.
   add_custom_command(TARGET linkpulse POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      "$<TARGET_PDB_FILE:linkpulse>"
-      "${LINKPULSE_DEPLOY_DIR}/$<TARGET_PDB_FILE_NAME:linkpulse>"
+    COMMAND ${CMAKE_COMMAND}
+      "-DLP_COPY_SRC=$<TARGET_PDB_FILE:linkpulse>"
+      "-DLP_COPY_DST=${LINKPULSE_DEPLOY_DIR}/$<TARGET_PDB_FILE_NAME:linkpulse>"
+      -P "${CMAKE_SOURCE_DIR}/cmake/copy_if_exists.cmake"
     VERBATIM)
 endif()
 
