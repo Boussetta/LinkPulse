@@ -28,8 +28,8 @@ static bool tray_exe_path(char *out, size_t cap)
         exe_path[0] = '\0';
     }
 
-    snprintf(out, cap, "%s%s", exe_path, LP_AUTOSTART_EXE_NAME);
-    return true;
+    const int needed = snprintf(out, cap, "%s%s", exe_path, LP_AUTOSTART_EXE_NAME);
+    return needed >= 0 && (size_t)needed < cap;
 }
 
 bool lp_autostart_is_enabled(void)
