@@ -11,6 +11,10 @@
 /* Capacity of the rolling sample history (feeds a future sparkline). */
 #define LP_SAMPLER_HISTORY_CAP 300
 
+/* Max number of interfaces individually tracked at once (relevant to
+   LP_IFACE_SELECT_ALL; AUTO/MANUAL only ever track one). */
+#define LP_SAMPLER_MAX_TRACKED_IFACES 32
+
 typedef struct {
     uint64_t rx_bytes_per_sec;
     uint64_t tx_bytes_per_sec;
@@ -44,19 +48,27 @@ typedef struct {
     lp_clock_fn clock_fn;
 } lp_sampler_sources_t;
 
+/* One interface's rolling byte-counter baseline, used to compute its own delta
+   independently of every other tracked interface -- this is what lets a single
+   interface's counter reset (or its disappearance/appearance) be handled
+   correctly instead of being masked by other interfaces' totals when summed
+   (relevant to LP_IFACE_SELECT_ALL). */
+typedef struct {
+    char name[LP_IFNAME_MAX];
+    uint64_t rx_bytes;
+    uint64_t tx_bytes;
+    bool initialized;    /* false until this interface has been seen once */
+    bool seen_this_poll; /* scratch, used to evict entries for vanished interfaces */
+} lp_sampler_target_t;
+
 typedef struct {
     lp_sampler_config_t config;
     lp_sampler_sources_t sources;
 
-    bool has_baseline;
-    uint64_t baseline_rx_bytes;
-    uint64_t baseline_tx_bytes;
-    uint64_t baseline_timestamp_ns;
-    char active_iface[LP_IFNAME_MAX]; /* resolved target for AUTO/MANUAL; unused for ALL */
-    size_t all_included_count;        /* interfaces summed last poll; unused for AUTO/MANUAL.
-                                          A count change is a coarse membership check: it
-                                          catches an adapter appearing/disappearing but not
-                                          a same-count swap (e.g. one replaced by another). */
+    uint64_t last_poll_timestamp_ns;
+
+    lp_sampler_target_t targets[LP_SAMPLER_MAX_TRACKED_IFACES];
+    size_t target_count;
 
     lp_rate_sample_t history[LP_SAMPLER_HISTORY_CAP];
     size_t history_count;

@@ -1,5 +1,6 @@
 #include "linkpulse/sampler.h"
 
+#include <stdio.h>
 #include <string.h>
 
 void lp_sampler_init(lp_sampler_t *sampler, const lp_sampler_config_t *config)
@@ -34,14 +35,6 @@ void lp_sampler_set_sources(lp_sampler_t *sampler, const lp_sampler_sources_t *s
     }
 }
 
-static void reset_baseline(lp_sampler_t *sampler)
-{
-    sampler->has_baseline = false;
-    sampler->baseline_rx_bytes = 0;
-    sampler->baseline_tx_bytes = 0;
-    sampler->baseline_timestamp_ns = 0;
-}
-
 static void push_history(lp_sampler_t *sampler, const lp_rate_sample_t *sample)
 {
     const size_t next_slot =
@@ -64,17 +57,78 @@ static uint64_t bytes_per_sec(uint64_t delta_bytes, uint64_t elapsed_ns)
     return (uint64_t)(rate + 0.5);
 }
 
-/* Resolves the target interface(s) for this poll and sums their counters.
-   Returns LP_ERR_NOT_FOUND if a required single interface could not be located. */
-static lp_status_t resolve_totals(lp_sampler_t *sampler, const lp_iface_list_t *list,
-                                  uint64_t *total_rx, uint64_t *total_tx, bool *iface_changed)
+static lp_sampler_target_t *find_target(lp_sampler_t *sampler, const char *name)
 {
-    *total_rx = 0;
-    *total_tx = 0;
-    *iface_changed = false;
+    for (size_t i = 0; i < sampler->target_count; ++i) {
+        if (strcmp(sampler->targets[i].name, name) == 0) {
+            return &sampler->targets[i];
+        }
+    }
+    return NULL;
+}
+
+/* Accumulates this interface's byte delta since its own last poll into
+   *delta_rx / *delta_tx (added, not overwritten, so callers can sum several
+   interfaces). Tracking each interface independently -- rather than diffing
+   one aggregate sum -- means one interface's counter reset, or its
+   appearance/disappearance, can never be masked by another interface's
+   traffic (which a single combined baseline cannot distinguish). A brand-new
+   interface, or one whose counters just decreased (reset/replaced adapter),
+   contributes 0 for this poll only. */
+static void accumulate_target_delta(lp_sampler_t *sampler, const char *name, uint64_t current_rx,
+                                    uint64_t current_tx, uint64_t *delta_rx, uint64_t *delta_tx)
+{
+    lp_sampler_target_t *entry = find_target(sampler, name);
+    if (entry == NULL) {
+        if (sampler->target_count >= LP_SAMPLER_MAX_TRACKED_IFACES) {
+            return; /* table full: can't track this one's rate this poll */
+        }
+        entry = &sampler->targets[sampler->target_count++];
+        memset(entry, 0, sizeof(*entry));
+        snprintf(entry->name, sizeof(entry->name), "%s", name);
+    }
+
+    entry->seen_this_poll = true;
+    if (entry->initialized && current_rx >= entry->rx_bytes && current_tx >= entry->tx_bytes) {
+        *delta_rx += current_rx - entry->rx_bytes;
+        *delta_tx += current_tx - entry->tx_bytes;
+    }
+    entry->rx_bytes = current_rx;
+    entry->tx_bytes = current_tx;
+    entry->initialized = true;
+}
+
+/* Drops tracked interfaces not seen this poll (vanished, or -- for AUTO/MANUAL,
+   whose single target is renewed as a fresh entry -- superseded by a new one),
+   and clears the scratch flag for survivors ahead of the next poll. */
+static void evict_untracked_targets(lp_sampler_t *sampler)
+{
+    size_t write = 0;
+    for (size_t i = 0; i < sampler->target_count; ++i) {
+        if (!sampler->targets[i].seen_this_poll) {
+            continue;
+        }
+        if (write != i) {
+            sampler->targets[write] = sampler->targets[i];
+        }
+        sampler->targets[write].seen_this_poll = false;
+        ++write;
+    }
+    sampler->target_count = write;
+}
+
+/* Resolves the target interface(s) for this poll and accumulates their byte
+   deltas since each one's own last poll. Returns LP_ERR_NOT_FOUND (or whatever
+   status the AUTO default-route lookup returned) if a required single
+   interface could not be located this round; LP_OK for LP_IFACE_SELECT_ALL
+   regardless of how many interfaces matched, including zero. */
+static lp_status_t resolve_deltas(lp_sampler_t *sampler, const lp_iface_list_t *list,
+                                  uint64_t *delta_rx, uint64_t *delta_tx)
+{
+    *delta_rx = 0;
+    *delta_tx = 0;
 
     if (sampler->config.mode == LP_IFACE_SELECT_ALL) {
-        size_t included_count = 0;
         for (size_t i = 0; i < list->count; ++i) {
             const lp_iface_t *iface = &list->items[i];
             if (iface->is_loopback) {
@@ -83,16 +137,10 @@ static lp_status_t resolve_totals(lp_sampler_t *sampler, const lp_iface_list_t *
             if (iface->is_virtual && !sampler->config.include_virtual) {
                 continue;
             }
-            *total_rx += iface->rx_bytes;
-            *total_tx += iface->tx_bytes;
-            ++included_count;
+            accumulate_target_delta(sampler, iface->name, iface->rx_bytes, iface->tx_bytes,
+                                    delta_rx, delta_tx);
         }
-        /* A newly appeared (or removed) adapter changes what the sum represents;
-           without this, its pre-existing counters would look like a traffic spike. */
-        if (included_count != sampler->all_included_count) {
-            *iface_changed = true;
-            sampler->all_included_count = included_count;
-        }
+        evict_untracked_targets(sampler);
         return LP_OK;
     }
 
@@ -108,19 +156,13 @@ static lp_status_t resolve_totals(lp_sampler_t *sampler, const lp_iface_list_t *
         target[sizeof(target) - 1] = '\0';
     }
 
-    if (strcmp(target, sampler->active_iface) != 0) {
-        *iface_changed = true;
-        strncpy(sampler->active_iface, target, sizeof(sampler->active_iface));
-        sampler->active_iface[sizeof(sampler->active_iface) - 1] = '\0';
-    }
-
     const lp_iface_t *found = lp_iface_list_find(list, target);
     if (found == NULL) {
         return LP_ERR_NOT_FOUND;
     }
 
-    *total_rx = found->rx_bytes;
-    *total_tx = found->tx_bytes;
+    accumulate_target_delta(sampler, target, found->rx_bytes, found->tx_bytes, delta_rx, delta_tx);
+    evict_untracked_targets(sampler);
     return LP_OK;
 }
 
@@ -139,38 +181,24 @@ lp_status_t lp_sampler_poll(lp_sampler_t *sampler, lp_rate_sample_t *out)
         return snapshot_status;
     }
 
-    uint64_t total_rx = 0;
-    uint64_t total_tx = 0;
-    bool iface_changed = false;
-    const lp_status_t resolve_status =
-        resolve_totals(sampler, &list, &total_rx, &total_tx, &iface_changed);
+    uint64_t delta_rx = 0;
+    uint64_t delta_tx = 0;
+    const lp_status_t resolve_status = resolve_deltas(sampler, &list, &delta_rx, &delta_tx);
     lp_iface_list_free(&list);
 
     if (resolve_status != LP_OK) {
-        reset_baseline(sampler);
+        /* Not found this round: every previously tracked target is stale, so drop
+           them all rather than let a future comeback diff against ancient counters. */
+        sampler->target_count = 0;
         return resolve_status;
     }
 
     const uint64_t now = sampler->sources.clock_fn();
+    const uint64_t elapsed_ns = now - sampler->last_poll_timestamp_ns;
 
-    /* A fresh start: first poll ever, the active interface just changed, or the
-       counters went backwards (adapter reset/replaced). No rate yet this round. */
-    const bool counters_went_backwards =
-        sampler->has_baseline &&
-        (total_rx < sampler->baseline_rx_bytes || total_tx < sampler->baseline_tx_bytes);
-
-    lp_rate_sample_t sample = {0, 0, now};
-    if (!sampler->has_baseline || iface_changed || counters_went_backwards) {
-        sampler->has_baseline = true;
-    } else {
-        const uint64_t elapsed_ns = now - sampler->baseline_timestamp_ns;
-        sample.rx_bytes_per_sec = bytes_per_sec(total_rx - sampler->baseline_rx_bytes, elapsed_ns);
-        sample.tx_bytes_per_sec = bytes_per_sec(total_tx - sampler->baseline_tx_bytes, elapsed_ns);
-    }
-
-    sampler->baseline_rx_bytes = total_rx;
-    sampler->baseline_tx_bytes = total_tx;
-    sampler->baseline_timestamp_ns = now;
+    const lp_rate_sample_t sample = {bytes_per_sec(delta_rx, elapsed_ns),
+                                     bytes_per_sec(delta_tx, elapsed_ns), now};
+    sampler->last_poll_timestamp_ns = now;
 
     push_history(sampler, &sample);
     *out = sample;
