@@ -96,14 +96,18 @@ Rules:
 - [x] Config file: flat `key=value` text under `%APPDATA%\LinkPulse\config.ini` -- not vendored
       `inih`, since a hand-rolled parser exactly matching our small flat schema (no sections
       needed) is simpler to keep fully unit-tested than pulling in a general-purpose INI parser
-- [ ] Settings dialog from a Win32 dialog resource
+- [ ] ~~Settings dialog from a Win32 dialog resource~~ -- **deferred past v1**: CLI flags +
+      context menu already cover configuration; revisit if M4+ features need more surface
+      than a context menu can reasonably hold
 - [x] Light/dark tray adaptation: `SystemUsesLightTheme` registry value (the one that actually
       governs the taskbar/tray, not `AppsUseLightTheme` which only affects app window chrome),
       re-checked instantly on `WM_SETTINGCHANGE` ("ImmersiveColorSet") rather than waiting for
       the next timer tick
-- [ ] Logging with rotation; `--debug` flag
+- [ ] ~~Logging with rotation~~ -- **deferred past v1**: `--debug` already exists; rotation only
+      matters for a long-running install, revisit alongside M7 packaging
 - [x] Start-on-login via `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
-- [ ] Release workflow publishing a signed-ready `linkpulse.exe`
+
+Release workflow moved to Milestone 7, where it actually belongs.
 
 ## Milestone 4 — Network host discovery
 
@@ -134,9 +138,29 @@ Rules:
 
 ## Milestone 7 — Distribution
 
-- [ ] Installer (Inno Setup or WiX) + code-signing consideration
-- [ ] Auto-update check
+**Reprioritized ahead of M4-M6**: the goal is a Microsoft Store release, which needs packaging
+and a real installed location before any of M4-M6's added features matter.
+
+- [x] No-console-flash launch: a dedicated `linkpulse-tray.exe` (GUI subsystem, no arguments,
+      never touches stdio) rather than making `linkpulse.exe` itself GUI-subsystem --
+      `AttachConsole(ATTACH_PARENT_PROCESS)` (the usual way to keep CLI output working after
+      switching subsystems) does not see a usable console when launched through WSL interop,
+      which would have broken this project's dev/test workflow. Autostart now points at
+      `linkpulse-tray.exe` specifically, resolved next to whichever binary is running rather
+      than the running binary itself, so toggling it from the debug CLI can't misfire.
+- [ ] MSVC Release build validated on a machine without the dev toolchain installed (avoids
+      MinGW runtime DLL dependencies that wouldn't exist on a clean install)
+- [ ] MSIX packaging: `Package.appxmanifest`, Package Family Name, Store asset tiles
+      (44x44, 150x150, 310x150, ...) -- separate from the tray icon
+- [ ] Windows App Certification Kit (WACK) pass
+- [ ] Autostart via the MSIX `StartupTask` manifest extension instead of (or in addition to)
+      the current `HKCU\...\Run` key -- more idiomatic for a packaged app, and avoids the
+      WSL-path fragility discovered during dev-environment testing
+- [ ] Release workflow publishing a signed-ready `linkpulse.exe` (moved from M3)
+- [ ] Auto-update check -- likely unnecessary if Store-distributed, since the Store handles updates
 - [ ] Documentation + screenshots
+- [ ] *(Owner-only, not automatable)*: Partner Center developer account, reserved app name,
+      Store listing content (description, screenshots, age rating, privacy policy URL)
 
 ---
 
