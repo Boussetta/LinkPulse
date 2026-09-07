@@ -71,13 +71,13 @@ static lp_sampler_target_t *find_target(lp_sampler_t *sampler, const char *name)
    *delta_rx / *delta_tx (added, not overwritten, so callers can sum several
    interfaces). Tracking each interface independently -- rather than diffing
    one aggregate sum -- means one interface's counter reset, or its
-   appearance/disappearance, can never be masked by another interface's
-   traffic (which a single combined baseline cannot distinguish). A brand-new
-   interface, or one whose counters just decreased (reset/replaced adapter),
-   contributes 0 for this poll only. */
+   appearance/disappearance, can never be masked by (or itself mask) another
+   interface's traffic. RX and TX are also judged independently of each other:
+   a brand-new interface, or a counter that just decreased (reset/replaced
+   adapter), contributes 0 for that direction only, this poll only -- it does
+   not suppress the other direction if that one is still counting up normally. */
 static void accumulate_target_delta(lp_sampler_t *sampler, const char *name, uint64_t current_rx,
-                                    uint64_t current_tx, uint64_t *delta_rx, uint64_t *delta_tx,
-                                    bool *counter_went_backwards)
+                                    uint64_t current_tx, uint64_t *delta_rx, uint64_t *delta_tx)
 {
     lp_sampler_target_t *entry = find_target(sampler, name);
     if (entry == NULL) {
@@ -91,11 +91,12 @@ static void accumulate_target_delta(lp_sampler_t *sampler, const char *name, uin
 
     entry->seen_this_poll = true;
     if (entry->initialized) {
-        if (current_rx < entry->rx_bytes || current_tx < entry->tx_bytes) {
-            *counter_went_backwards = true;
+        if (current_rx >= entry->rx_bytes) {
+            *delta_rx += current_rx - entry->rx_bytes;
         }
-        if (current_rx >= entry->rx_bytes) *delta_rx += current_rx - entry->rx_bytes;
-        if (current_tx >= entry->tx_bytes) *delta_tx += current_tx - entry->tx_bytes;
+        if (current_tx >= entry->tx_bytes) {
+            *delta_tx += current_tx - entry->tx_bytes;
+        }
     }
     entry->rx_bytes = current_rx;
     entry->tx_bytes = current_tx;
@@ -133,7 +134,6 @@ static lp_status_t resolve_deltas(lp_sampler_t *sampler, const lp_iface_list_t *
     *delta_tx = 0;
 
     if (sampler->config.mode == LP_IFACE_SELECT_ALL) {
-        bool any_counter_went_backwards = false;
         for (size_t i = 0; i < list->count; ++i) {
             const lp_iface_t *iface = &list->items[i];
             if (iface->is_loopback) {
@@ -143,11 +143,7 @@ static lp_status_t resolve_deltas(lp_sampler_t *sampler, const lp_iface_list_t *
                 continue;
             }
             accumulate_target_delta(sampler, iface->name, iface->rx_bytes, iface->tx_bytes,
-                                    delta_rx, delta_tx, &any_counter_went_backwards);
-        }
-        if (any_counter_went_backwards) {
-            *delta_rx = 0;
-            *delta_tx = 0;
+                                    delta_rx, delta_tx);
         }
         evict_untracked_targets(sampler);
         return LP_OK;
@@ -170,9 +166,7 @@ static lp_status_t resolve_deltas(lp_sampler_t *sampler, const lp_iface_list_t *
         return LP_ERR_NOT_FOUND;
     }
 
-    bool counter_went_backwards = false;
-    accumulate_target_delta(sampler, target, found->rx_bytes, found->tx_bytes, delta_rx, delta_tx,
-                            &counter_went_backwards);
+    accumulate_target_delta(sampler, target, found->rx_bytes, found->tx_bytes, delta_rx, delta_tx);
     evict_untracked_targets(sampler);
     return LP_OK;
 }
