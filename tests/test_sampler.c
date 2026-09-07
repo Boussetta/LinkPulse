@@ -238,7 +238,7 @@ static void test_all_mode_new_iface_does_not_mask_existing_traffic(void)
     LP_CHECK(sample.tx_bytes_per_sec == 600);  /* (100+500) bytes over 1s */
 }
 
-static void test_all_mode_one_iface_reset_resets_aggregate_for_poll(void)
+static void test_all_mode_one_iface_reset_does_not_mask_another(void)
 {
     reset_fakes();
     g_fake_snapshots[0] = (fake_snapshot_t){{
@@ -272,12 +272,14 @@ static void test_all_mode_one_iface_reset_resets_aggregate_for_poll(void)
     LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
 
     LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
-    LP_CHECK(sample.rx_bytes_per_sec == 0);
-    LP_CHECK(sample.tx_bytes_per_sec == 0);
+    /* eth0 contributes 0 (its own reset absorbed); eth1's real 1000/500 delta
+       still counts -- one interface's reset must never zero another's traffic. */
+    LP_CHECK(sample.rx_bytes_per_sec == 1000);
+    LP_CHECK(sample.tx_bytes_per_sec == 500);
 
     LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
-    LP_CHECK(sample.rx_bytes_per_sec == 1200);
-    LP_CHECK(sample.tx_bytes_per_sec == 600);
+    LP_CHECK(sample.rx_bytes_per_sec == 1200); /* (200+1000) bytes over 1s */
+    LP_CHECK(sample.tx_bytes_per_sec == 600);  /* (100+500) bytes over 1s */
 }
 
 static void test_auto_mode_resets_baseline_on_iface_change(void)
@@ -444,7 +446,7 @@ int main(void)
     test_counter_reset_yields_zero_then_resumes();
     test_all_mode_excludes_loopback_and_virtual();
     test_all_mode_new_iface_does_not_mask_existing_traffic();
-    test_all_mode_one_iface_reset_resets_aggregate_for_poll();
+    test_all_mode_one_iface_reset_does_not_mask_another();
     test_auto_mode_resets_baseline_on_iface_change();
     test_auto_mode_propagates_default_route_failure();
     test_manual_mode_missing_interface_is_not_found();
