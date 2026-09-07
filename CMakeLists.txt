@@ -27,8 +27,10 @@ endif()
 
 # --- core: portable C11 only, no OS headers ------------------------------------
 add_library(lp_core STATIC
+  src/core/format.c
   src/core/log.c
   src/core/net.c
+  src/core/sampler.c
   src/core/status.c
 )
 target_include_directories(lp_core PUBLIC include)
