@@ -26,9 +26,18 @@ cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw64.cmake
 cmake --build build
 ```
 
-This deploys `linkpulse.exe` to `out/windows/linkpulse.exe`. Run that binary from
-the Windows side — WSL2 sits behind a NAT'd virtual NIC, so counters read from
-inside WSL are not the host's real internet traffic.
+This deploys both `linkpulse.exe` and `linkpulse-tray.exe` to `out/windows/`. Run
+from the Windows side — WSL2 sits behind a NAT'd virtual NIC, so counters read
+from inside WSL are not the host's real internet traffic.
+
+`linkpulse.exe` is the CLI (`--list`, `--watch`, and a debug-friendly `--tray`
+with visible log output). `linkpulse-tray.exe` is a separate, argument-free,
+GUI-subsystem binary meant for real use and autostart — it never allocates or
+attaches a console, so it never flashes one on launch. They're two binaries
+rather than one dual-mode executable because `AttachConsole` (the usual way to
+keep CLI output working after switching an exe to the GUI subsystem) does not
+see a usable console when the process is launched through WSL interop, which
+would have broken this project's whole dev/test workflow.
 
 ## Layout
 
