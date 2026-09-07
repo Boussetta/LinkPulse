@@ -63,14 +63,14 @@ Rules:
 - [x] `lp_net_default_iface()` via `GetBestRoute2()`
 - [x] `lp_clock_monotonic_ns()` via `QueryPerformanceCounter`
 - [x] `linkpulse --list` dumps interfaces and counters
-- [ ] `lp_sampler`: fixed-interval polling, rate = Δbytes / Δt on the monotonic clock
-- [ ] Handle counter wraparound and NICs appearing/disappearing mid-run
-- [ ] Interface selection: auto (default route), manual override, or sum-of-all
-- [ ] Filter loopback and virtual adapters (WSL vEthernet, Hyper-V, VPN) — configurable
-- [ ] Formatting: b/s → Kb/s → Mb/s → Gb/s, with a bits/bytes toggle
-- [ ] Fixed-capacity ring buffer of the last N samples (feeds the M6 sparkline)
-- [ ] `linkpulse --watch` prints live up/down rates once per second
-- [ ] Unit tests against an injected fake counter source (no real network needed)
+- [x] `lp_sampler`: fixed-interval polling, rate = Δbytes / Δt on the monotonic clock
+- [x] Handle counter wraparound and NICs appearing/disappearing mid-run
+- [x] Interface selection: auto (default route), manual override, or sum-of-all
+- [x] Filter loopback and virtual adapters (WSL vEthernet, Hyper-V, VPN) — configurable
+- [x] Formatting: b/s → Kb/s → Mb/s → Gb/s, with a bits/bytes toggle
+- [x] Fixed-capacity ring buffer of the last N samples (feeds the M6 sparkline)
+- [x] `linkpulse --watch` prints live up/down rates once per second
+- [x] Unit tests against an injected fake counter source (no real network needed)
 
 ## Milestone 2 — System tray application (the first real deliverable)
 
