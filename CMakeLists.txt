@@ -53,6 +53,23 @@ target_compile_definitions(lp_platform PUBLIC _WIN32_WINNT=0x0A00 WIN32_LEAN_AND
 add_executable(linkpulse src/cli/main.c)
 target_link_libraries(linkpulse PRIVATE lp_platform lp_warnings)
 
+# Keep the debugger's program path independent of the selected generator.
+set(LINKPULSE_DEPLOY_DIR "${CMAKE_SOURCE_DIR}/out/windows")
+add_custom_command(TARGET linkpulse POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${LINKPULSE_DEPLOY_DIR}"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "$<TARGET_FILE:linkpulse>"
+    "${LINKPULSE_DEPLOY_DIR}/$<TARGET_FILE_NAME:linkpulse>"
+  VERBATIM)
+
+if(MSVC)
+  add_custom_command(TARGET linkpulse POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "$<TARGET_PDB_FILE:linkpulse>"
+      "${LINKPULSE_DEPLOY_DIR}/$<TARGET_PDB_FILE_NAME:linkpulse>"
+    VERBATIM)
+endif()
+
 if(LINKPULSE_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
