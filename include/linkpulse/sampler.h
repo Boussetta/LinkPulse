@@ -53,6 +53,10 @@ typedef struct {
     uint64_t baseline_tx_bytes;
     uint64_t baseline_timestamp_ns;
     char active_iface[LP_IFNAME_MAX]; /* resolved target for AUTO/MANUAL; unused for ALL */
+    size_t all_included_count;        /* interfaces summed last poll; unused for AUTO/MANUAL.
+                                          A count change is a coarse membership check: it
+                                          catches an adapter appearing/disappearing but not
+                                          a same-count swap (e.g. one replaced by another). */
 
     lp_rate_sample_t history[LP_SAMPLER_HISTORY_CAP];
     size_t history_count;

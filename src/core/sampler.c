@@ -4,6 +4,9 @@
 
 void lp_sampler_init(lp_sampler_t *sampler, const lp_sampler_config_t *config)
 {
+    if (sampler == NULL) {
+        return;
+    }
     memset(sampler, 0, sizeof(*sampler));
     if (config != NULL) {
         sampler->config = *config;
@@ -17,7 +20,7 @@ void lp_sampler_init(lp_sampler_t *sampler, const lp_sampler_config_t *config)
 
 void lp_sampler_set_sources(lp_sampler_t *sampler, const lp_sampler_sources_t *sources)
 {
-    if (sources == NULL) {
+    if (sampler == NULL || sources == NULL) {
         return;
     }
     if (sources->snapshot_fn != NULL) {
@@ -71,6 +74,7 @@ static lp_status_t resolve_totals(lp_sampler_t *sampler, const lp_iface_list_t *
     *iface_changed = false;
 
     if (sampler->config.mode == LP_IFACE_SELECT_ALL) {
+        size_t included_count = 0;
         for (size_t i = 0; i < list->count; ++i) {
             const lp_iface_t *iface = &list->items[i];
             if (iface->is_loopback) {
@@ -81,6 +85,13 @@ static lp_status_t resolve_totals(lp_sampler_t *sampler, const lp_iface_list_t *
             }
             *total_rx += iface->rx_bytes;
             *total_tx += iface->tx_bytes;
+            ++included_count;
+        }
+        /* A newly appeared (or removed) adapter changes what the sum represents;
+           without this, its pre-existing counters would look like a traffic spike. */
+        if (included_count != sampler->all_included_count) {
+            *iface_changed = true;
+            sampler->all_included_count = included_count;
         }
         return LP_OK;
     }
@@ -117,7 +128,8 @@ lp_status_t lp_sampler_poll(lp_sampler_t *sampler, lp_rate_sample_t *out)
 {
     if (sampler == NULL || out == NULL || sampler->sources.snapshot_fn == NULL ||
         sampler->sources.clock_fn == NULL ||
-        (sampler->config.mode == LP_IFACE_SELECT_AUTO && sampler->sources.default_iface_fn == NULL)) {
+        (sampler->config.mode == LP_IFACE_SELECT_AUTO &&
+         sampler->sources.default_iface_fn == NULL)) {
         return LP_ERR_INVALID_ARG;
     }
 
