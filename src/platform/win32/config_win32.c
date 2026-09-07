@@ -15,12 +15,18 @@ static bool config_path(char *out, size_t cap)
     if (len == 0 || len >= sizeof(appdata)) {
         return false;
     }
-    snprintf(out, cap, "%s\\LinkPulse", appdata);
-    if (!CreateDirectoryA(out, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
+
+    char dir[MAX_PATH + 32];
+    int written = snprintf(dir, sizeof(dir), "%s\\LinkPulse", appdata);
+    if (written < 0 || (size_t)written >= sizeof(dir)) {
+        return false; /* %APPDATA% too long to safely append our subdirectory to */
+    }
+    if (!CreateDirectoryA(dir, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
         return false;
     }
-    snprintf(out, cap, "%s\\LinkPulse\\config.ini", appdata);
-    return true;
+
+    written = snprintf(out, cap, "%s\\LinkPulse\\config.ini", appdata);
+    return written >= 0 && (size_t)written < cap;
 }
 
 lp_status_t lp_config_load(lp_config_t *config)
@@ -63,7 +69,7 @@ lp_status_t lp_config_load(lp_config_t *config)
 
 lp_status_t lp_config_save(const lp_config_t *config)
 {
-    char path[MAX_PATH];
+    char path[MAX_PATH + 32];
     if (!config_path(path, sizeof(path))) {
         return LP_ERR_IO;
     }

@@ -18,17 +18,34 @@
       "toolchainFile": "${sourceDir}/cmake/toolchain-mingw64.cmake",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" },
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+    {
+      "name": "mingw-cross-release",
+      "displayName": "MinGW-w64 cross-build, Release (WSL)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/mingw-release",
+      "toolchainFile": "${sourceDir}/cmake/toolchain-mingw64.cmake",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
     }
   ],
   "buildPresets": [
     { "name": "msvc-debug", "configurePreset": "msvc", "configuration": "Debug" },
-    { "name": "mingw-cross", "configurePreset": "mingw-cross" }
+    { "name": "msvc-release", "configurePreset": "msvc", "configuration": "Release" },
+    { "name": "mingw-cross", "configurePreset": "mingw-cross" },
+    { "name": "mingw-cross-release", "configurePreset": "mingw-cross-release" }
   ],
   "testPresets": [
     {
       "name": "msvc-debug",
       "configurePreset": "msvc",
       "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "msvc-release",
+      "configurePreset": "msvc",
+      "configuration": "Release",
       "output": { "outputOnFailure": true }
     }
   ]
