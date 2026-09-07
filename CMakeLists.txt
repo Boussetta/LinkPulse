@@ -45,6 +45,7 @@ if(NOT WIN32)
 endif()
 
 add_library(lp_platform STATIC
+  src/platform/win32/autostart_win32.c
   src/platform/win32/clock_win32.c
   src/platform/win32/config_win32.c
   src/platform/win32/net_win32.c
