@@ -16,7 +16,8 @@ option(LINKPULSE_BUILD_TESTS "Build the test suite" ON)
 # Shared warning configuration, consumed by every target.
 add_library(lp_warnings INTERFACE)
 if(MSVC)
-  target_compile_options(lp_warnings INTERFACE /W4 $<$<BOOL:${LINKPULSE_WERROR}>:/WX>)
+  target_compile_options(lp_warnings INTERFACE /W4 $<$<BOOL:${LINKPULSE_WERROR}>:/WX>
+    /experimental:c11atomics) # required for <stdatomic.h> (used in src/core/log.c)
   target_compile_definitions(lp_warnings INTERFACE _CRT_SECURE_NO_WARNINGS)
 else()
   target_compile_options(lp_warnings INTERFACE
