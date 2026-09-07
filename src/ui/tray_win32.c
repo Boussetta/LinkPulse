@@ -21,6 +21,10 @@
 #define IDM_UNITS_BITS 2002
 #define IDM_EXIT 2003
 
+/* Enough points to fill the icon at the largest realistic SM_CXSMICON (24px at
+   125% scaling); render_icon only ever reads the last `size` of them. */
+#define LP_TRAY_GRAPH_POINTS 32
+
 /* Cross-thread shared state, guarded by `lock`. Everything else below (nid,
    icon handles, timer/thread handles) is only ever touched by the UI thread. */
 typedef struct {
@@ -28,6 +32,8 @@ typedef struct {
     lp_rate_sample_t latest;
     lp_status_t latest_status;
     bool has_sample;
+    uint64_t rx_history[LP_TRAY_GRAPH_POINTS]; /* oldest first */
+    size_t rx_history_count;
 
     volatile LONG stop_requested;
     volatile LONG paused;
@@ -47,21 +53,6 @@ typedef struct {
    global avoids threading GWLP_USERDATA through every message handler. */
 static lp_tray_state_t g_tray;
 
-static void format_compact_rate(uint64_t bytes_per_sec, bool use_bits, char *out, size_t cap)
-{
-    double value = (double)bytes_per_sec;
-    if (use_bits) {
-        value *= 8.0;
-    }
-    if (value >= 999500.0) {
-        snprintf(out, cap, "%.0fM", value / 1e6);
-    } else if (value >= 999.5) {
-        snprintf(out, cap, "%.0fK", value / 1e3);
-    } else {
-        snprintf(out, cap, "%.0f", value);
-    }
-}
-
 /* The taskbar (and its clock/tray icons) follow "SystemUsesLightTheme", not the
    separate "AppsUseLightTheme" value that only affects app windows. Defaults
    to light (Windows' own default) if the value is missing. */
@@ -75,46 +66,12 @@ static bool is_taskbar_light_theme(void)
     return result != ERROR_SUCCESS || value != 0;
 }
 
-/* Widest pixel width (at the given font height) of `text` in the Segoe UI Bold
-   used for the icon, measured (not guessed) so callers never overflow it. */
-static int measure_text_width(HDC dc, int font_height, const char *text)
-{
-    LOGFONTA lf;
-    memset(&lf, 0, sizeof(lf));
-    lf.lfHeight = -font_height;
-    lf.lfWeight = FW_BOLD;
-    lf.lfQuality = NONANTIALIASED_QUALITY;
-    snprintf(lf.lfFaceName, LF_FACESIZE, "Segoe UI");
-    HFONT font = CreateFontIndirectA(&lf);
-    HFONT old_font = (HFONT)SelectObject(dc, font);
-
-    SIZE extent = {0, 0};
-    GetTextExtentPoint32A(dc, text, (int)strlen(text), &extent);
-
-    SelectObject(dc, old_font);
-    DeleteObject(font);
-    return extent.cx;
-}
-
-/* Largest font height (bounded by max_height) at which `text` fits within
-   max_width. A fixed guess can't work here: whatever height fits a short
-   string ("1") clips a long one ("1.2M") against the bitmap's actual edge,
-   which no clipping flag can prevent -- there's no pixel memory beyond it. */
-static int fit_font_height(HDC dc, int max_width, int max_height, const char *text)
-{
-    int height = max_height;
-    while (height > 5) {
-        if (measure_text_width(dc, height, text) <= max_width) {
-            return height;
-        }
-        --height;
-    }
-    return 5;
-}
-
-/* Renders a small 32bpp icon showing the download rate, abbreviated to fit.
+/* Renders a small 32bpp icon showing the download-rate history as a filled
+   area graph -- the same shape as Task Manager's throughput view, scaled to
+   the largest value currently visible. `history` is oldest-first; only its
+   last `size` entries are drawn (older ones scroll off, same as Task Manager).
    Caller destroys the returned icon. */
-static HICON render_icon(uint64_t rx_bps, bool use_bits)
+static HICON render_icon(const uint64_t *history, size_t history_count)
 {
     const int size = GetSystemMetrics(SM_CXSMICON);
     if (size <= 0) {
@@ -144,55 +101,33 @@ static HICON render_icon(uint64_t rx_bps, bool use_bits)
     }
     memset(bits, 0, (size_t)size * (size_t)size * 4); /* fully transparent background */
 
-    HDC mem_dc = CreateCompatibleDC(NULL);
-    HBITMAP old_bmp = (HBITMAP)SelectObject(mem_dc, color_bmp);
-    SetBkMode(mem_dc, TRANSPARENT);
-    /* Drawn in a sentinel color, not the final one: GDI text never touches the
-       alpha channel, so text and background would otherwise both end up
-       alpha=0. Detected below by exact color match and turned into real
-       per-pixel alpha, then recolored to the theme's actual text color. */
-    SetTextColor(mem_dc, RGB(255, 255, 255));
+    uint64_t max_value = 1; /* avoid a divide by zero; also keeps an all-zero window flat */
+    for (size_t i = 0; i < history_count; ++i) {
+        if (history[i] > max_value) {
+            max_value = history[i];
+        }
+    }
 
-    char down_str[8];
-    format_compact_rate(rx_bps, use_bits, down_str, sizeof(down_str));
-
-    /* No fixed font size can work for every string this can produce ("1", "999",
-       "1.2M", ...): a size that fits "1" would clip "1.2M" against the bitmap's
-       actual edge (no clipping flag can draw past that -- there's no pixel
-       memory beyond it), and a size chosen for the worst case would look tiny
-       for short values. Measure the string and use the largest height that
-       fits it, so it's never guessed and never overflows. */
-    const int font_height = fit_font_height(mem_dc, size, size, down_str);
-
-    LOGFONTA lf;
-    memset(&lf, 0, sizeof(lf));
-    lf.lfHeight = -font_height;
-    lf.lfWeight = FW_BOLD;
-    lf.lfQuality = NONANTIALIASED_QUALITY;            /* crisp on/off pixels, easy to alpha-key */
-    snprintf(lf.lfFaceName, LF_FACESIZE, "Segoe UI"); /* same family as the taskbar clock */
-    HFONT font = CreateFontIndirectA(&lf);
-    HFONT old_font = (HFONT)SelectObject(mem_dc, font);
-
-    RECT full_rect = {0, 0, size, size};
-    DrawTextA(mem_dc, down_str, -1, &full_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP);
-
-    SelectObject(mem_dc, old_font);
-    DeleteObject(font);
-    SelectObject(mem_dc, old_bmp);
-    DeleteDC(mem_dc);
-
-    /* Turn the sentinel-colored text pixels into real alpha, recolored to the
-       theme's actual text color; everything else stays fully transparent. If
-       every pixel were left at alpha=0, Windows falls back to interpreting the
-       (all-zero, i.e. "opaque") AND mask below, rendering a solid black square. */
     const COLORREF theme_color = is_taskbar_light_theme() ? RGB(0, 0, 0) : RGB(255, 255, 255);
-    const BYTE theme_r = GetRValue(theme_color);
-    const BYTE theme_g = GetGValue(theme_color);
-    const BYTE theme_b = GetBValue(theme_color);
+    const uint8_t theme_r = GetRValue(theme_color);
+    const uint8_t theme_g = GetGValue(theme_color);
+    const uint8_t theme_b = GetBValue(theme_color);
     uint8_t *pixels = (uint8_t *)bits;
-    for (int i = 0; i < size * size; ++i) {
-        uint8_t *pixel = pixels + (i * 4); /* B, G, R, A */
-        if (pixel[0] == 0xFF && pixel[1] == 0xFF && pixel[2] == 0xFF) {
+
+    for (int x = 0; x < size; ++x) {
+        /* Right-aligned: column `size - 1` is the newest point, matching Task
+           Manager's scrolling-graph convention. Columns before any history
+           exists (idx < 0) are left fully transparent. */
+        const long long idx = (long long)history_count - size + x;
+        const uint64_t value = (idx >= 0) ? history[idx] : 0;
+        const int bar_height = (int)((double)value * (size - 1) / (double)max_value + 0.5);
+        const int top_y = size - 1 - bar_height;
+
+        for (int y = top_y; y < size; ++y) {
+            if (y < 0) {
+                continue;
+            }
+            uint8_t *pixel = pixels + ((size_t)y * (size_t)size + (size_t)x) * 4; /* B,G,R,A */
             pixel[0] = theme_b;
             pixel[1] = theme_g;
             pixel[2] = theme_r;
@@ -230,6 +165,14 @@ static DWORD WINAPI sampler_thread_proc(LPVOID param)
             if (status == LP_OK) {
                 state->latest = sample;
                 state->has_sample = true;
+
+                if (state->rx_history_count < LP_TRAY_GRAPH_POINTS) {
+                    state->rx_history[state->rx_history_count++] = sample.rx_bytes_per_sec;
+                } else {
+                    memmove(state->rx_history, state->rx_history + 1,
+                            (LP_TRAY_GRAPH_POINTS - 1) * sizeof(state->rx_history[0]));
+                    state->rx_history[LP_TRAY_GRAPH_POINTS - 1] = sample.rx_bytes_per_sec;
+                }
             }
             LeaveCriticalSection(&state->lock);
         }
@@ -285,17 +228,21 @@ static void refresh_icon_and_tooltip(lp_tray_state_t *state)
     lp_rate_sample_t sample = {0, 0, 0};
     lp_status_t status = LP_ERR_NOT_FOUND;
     bool has_sample = false;
+    uint64_t history[LP_TRAY_GRAPH_POINTS];
+    size_t history_count = 0;
 
     EnterCriticalSection(&state->lock);
     sample = state->latest;
     status = state->latest_status;
     has_sample = state->has_sample;
+    history_count = state->rx_history_count;
+    memcpy(history, state->rx_history, history_count * sizeof(history[0]));
     LeaveCriticalSection(&state->lock);
 
     const bool paused = InterlockedCompareExchange(&state->paused, 0, 0) != 0;
     const bool use_bits = InterlockedCompareExchange(&state->use_bits, 0, 0) != 0;
 
-    HICON new_icon = render_icon(has_sample ? sample.rx_bytes_per_sec : 0, use_bits);
+    HICON new_icon = render_icon(history, history_count);
     if (new_icon != NULL) {
         state->nid.hIcon = new_icon;
         if (state->current_icon != NULL) {
@@ -416,7 +363,7 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
     g_tray.nid.uID = LP_TRAY_ICON_UID;
     g_tray.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_tray.nid.uCallbackMessage = WM_LP_TRAYICON;
-    g_tray.current_icon = render_icon(0, use_bits);
+    g_tray.current_icon = render_icon(NULL, 0);
     g_tray.nid.hIcon = g_tray.current_icon;
     snprintf(g_tray.nid.szTip, sizeof(g_tray.nid.szTip), "LinkPulse\nstarting...");
     Shell_NotifyIconA(NIM_ADD, &g_tray.nid);
