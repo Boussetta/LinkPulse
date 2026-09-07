@@ -12,6 +12,9 @@
 
 static void wide_to_utf8(const WCHAR *src, char *dst, size_t dst_cap)
 {
+    if (dst == NULL || dst_cap == 0) {
+        return;
+    }
     dst[0] = '\0';
     if (src == NULL || src[0] == L'\0') {
         return;
