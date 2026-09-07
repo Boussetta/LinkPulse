@@ -84,8 +84,9 @@ static void apply_line(lp_config_t *config, char *line)
     } else if (strcmp(key, "interval_ms") == 0) {
         char *end = NULL;
         const unsigned long parsed = strtoul(value, &end, 10);
-        if (end != value && *end == '\0' && parsed > 0) {
-            config->interval_ms = (unsigned)parsed;
+        const unsigned as_u = (unsigned)parsed;
+        if (end != value && *end == '\0' && parsed > 0 && (unsigned long)as_u == parsed) {
+            config->interval_ms = as_u;
         }
     }
 }
