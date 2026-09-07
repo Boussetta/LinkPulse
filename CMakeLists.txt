@@ -53,8 +53,9 @@ target_link_libraries(lp_platform PUBLIC iphlpapi ws2_32)
 target_compile_definitions(lp_platform PUBLIC _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # --- executable ----------------------------------------------------------------
-add_executable(linkpulse src/cli/main.c)
+add_executable(linkpulse src/cli/main.c src/ui/tray_win32.c)
 target_link_libraries(linkpulse PRIVATE lp_platform lp_warnings)
+target_link_libraries(linkpulse PRIVATE shell32 gdi32 user32)
 # Single source of truth for the version string, consumed by --version.
 target_compile_definitions(linkpulse PRIVATE LP_VERSION="${PROJECT_VERSION}")
 
