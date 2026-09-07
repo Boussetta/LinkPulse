@@ -55,7 +55,7 @@ Rules:
 - [x] CTest harness with a tiny assert helper
 - [x] MinGW-w64 cross-compile toolchain file for WSL
 - [x] GitHub Actions: MSVC build + tests, plus a MinGW cross-build
-- [ ] `clang-format` config + a `format` target
+- [x] `clang-format` config + a `format` target
 
 ## Milestone 1 — Bitrate engine (headless, testable)
 
