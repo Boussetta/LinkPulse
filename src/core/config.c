@@ -119,6 +119,10 @@ size_t lp_config_serialize(const lp_config_t *config, char *out, size_t cap)
     if (out == NULL || cap == 0) {
         return 0;
     }
+    if (config == NULL) {
+        out[0] = '\0';
+        return 0;
+    }
 
     const int written =
         snprintf(out, cap,
