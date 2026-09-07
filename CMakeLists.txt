@@ -87,7 +87,7 @@ find_program(LINKPULSE_CLANG_FORMAT NAMES
   clang-format-18 clang-format-17 clang-format-16 clang-format-15 clang-format-14
   clang-format-13 clang-format-12 clang-format-11 clang-format-10)
 if(LINKPULSE_CLANG_FORMAT)
-  file(GLOB_RECURSE LINKPULSE_FORMAT_SOURCES
+  file(GLOB_RECURSE LINKPULSE_FORMAT_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/include/*.h"
     "${CMAKE_SOURCE_DIR}/src/*.c"
     "${CMAKE_SOURCE_DIR}/src/*.h"
