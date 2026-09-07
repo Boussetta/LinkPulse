@@ -1,6 +1,7 @@
 #include "linkpulse/tray.h"
 
 #include "linkpulse/clock.h"
+#include "linkpulse/config.h"
 #include "linkpulse/format.h"
 #include "linkpulse/log.h"
 #include "linkpulse/net.h"
@@ -304,7 +305,18 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             show_context_menu(state);
         }
         return 0;
-    case WM_DESTROY:
+    case WM_DESTROY: {
+        lp_config_t config_to_save;
+        config_to_save.mode = state->sampler.config.mode;
+        snprintf(config_to_save.iface_name, sizeof(config_to_save.iface_name), "%s",
+                 state->sampler.config.iface_name);
+        config_to_save.include_virtual = state->sampler.config.include_virtual;
+        config_to_save.use_bits = InterlockedCompareExchange(&state->use_bits, 0, 0) != 0;
+        config_to_save.interval_ms = state->interval_ms;
+        if (lp_config_save(&config_to_save) != LP_OK) {
+            LP_WARN("failed to save config file");
+        }
+
         KillTimer(hwnd, LP_TRAY_TIMER_ID);
         Shell_NotifyIconA(NIM_DELETE, &state->nid);
         if (state->current_icon != NULL) {
@@ -320,6 +332,7 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         DeleteCriticalSection(&state->lock);
         PostQuitMessage(0);
         return 0;
+    }
     default:
         return DefWindowProcA(hwnd, msg, wparam, lparam);
     }
