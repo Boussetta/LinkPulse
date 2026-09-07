@@ -1,0 +1,37 @@
+# Matches the style already used across src/ and include/:
+# - K&R braces for control statements, structs, enums
+# - Allman (own-line) brace only for function definitions
+# - 4-space indent, no tabs
+
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: c++03 # irrelevant for C, silences a Standard-detection warning
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true
+  AfterControlStatement: false
+  AfterEnum: false
+  AfterStruct: false
+  AfterUnion: false
+  AfterExternBlock: false
+  BeforeElse: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+
+AlignAfterOpenBracket: Align
+AlignConsecutiveDeclarations: false
+AlignTrailingComments: true
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+IndentCaseLabels: false
+PointerAlignment: Right
+SpaceAfterCStyleCast: false
+SortIncludes: false # header ordering here is deliberate (deps before dependents)

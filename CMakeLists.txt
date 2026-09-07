@@ -80,3 +80,28 @@ if(LINKPULSE_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
 endif()
+
+# --- formatting ------------------------------------------------------------
+find_program(LINKPULSE_CLANG_FORMAT NAMES clang-format)
+if(LINKPULSE_CLANG_FORMAT)
+  file(GLOB_RECURSE LINKPULSE_FORMAT_SOURCES
+    "${CMAKE_SOURCE_DIR}/include/*.h"
+    "${CMAKE_SOURCE_DIR}/src/*.c"
+    "${CMAKE_SOURCE_DIR}/src/*.h"
+    "${CMAKE_SOURCE_DIR}/tests/*.c"
+    "${CMAKE_SOURCE_DIR}/tests/*.h")
+
+  add_custom_target(format
+    COMMAND ${LINKPULSE_CLANG_FORMAT} -i ${LINKPULSE_FORMAT_SOURCES}
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "Formatting sources with clang-format"
+    VERBATIM)
+
+  add_custom_target(format-check
+    COMMAND ${LINKPULSE_CLANG_FORMAT} --dry-run --Werror ${LINKPULSE_FORMAT_SOURCES}
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "Checking formatting with clang-format"
+    VERBATIM)
+else()
+  message(STATUS "clang-format not found: 'format'/'format-check' targets unavailable")
+endif()
