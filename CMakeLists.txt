@@ -27,6 +27,7 @@ endif()
 
 # --- core: portable C11 only, no OS headers ------------------------------------
 add_library(lp_core STATIC
+  src/core/config.c
   src/core/format.c
   src/core/log.c
   src/core/net.c
@@ -45,6 +46,7 @@ endif()
 
 add_library(lp_platform STATIC
   src/platform/win32/clock_win32.c
+  src/platform/win32/config_win32.c
   src/platform/win32/net_win32.c
 )
 target_link_libraries(lp_platform PUBLIC lp_core PRIVATE lp_warnings)
