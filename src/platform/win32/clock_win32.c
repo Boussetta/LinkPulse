@@ -2,6 +2,33 @@
 
 #include <windows.h>
 
+static uint64_t muldiv_fraction_u64(uint64_t value, uint32_t multiplier, uint64_t divisor)
+{
+    uint64_t quotient = 0;
+    uint64_t remainder = 0;
+
+    for (int bit = 31; bit >= 0; --bit) {
+        quotient *= 2;
+        if (remainder >= divisor - remainder) {
+            ++quotient;
+            remainder -= divisor - remainder;
+        } else {
+            remainder += remainder;
+        }
+
+        if ((multiplier & (1u << bit)) != 0u) {
+            if (remainder >= divisor - value) {
+                ++quotient;
+                remainder -= divisor - value;
+            } else {
+                remainder += value;
+            }
+        }
+    }
+
+    return quotient;
+}
+
 uint64_t lp_clock_monotonic_ns(void)
 {
     /* Queried every call rather than cached in a static: QueryPerformanceFrequency
@@ -19,7 +46,10 @@ uint64_t lp_clock_monotonic_ns(void)
 
     const uint64_t ticks = (uint64_t)now.QuadPart;
     const uint64_t f = (uint64_t)freq.QuadPart;
+    const uint64_t whole_seconds = ticks / f;
+    const uint64_t fractional_ticks = ticks % f;
 
-    /* Split to keep the intermediate product from overflowing after ~9 hours. */
-    return (ticks / f) * 1000000000ULL + ((ticks % f) * 1000000000ULL) / f;
+    /* Keep the nanosecond conversion exact without overflowing uint64_t
+       intermediates, even for unusually large counter frequencies. */
+    return whole_seconds * 1000000000ULL + muldiv_fraction_u64(fractional_ticks, 1000000000u, f);
 }

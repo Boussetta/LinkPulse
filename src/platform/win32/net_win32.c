@@ -7,6 +7,7 @@
 #include <iphlpapi.h>
 #include <netioapi.h>
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,7 +20,9 @@ static void wide_to_utf8(const WCHAR *src, char *dst, size_t dst_cap)
     if (src == NULL || src[0] == L'\0') {
         return;
     }
-    const int written = WideCharToMultiByte(CP_UTF8, 0, src, -1, dst, (int)dst_cap, NULL, NULL);
+    const size_t bounded_dst_cap = (dst_cap > (size_t)INT_MAX) ? (size_t)INT_MAX : dst_cap;
+    const int written =
+        WideCharToMultiByte(CP_UTF8, 0, src, -1, dst, (int)bounded_dst_cap, NULL, NULL);
     if (written <= 0) {
         dst[0] = '\0';
     }

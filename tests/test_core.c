@@ -89,9 +89,13 @@ static void with_captured_stderr(FILE *capture, void (*fn)(void))
     fn();
     fflush(stderr);
 
-    LP_CHECK(LP_DUP2(saved_stderr, stderr_fd) >= 0);
+    const int restore_status = LP_DUP2(saved_stderr, stderr_fd);
     LP_CLOSE(saved_stderr);
     atomic_flag_clear_explicit(&g_stderr_capture_lock, memory_order_release);
+    if (restore_status < 0) {
+        fputs("FAIL failed to restore stderr\n", stdout);
+        exit(EXIT_FAILURE);
+    }
 }
 
 static void log_hidden_debug_message(void)
