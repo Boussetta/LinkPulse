@@ -89,9 +89,9 @@ static void accumulate_target_delta(lp_sampler_t *sampler, const char *name, uin
     }
 
     entry->seen_this_poll = true;
-    if (entry->initialized && current_rx >= entry->rx_bytes && current_tx >= entry->tx_bytes) {
-        *delta_rx += current_rx - entry->rx_bytes;
-        *delta_tx += current_tx - entry->tx_bytes;
+    if (entry->initialized) {
+        if (current_rx >= entry->rx_bytes) *delta_rx += current_rx - entry->rx_bytes;
+        if (current_tx >= entry->tx_bytes) *delta_tx += current_tx - entry->tx_bytes;
     }
     entry->rx_bytes = current_rx;
     entry->tx_bytes = current_tx;
