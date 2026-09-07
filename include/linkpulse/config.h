@@ -1,6 +1,7 @@
 #ifndef LINKPULSE_CONFIG_H
 #define LINKPULSE_CONFIG_H
 
+#include <stdbool.h>
 #include <stddef.h>
 
 #include "linkpulse/sampler.h"
