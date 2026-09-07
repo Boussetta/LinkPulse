@@ -93,7 +93,9 @@ Rules:
 
 ## Milestone 3 — Configuration, persistence & polish
 
-- [ ] Config file (INI via vendored `inih`) under `%APPDATA%\LinkPulse`
+- [x] Config file: flat `key=value` text under `%APPDATA%\LinkPulse\config.ini` -- not vendored
+      `inih`, since a hand-rolled parser exactly matching our small flat schema (no sections
+      needed) is simpler to keep fully unit-tested than pulling in a general-purpose INI parser
 - [ ] Settings dialog from a Win32 dialog resource
 - [x] Light/dark tray adaptation: `SystemUsesLightTheme` registry value (the one that actually
       governs the taskbar/tray, not `AppsUseLightTheme` which only affects app window chrome),
