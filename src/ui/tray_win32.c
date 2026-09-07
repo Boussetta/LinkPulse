@@ -75,6 +75,44 @@ static bool is_taskbar_light_theme(void)
     return result != ERROR_SUCCESS || value != 0;
 }
 
+/* Widest pixel width (at the given font height) of `text` in the Segoe UI Bold
+   used for the icon, measured (not guessed) so callers never overflow it. */
+static int measure_text_width(HDC dc, int font_height, const char *text)
+{
+    LOGFONTA lf;
+    memset(&lf, 0, sizeof(lf));
+    lf.lfHeight = -font_height;
+    lf.lfWeight = FW_BOLD;
+    lf.lfQuality = NONANTIALIASED_QUALITY;
+    snprintf(lf.lfFaceName, LF_FACESIZE, "Segoe UI");
+    HFONT font = CreateFontIndirectA(&lf);
+    HFONT old_font = (HFONT)SelectObject(dc, font);
+
+    SIZE extent = {0, 0};
+    GetTextExtentPoint32A(dc, text, (int)strlen(text), &extent);
+
+    SelectObject(dc, old_font);
+    DeleteObject(font);
+    return extent.cx;
+}
+
+/* Largest font height (bounded by max_height) at which both `a` and `b` fit
+   within `max_width`. A fixed guess can't work here: whatever height fits a
+   short string ("1") clips a long one ("1.2M") against the bitmap's actual
+   edge, which no clipping flag can prevent -- there's no pixel memory beyond it. */
+static int fit_font_height(HDC dc, int max_width, int max_height, const char *a, const char *b)
+{
+    int height = max_height;
+    while (height > 5) {
+        if (measure_text_width(dc, height, a) <= max_width &&
+            measure_text_width(dc, height, b) <= max_width) {
+            return height;
+        }
+        --height;
+    }
+    return 5;
+}
+
 /* Renders a small 32bpp icon with the download rate on top and upload on the
    bottom, both abbreviated to fit. Caller destroys the returned icon. */
 static HICON render_icon(uint64_t rx_bps, uint64_t tx_bps, bool use_bits)
@@ -116,23 +154,28 @@ static HICON render_icon(uint64_t rx_bps, uint64_t tx_bps, bool use_bits)
        per-pixel alpha, then recolored to the theme's actual text color. */
     SetTextColor(mem_dc, RGB(255, 255, 255));
 
+    char down_str[8];
+    char up_str[8];
+    format_compact_rate(rx_bps, use_bits, down_str, sizeof(down_str));
+    format_compact_rate(tx_bps, use_bits, up_str, sizeof(up_str));
+
+    /* No fixed font size can work for every string this can produce ("1", "999",
+       "1.2M", ...): a size that fits "1" would clip "1.2M" against the bitmap's
+       actual edge (no clipping flag can draw past that -- there's no pixel
+       memory beyond it), and a size chosen for the worst case would look tiny
+       for short values. Measure both strings and use the largest height that
+       fits the wider of the two, so it's never guessed and never overflows. */
+    const int max_height = size * 13 / 20;
+    const int font_height = fit_font_height(mem_dc, size, max_height, down_str, up_str);
+
     LOGFONTA lf;
     memset(&lf, 0, sizeof(lf));
-    /* Deliberately taller than the half-icon row: Segoe UI's internal leading
-       otherwise leaves the glyphs looking small at this size, and DT_NOCLIP
-       below lets the (thin, at this size) strokes overflow their row rather
-       than getting clipped, without the two rows visually merging. */
-    lf.lfHeight = -(size * 13 / 20);
+    lf.lfHeight = -font_height;
     lf.lfWeight = FW_BOLD;
     lf.lfQuality = NONANTIALIASED_QUALITY;            /* crisp on/off pixels, easy to alpha-key */
     snprintf(lf.lfFaceName, LF_FACESIZE, "Segoe UI"); /* same family as the taskbar clock */
     HFONT font = CreateFontIndirectA(&lf);
     HFONT old_font = (HFONT)SelectObject(mem_dc, font);
-
-    char down_str[8];
-    char up_str[8];
-    format_compact_rate(rx_bps, use_bits, down_str, sizeof(down_str));
-    format_compact_rate(tx_bps, use_bits, up_str, sizeof(up_str));
 
     RECT top_rect = {0, 0, size, size / 2};
     RECT bottom_rect = {0, size / 2, size, size};
