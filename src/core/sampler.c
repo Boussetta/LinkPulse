@@ -87,16 +87,20 @@ static lp_status_t resolve_totals(lp_sampler_t *sampler, const lp_iface_list_t *
 
     char target[LP_IFNAME_MAX];
     if (sampler->config.mode == LP_IFACE_SELECT_MANUAL) {
-        memcpy(target, sampler->config.iface_name, sizeof(target));
+        strncpy(target, sampler->config.iface_name, sizeof(target));
+        target[sizeof(target) - 1] = '\0';
     } else {
-        if (sampler->sources.default_iface_fn(target, sizeof(target)) != LP_OK) {
-            return LP_ERR_NOT_FOUND;
+        const lp_status_t st = sampler->sources.default_iface_fn(target, sizeof(target));
+        if (st != LP_OK) {
+            return st;
         }
+        target[sizeof(target) - 1] = '\0';
     }
 
     if (strcmp(target, sampler->active_iface) != 0) {
         *iface_changed = true;
-        memcpy(sampler->active_iface, target, sizeof(sampler->active_iface));
+        strncpy(sampler->active_iface, target, sizeof(sampler->active_iface));
+        sampler->active_iface[sizeof(sampler->active_iface) - 1] = '\0';
     }
 
     const lp_iface_t *found = lp_iface_list_find(list, target);
