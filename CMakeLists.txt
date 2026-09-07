@@ -62,6 +62,27 @@ target_link_libraries(linkpulse PRIVATE shell32 gdi32 user32 advapi32)
 # Single source of truth for the version string, consumed by --version.
 target_compile_definitions(linkpulse PRIVATE LP_VERSION="${PROJECT_VERSION}")
 
+# --- tray-only executable --------------------------------------------------
+# A second, dedicated binary rather than making `linkpulse` itself GUI-subsystem:
+# AttachConsole(ATTACH_PARENT_PROCESS) -- the standard way to keep CLI output
+# working after switching subsystems -- does not see a usable console when
+# launched through WSL interop (confirmed: it attaches "successfully" to a
+# console invisible to the WSL terminal, and the raw inherited stdout handle
+# is not valid either). That would have broken this project's whole dev/test
+# loop. linkpulse-tray.exe instead takes no arguments and never touches stdio,
+# so it never needs a console in the first place; linkpulse.exe (this target,
+# console subsystem, unchanged) remains the CLI/debug tool, including its own
+# --tray for debugging with visible log output.
+add_executable(linkpulse-tray src/cli/tray_main.c src/ui/tray_win32.c)
+target_link_libraries(linkpulse-tray PRIVATE lp_platform lp_warnings)
+target_link_libraries(linkpulse-tray PRIVATE shell32 gdi32 user32 advapi32)
+target_compile_definitions(linkpulse-tray PRIVATE LP_VERSION="${PROJECT_VERSION}")
+if(MSVC)
+  set_target_properties(linkpulse-tray PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS")
+else()
+  target_link_options(linkpulse-tray PRIVATE -mwindows)
+endif()
+
 # Keep the debugger's program path independent of the selected generator.
 set(LINKPULSE_DEPLOY_DIR "${CMAKE_SOURCE_DIR}/out/windows")
 add_custom_command(TARGET linkpulse POST_BUILD
@@ -78,6 +99,22 @@ if(MSVC)
     COMMAND ${CMAKE_COMMAND}
       "-DLP_COPY_SRC=$<TARGET_PDB_FILE:linkpulse>"
       "-DLP_COPY_DST=${LINKPULSE_DEPLOY_DIR}/$<TARGET_PDB_FILE_NAME:linkpulse>"
+      -P "${CMAKE_SOURCE_DIR}/cmake/copy_if_exists.cmake"
+    VERBATIM)
+endif()
+
+add_custom_command(TARGET linkpulse-tray POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${LINKPULSE_DEPLOY_DIR}"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "$<TARGET_FILE:linkpulse-tray>"
+    "${LINKPULSE_DEPLOY_DIR}/$<TARGET_FILE_NAME:linkpulse-tray>"
+  VERBATIM)
+
+if(MSVC)
+  add_custom_command(TARGET linkpulse-tray POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+      "-DLP_COPY_SRC=$<TARGET_PDB_FILE:linkpulse-tray>"
+      "-DLP_COPY_DST=${LINKPULSE_DEPLOY_DIR}/$<TARGET_PDB_FILE_NAME:linkpulse-tray>"
       -P "${CMAKE_SOURCE_DIR}/cmake/copy_if_exists.cmake"
     VERBATIM)
 endif()
