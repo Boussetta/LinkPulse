@@ -138,8 +138,14 @@ Release workflow moved to Milestone 7, where it actually belongs.
 
 ## Milestone 7 — Distribution
 
-**Reprioritized ahead of M4-M6**: the goal is a Microsoft Store release, which needs packaging
-and a real installed location before any of M4-M6's added features matter.
+**Reprioritized ahead of M4-M6**: a real, installable build is needed before any of M4-M6's
+added features matter.
+
+**Near-term path: a free Inno Setup installer** (`packaging/LinkPulse.iss`), so day-to-day
+integration testing doesn't depend on any paid/gated infrastructure. **Microsoft Store
+distribution (MSIX) is deferred** until the installer path is proven out end-to-end --
+it requires a paid ($19) Partner Center developer account, so it's deliberately not the
+critical path right now.
 
 - [x] No-console-flash launch: a dedicated `linkpulse-tray.exe` (GUI subsystem, no arguments,
       never touches stdio) rather than making `linkpulse.exe` itself GUI-subsystem --
@@ -150,9 +156,18 @@ and a real installed location before any of M4-M6's added features matter.
       than the running binary itself, so toggling it from the debug CLI can't misfire.
 - [ ] MSVC Release build validated on a machine without the dev toolchain installed (avoids
       MinGW runtime DLL dependencies that wouldn't exist on a clean install)
+- [ ] Inno Setup installer (`packaging/LinkPulse.iss`): per-user install (no admin/UAC), Start
+      Menu shortcut, optional desktop shortcut, uninstaller registered in "Add/Remove
+      Programs", cleans up the `HKCU\...\Run` autostart entry on uninstall if present. Script
+      exists; still needs a real install/uninstall test on a native Windows machine with
+      Inno Setup installed
+- [ ] Documentation + screenshots
+
+### Deferred: Microsoft Store (MSIX) -- picked back up once the installer path is proven
+
 - [ ] MSIX packaging: `Package.appxmanifest`, Package Family Name, Store asset tiles
       (44x44, 150x150, 310x150, ...) -- separate from the tray icon. Manifest, a packaging
-      script (`packaging/build-msix.ps1`), and placeholder tile art now exist under
+      script (`packaging/build-msix.ps1`), and placeholder tile art already exist under
       `packaging/` -- still needed: the real Publisher CN/Package Family Name from Partner
       Center, replacing the placeholder art, and a local sideload test producing an actual
       installable MSIX
@@ -162,7 +177,6 @@ and a real installed location before any of M4-M6's added features matter.
       WSL-path fragility discovered during dev-environment testing
 - [ ] Release workflow publishing a signed-ready `linkpulse.exe` (moved from M3)
 - [ ] Auto-update check -- likely unnecessary if Store-distributed, since the Store handles updates
-- [ ] Documentation + screenshots
 - [ ] *(Owner-only, not automatable)*: Partner Center developer account, reserved app name,
       Store listing content (description, screenshots, age rating, privacy policy URL)
 
