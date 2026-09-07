@@ -3,6 +3,7 @@
 #include "linkpulse/log.h"
 #include "linkpulse/net.h"
 #include "linkpulse/sampler.h"
+#include "linkpulse/tray.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,11 +38,12 @@ static void print_usage(void)
            "Usage: linkpulse [options]\n\n"
            "  --list                 List network interfaces and their current byte counters\n"
            "  --watch                Print live download/upload rates once per second\n"
+           "  --tray                 Run as a system tray icon (right-click for options)\n"
            "  --iface <name>         Watch a specific interface instead of the default route\n"
            "  --all                  Watch the sum of all interfaces\n"
            "  --include-virtual      With --all, include virtual/pseudo adapters\n"
            "  --bits                 Show bit rates (Mb/s) instead of byte rates (MB/s)\n"
-           "  --interval <ms>        Poll interval for --watch, default 1000\n"
+           "  --interval <ms>        Poll interval for --watch/--tray, default 1000\n"
            "  --debug                Enable debug logging\n"
            "  --version              Print version and exit\n"
            "  --help                 Show this help\n");
@@ -117,6 +119,7 @@ int main(int argc, char **argv)
 {
     bool want_list = false;
     bool want_watch = false;
+    bool want_tray = false;
     bool use_bits = false;
     unsigned interval_ms = 1000;
     lp_sampler_config_t sampler_config = {LP_IFACE_SELECT_AUTO, "", false};
@@ -136,6 +139,8 @@ int main(int argc, char **argv)
             want_list = true;
         } else if (strcmp(argv[i], "--watch") == 0) {
             want_watch = true;
+        } else if (strcmp(argv[i], "--tray") == 0) {
+            want_tray = true;
         } else if (strcmp(argv[i], "--all") == 0) {
             sampler_config.mode = LP_IFACE_SELECT_ALL;
         } else if (strcmp(argv[i], "--include-virtual") == 0) {
@@ -177,6 +182,10 @@ int main(int argc, char **argv)
     }
 
     LP_DEBUG("monotonic clock reads %llu ns", (unsigned long long)lp_clock_monotonic_ns());
+
+    if (want_tray) {
+        return lp_tray_run(&sampler_config, use_bits, interval_ms);
+    }
 
     if (want_watch) {
         return watch_rate(&sampler_config, use_bits, interval_ms);
