@@ -1,4 +1,5 @@
 #include "linkpulse/clock.h"
+#include "linkpulse/config.h"
 #include "linkpulse/format.h"
 #include "linkpulse/log.h"
 #include "linkpulse/net.h"
@@ -120,9 +121,17 @@ int main(int argc, char **argv)
     bool want_list = false;
     bool want_watch = false;
     bool want_tray = false;
-    bool use_bits = false;
-    unsigned interval_ms = 1000;
-    lp_sampler_config_t sampler_config = {LP_IFACE_SELECT_AUTO, "", false};
+
+    lp_config_t saved_config;
+    if (lp_config_load(&saved_config) != LP_OK) {
+        LP_WARN("failed to read config file, using defaults");
+        lp_config_defaults(&saved_config);
+    }
+    bool use_bits = saved_config.use_bits;
+    unsigned interval_ms = saved_config.interval_ms;
+    lp_sampler_config_t sampler_config = {saved_config.mode, "", saved_config.include_virtual};
+    snprintf(sampler_config.iface_name, sizeof(sampler_config.iface_name), "%s",
+             saved_config.iface_name);
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--help") == 0) {
