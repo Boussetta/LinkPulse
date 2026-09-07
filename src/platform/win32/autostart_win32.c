@@ -7,6 +7,30 @@
 
 #define LP_AUTOSTART_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
 #define LP_AUTOSTART_VALUE "LinkPulse"
+#define LP_AUTOSTART_EXE_NAME "linkpulse-tray.exe"
+
+/* Resolves to linkpulse-tray.exe next to whichever binary is currently
+   running, not the currently running binary itself: toggling this from
+   linkpulse.exe (the console/debug CLI) must not register that one for
+   autostart, since it would flash a console at every login. */
+static bool tray_exe_path(char *out, size_t cap)
+{
+    char exe_path[MAX_PATH];
+    const DWORD len = GetModuleFileNameA(NULL, exe_path, sizeof(exe_path));
+    if (len == 0 || len >= sizeof(exe_path)) {
+        return false;
+    }
+
+    char *last_slash = strrchr(exe_path, '\\');
+    if (last_slash != NULL) {
+        *(last_slash + 1) = '\0';
+    } else {
+        exe_path[0] = '\0';
+    }
+
+    snprintf(out, cap, "%s%s", exe_path, LP_AUTOSTART_EXE_NAME);
+    return true;
+}
 
 bool lp_autostart_is_enabled(void)
 {
@@ -17,8 +41,7 @@ bool lp_autostart_is_enabled(void)
     }
     DWORD type = 0;
     DWORD size = 0;
-    const LONG result =
-        RegQueryValueExA(key, LP_AUTOSTART_VALUE, NULL, &type, NULL, &size);
+    const LONG result = RegQueryValueExA(key, LP_AUTOSTART_VALUE, NULL, &type, NULL, &size);
     RegCloseKey(key);
     return result == ERROR_SUCCESS;
 }
@@ -34,14 +57,13 @@ lp_status_t lp_autostart_set(bool enabled)
     lp_status_t status = LP_OK;
     if (enabled) {
         char exe_path[MAX_PATH];
-        const DWORD len = GetModuleFileNameA(NULL, exe_path, sizeof(exe_path));
-        if (len == 0 || len >= sizeof(exe_path)) {
+        if (!tray_exe_path(exe_path, sizeof(exe_path))) {
             RegCloseKey(key);
             return LP_ERR_IO;
         }
 
-        char command[MAX_PATH + 16];
-        snprintf(command, sizeof(command), "\"%s\" --tray", exe_path);
+        char command[MAX_PATH + 4];
+        snprintf(command, sizeof(command), "\"%s\"", exe_path);
 
         if (RegSetValueExA(key, LP_AUTOSTART_VALUE, 0, REG_SZ, (const BYTE *)command,
                            (DWORD)strlen(command) + 1) != ERROR_SUCCESS) {
