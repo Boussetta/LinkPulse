@@ -9,6 +9,7 @@
 #include <string.h>
 
 #if defined(_WIN32)
+#include <windows.h>
 #include <io.h>
 #define LP_DUP _dup
 #define LP_DUP2 _dup2
@@ -23,6 +24,29 @@
 #endif
 
 static atomic_flag g_stderr_capture_lock = ATOMIC_FLAG_INIT;
+
+/* tmpfile() fails on Windows without admin rights: the MSVCRT implementation
+   tries to create the file in the root of the current drive. */
+static FILE *lp_tmpfile(void)
+{
+#if defined(_WIN32)
+    char dir[MAX_PATH];
+    char path[MAX_PATH];
+    if (GetTempPathA(sizeof(dir), dir) == 0) {
+        return NULL;
+    }
+    if (GetTempFileNameA(dir, "lpt", 0, path) == 0) {
+        return NULL;
+    }
+    FILE *file = fopen(path, "w+bTD"); /* _O_TEMPORARY: deleted on close */
+    if (file == NULL) {
+        DeleteFileA(path);
+    }
+    return file;
+#else
+    return tmpfile();
+#endif
+}
 
 static void test_status_strings(void)
 {
@@ -114,7 +138,7 @@ static void log_visible_info_message(void)
 
 static void test_log_level_and_filtering(void)
 {
-    FILE *hidden_capture = tmpfile();
+    FILE *hidden_capture = lp_tmpfile();
     LP_CHECK(hidden_capture != NULL);
     if (hidden_capture == NULL) {
         return;
@@ -128,7 +152,7 @@ static void test_log_level_and_filtering(void)
     LP_CHECK_STR_EQ(buffer, "");
     fclose(hidden_capture);
 
-    FILE *visible_capture = tmpfile();
+    FILE *visible_capture = lp_tmpfile();
     LP_CHECK(visible_capture != NULL);
     if (visible_capture == NULL) {
         return;
