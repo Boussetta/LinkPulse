@@ -167,9 +167,16 @@ lp_status_t lp_sampler_poll(lp_sampler_t *sampler, lp_rate_sample_t *out)
 
 size_t lp_sampler_history(const lp_sampler_t *sampler, lp_rate_sample_t *out, size_t cap)
 {
+    if (sampler == NULL || out == NULL || cap == 0) {
+        return 0;
+    }
+
     const size_t count = (sampler->history_count < cap) ? sampler->history_count : cap;
+    const size_t start =
+        (sampler->history_head + (sampler->history_count - count)) % LP_SAMPLER_HISTORY_CAP;
+
     for (size_t i = 0; i < count; ++i) {
-        const size_t slot = (sampler->history_head + i) % LP_SAMPLER_HISTORY_CAP;
+        const size_t slot = (start + i) % LP_SAMPLER_HISTORY_CAP;
         out[i] = sampler->history[slot];
     }
     return count;
