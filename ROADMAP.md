@@ -102,7 +102,7 @@ Rules:
       re-checked instantly on `WM_SETTINGCHANGE` ("ImmersiveColorSet") rather than waiting for
       the next timer tick
 - [ ] Logging with rotation; `--debug` flag
-- [ ] Start-on-login via `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+- [x] Start-on-login via `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
 - [ ] Release workflow publishing a signed-ready `linkpulse.exe`
 
 ## Milestone 4 — Network host discovery
