@@ -151,7 +151,11 @@ and a real installed location before any of M4-M6's added features matter.
 - [ ] MSVC Release build validated on a machine without the dev toolchain installed (avoids
       MinGW runtime DLL dependencies that wouldn't exist on a clean install)
 - [ ] MSIX packaging: `Package.appxmanifest`, Package Family Name, Store asset tiles
-      (44x44, 150x150, 310x150, ...) -- separate from the tray icon
+      (44x44, 150x150, 310x150, ...) -- separate from the tray icon. Manifest, a packaging
+      script (`packaging/build-msix.ps1`), and placeholder tile art now exist under
+      `packaging/` -- still needed: the real Publisher CN/Package Family Name from Partner
+      Center, replacing the placeholder art, and a local sideload test producing an actual
+      installable MSIX
 - [ ] Windows App Certification Kit (WACK) pass
 - [ ] Autostart via the MSIX `StartupTask` manifest extension instead of (or in addition to)
       the current `HKCU\...\Run` key -- more idiomatic for a packaged app, and avoids the

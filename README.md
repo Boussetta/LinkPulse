@@ -52,6 +52,26 @@ tests/               CTest
 `src/core` must never include `windows.h`. Keeping that boundary is what makes
 the logic testable without a live network.
 
+## Packaging (MSIX)
+
+`packaging/` contains the pieces needed to produce an MSIX package for Store
+distribution: `Package.appxmanifest`, placeholder tile art under `Assets/`
+(see [packaging/Assets/README.md](packaging/Assets/README.md)), and
+`build-msix.ps1`, which stages the built `linkpulse-tray.exe` plus the
+manifest/assets and invokes the Windows SDK's `makepri`/`makeappx` tools to
+produce an unsigned `.msix`. Run on Windows, from a Developer PowerShell:
+
+```powershell
+cmake --preset msvc
+cmake --build --preset msvc-release
+.\packaging\build-msix.ps1
+```
+
+Before a real Store submission, replace the placeholder `Publisher`/
+`PublisherDisplayName` in the manifest with the values from your Partner
+Center app reservation, and replace the placeholder tile art.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
