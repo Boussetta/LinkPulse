@@ -8,4 +8,6 @@ function(lp_add_test name)
 endfunction()
 
 lp_add_test(test_core test_core.c)
-lp_add_test(test_clock test_clock.c)
+if(WIN32 AND NOT CMAKE_CROSSCOMPILING)
+  lp_add_test(test_clock test_clock.c)
+endif()

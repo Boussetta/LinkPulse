@@ -26,9 +26,9 @@ cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw64.cmake
 cmake --build build
 ```
 
-This produces `build/linkpulse.exe`. Copy it to the Windows side to run it —
-WSL2 sits behind a NAT'd virtual NIC, so counters read from inside WSL are not
-the host's real internet traffic.
+This deploys `linkpulse.exe` to `out/windows/linkpulse.exe`. Run that binary from
+the Windows side — WSL2 sits behind a NAT'd virtual NIC, so counters read from
+inside WSL are not the host's real internet traffic.
 
 ## Layout
 
