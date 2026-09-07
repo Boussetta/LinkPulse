@@ -2,6 +2,17 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "LinkPulse: tray Wi-Fi bits (MSVC Debug)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/out/windows/linkpulse.exe",
+      "args": ["--tray", "--iface", "Wi-Fi", "--bits"],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "preLaunchTask": "LinkPulse: build MSVC Debug"
+    },
+    {
       "name": "LinkPulse (MSVC Debug)",
       "type": "cppvsdbg",
       "request": "launch",
@@ -18,6 +29,28 @@
       "request": "launch",
       "program": "${workspaceFolder}/out/windows/linkpulse.exe",
       "args": ["--list"],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "preLaunchTask": "LinkPulse: build MSVC Debug"
+    },
+    {
+      "name": "LinkPulse: watch (MSVC Debug)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/out/windows/linkpulse.exe",
+      "args": ["--watch"],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "preLaunchTask": "LinkPulse: build MSVC Debug"
+    },
+    {
+      "name": "LinkPulse: tray, default interface (MSVC Debug)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/out/windows/linkpulse.exe",
+      "args": ["--tray"],
       "cwd": "${workspaceFolder}",
       "stopAtEntry": false,
       "console": "integratedTerminal",
