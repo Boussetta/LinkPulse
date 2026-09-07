@@ -44,8 +44,11 @@ if (-not (Test-Path $ExePath)) {
     throw "$ExePath not found. Build it first: cmake --build --preset msvc-release"
 }
 
-if (Test-Path $StagingDir) {
-    Remove-Item $StagingDir -Recurse -Force
+if (Test-Path -LiteralPath $StagingDir) {
+    $resolvedRepo = (Resolve-Path -LiteralPath $RepoRoot).Path
+    $resolvedStaging = (Resolve-Path -LiteralPath $StagingDir).Path
+    if (-not $resolvedStaging.StartsWith($resolvedRepo, [System.StringComparison]::OrdinalIgnoreCase)) { throw "Refusing to delete staging dir outside RepoRoot: $resolvedStaging" }
+    Remove-Item -LiteralPath $StagingDir -Recurse -Force
 }
 New-Item -ItemType Directory -Path $StagingDir | Out-Null
 New-Item -ItemType Directory -Path "$StagingDir\Assets" | Out-Null
