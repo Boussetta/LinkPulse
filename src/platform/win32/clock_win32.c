@@ -4,11 +4,12 @@
 
 uint64_t lp_clock_monotonic_ns(void)
 {
-    static LARGE_INTEGER freq;
-    if (freq.QuadPart == 0) {
-        if (!QueryPerformanceFrequency(&freq) || freq.QuadPart == 0) {
-            return 0;
-        }
+    /* Queried every call rather than cached in a static: QueryPerformanceFrequency
+       is cheap and fixed for the life of the process, and caching it in a plain
+       static would be an unsynchronized data race across threads. */
+    LARGE_INTEGER freq;
+    if (!QueryPerformanceFrequency(&freq) || freq.QuadPart == 0) {
+        return 0;
     }
 
     LARGE_INTEGER now;
