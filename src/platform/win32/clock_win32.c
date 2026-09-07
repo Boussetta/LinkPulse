@@ -9,19 +9,21 @@ static uint64_t muldiv_fraction_u64(uint64_t value, uint32_t multiplier, uint64_
 
     for (int bit = 31; bit >= 0; --bit) {
         quotient *= 2;
-        if (remainder >= divisor - remainder) {
+        const uint64_t doubled = remainder + remainder;
+        if (doubled < remainder || doubled >= divisor) {
             ++quotient;
-            remainder -= divisor - remainder;
+            remainder = doubled - divisor;
         } else {
-            remainder += remainder;
+            remainder = doubled;
         }
 
         if ((multiplier & (1u << bit)) != 0u) {
-            if (remainder >= divisor - value) {
+            const uint64_t sum = remainder + value;
+            if (sum < remainder || sum >= divisor) {
                 ++quotient;
-                remainder -= divisor - value;
+                remainder = sum - divisor;
             } else {
-                remainder += value;
+                remainder = sum;
             }
         }
     }

@@ -11,14 +11,7 @@
 #include <time.h>
 
 static atomic_int g_level = ATOMIC_VAR_INIT(LP_LOG_INFO);
-
-#if defined(_WIN32)
-#define LP_FLOCKFILE(stream) _lock_file(stream)
-#define LP_FUNLOCKFILE(stream) _unlock_file(stream)
-#else
-#define LP_FLOCKFILE(stream) flockfile(stream)
-#define LP_FUNLOCKFILE(stream) funlockfile(stream)
-#endif
+static atomic_flag g_log_lock = ATOMIC_FLAG_INIT;
 
 void lp_log_set_level(lp_log_level_t level)
 {
@@ -64,10 +57,11 @@ void lp_log(lp_log_level_t level, const char *fmt, ...)
 
     va_list args;
     va_start(args, fmt);
-    LP_FLOCKFILE(stderr);
+    while (atomic_flag_test_and_set_explicit(&g_log_lock, memory_order_acquire)) {
+    }
     fprintf(stderr, "[%s] %s ", stamp, level_tag(level));
     vfprintf(stderr, fmt, args);
     fputc('\n', stderr);
-    LP_FUNLOCKFILE(stderr);
+    atomic_flag_clear_explicit(&g_log_lock, memory_order_release);
     va_end(args);
 }
