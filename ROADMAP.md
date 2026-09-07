@@ -74,17 +74,22 @@ Rules:
 
 ## Milestone 2 — System tray application (the first real deliverable)
 
-- [ ] Message-only window (`HWND_MESSAGE`) + `Shell_NotifyIcon` with `NIF_ICON | NIF_TIP`
-- [ ] Render rate text with GDI into a 32bpp `CreateDIBSection`, convert via
+- [x] Hidden window + `Shell_NotifyIcon` with `NIF_ICON | NIF_MESSAGE | NIF_TIP` (a real hidden
+      window, not `HWND_MESSAGE`: message-only windows don't reliably dismiss `TrackPopupMenu`)
+- [x] Render rate text with GDI into a 32bpp `CreateDIBSection`, convert via
       `CreateIconIndirect`, and **`DestroyIcon` the previous icon every tick** — the classic
       GDI leak in this design
-- [ ] Handle `TaskbarCreated` (registered window message) to re-add the icon after Explorer restarts
-- [ ] DPI awareness manifest; pick 16/20/24 px icons from `GetSystemMetrics(SM_CXSMICON)`
-- [ ] Context menu (`TrackPopupMenu`): pause/resume, choose interface, units, settings, quit
-- [ ] Threading model: sampler on its own thread, UI updates marshalled with `PostMessage` —
-      never touch the icon off-thread
-- [ ] Graceful shutdown, single-instance lock via a named mutex
-- [ ] Smoke test: run a big download, confirm numbers match Task Manager
+- [x] Handle `TaskbarCreated` (registered window message) to re-add the icon after Explorer restarts
+- [ ] DPI awareness manifest; pick 16/20/24 px icons from `GetSystemMetrics(SM_CXSMICON)` --
+      currently always uses `SM_CXSMICON` with no manifest, untested at non-100% scaling
+- [x] Context menu (`TrackPopupMenu`): pause/resume, units toggle, quit -- interface selection
+      punted to the M3 settings dialog rather than a growing context menu
+- [x] Threading model: sampler on its own thread; result handed off through a
+      `CRITICAL_SECTION` (simpler and sufficient here since the UI thread only ever *reads*
+      the latest sample on a timer, rather than needing `PostMessage`'s ordered delivery)
+- [x] Graceful shutdown, single-instance lock via a named mutex
+- [ ] Smoke test: run a big download, confirm numbers match Task Manager -- needs verification
+      on native Windows; only confirmed the process starts and stays alive from WSL
 
 ## Milestone 3 — Configuration, persistence & polish
 
