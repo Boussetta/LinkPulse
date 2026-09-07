@@ -12,6 +12,14 @@
 
 static atomic_int g_level = ATOMIC_VAR_INIT(LP_LOG_INFO);
 
+#if defined(_WIN32)
+#define LP_FLOCKFILE(stream) _lock_file(stream)
+#define LP_FUNLOCKFILE(stream) _unlock_file(stream)
+#else
+#define LP_FLOCKFILE(stream) flockfile(stream)
+#define LP_FUNLOCKFILE(stream) funlockfile(stream)
+#endif
+
 void lp_log_set_level(lp_log_level_t level)
 {
     atomic_store_explicit(&g_level, (int)level, memory_order_relaxed);
@@ -54,12 +62,12 @@ void lp_log(lp_log_level_t level, const char *fmt, ...)
         strftime(stamp, sizeof(stamp), "%H:%M:%S", &tm_buf);
     }
 
-    fprintf(stderr, "[%s] %s ", stamp, level_tag(level));
-
     va_list args;
     va_start(args, fmt);
+    LP_FLOCKFILE(stderr);
+    fprintf(stderr, "[%s] %s ", stamp, level_tag(level));
     vfprintf(stderr, fmt, args);
-    va_end(args);
-
     fputc('\n', stderr);
+    LP_FUNLOCKFILE(stderr);
+    va_end(args);
 }
