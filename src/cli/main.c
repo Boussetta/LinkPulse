@@ -5,7 +5,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#define LP_VERSION "0.1.0"
+#ifndef LP_VERSION
+#define LP_VERSION "0.0.0-unknown" /* overridden by the CMake project version */
+#endif
 
 static void print_usage(void)
 {
