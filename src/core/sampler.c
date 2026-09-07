@@ -115,6 +115,12 @@ static lp_status_t resolve_totals(lp_sampler_t *sampler, const lp_iface_list_t *
 
 lp_status_t lp_sampler_poll(lp_sampler_t *sampler, lp_rate_sample_t *out)
 {
+    if (sampler == NULL || out == NULL || sampler->sources.snapshot_fn == NULL ||
+        sampler->sources.clock_fn == NULL ||
+        (sampler->config.mode == LP_IFACE_SELECT_AUTO && sampler->sources.default_iface_fn == NULL)) {
+        return LP_ERR_INVALID_ARG;
+    }
+
     lp_iface_list_t list;
     const lp_status_t snapshot_status = sampler->sources.snapshot_fn(&list);
     if (snapshot_status != LP_OK) {
