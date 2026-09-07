@@ -118,7 +118,11 @@ static HICON render_icon(uint64_t rx_bps, uint64_t tx_bps, bool use_bits)
 
     LOGFONTA lf;
     memset(&lf, 0, sizeof(lf));
-    lf.lfHeight = -(size / 2); /* fills each half-icon row as much as the square allows */
+    /* Deliberately taller than the half-icon row: Segoe UI's internal leading
+       otherwise leaves the glyphs looking small at this size, and DT_NOCLIP
+       below lets the (thin, at this size) strokes overflow their row rather
+       than getting clipped, without the two rows visually merging. */
+    lf.lfHeight = -(size * 13 / 20);
     lf.lfWeight = FW_BOLD;
     lf.lfQuality = NONANTIALIASED_QUALITY;            /* crisp on/off pixels, easy to alpha-key */
     snprintf(lf.lfFaceName, LF_FACESIZE, "Segoe UI"); /* same family as the taskbar clock */
