@@ -5,20 +5,21 @@
 
 #include "linkpulse/log.h"
 
+#include <stdatomic.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <time.h>
 
-static lp_log_level_t g_level = LP_LOG_INFO;
+static atomic_int g_level = ATOMIC_VAR_INIT(LP_LOG_INFO);
 
 void lp_log_set_level(lp_log_level_t level)
 {
-    g_level = level;
+    atomic_store_explicit(&g_level, (int)level, memory_order_relaxed);
 }
 
 lp_log_level_t lp_log_get_level(void)
 {
-    return g_level;
+    return (lp_log_level_t)atomic_load_explicit(&g_level, memory_order_relaxed);
 }
 
 static const char *level_tag(lp_log_level_t level)
@@ -38,7 +39,7 @@ static const char *level_tag(lp_log_level_t level)
 
 void lp_log(lp_log_level_t level, const char *fmt, ...)
 {
-    if (level > g_level) {
+    if (level > lp_log_get_level()) {
         return;
     }
 
