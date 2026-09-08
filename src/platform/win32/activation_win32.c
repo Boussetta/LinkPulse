@@ -42,6 +42,8 @@ struct LP_NOTIFICATION_ACTIVATION_CALLBACK {
     LONG refs;
 };
 
+static DWORD activator_thread_id = 0;
+
 static HRESULT STDMETHODCALLTYPE callback_query_interface(LP_NOTIFICATION_ACTIVATION_CALLBACK *self,
                                                             REFIID iid, void **object)
 {
@@ -87,6 +89,17 @@ static DWORD WINAPI activation_download_thread_proc(LPVOID param)
     return 0;
 }
 
+static HRESULT request_activator_shutdown(void)
+{
+    if (activator_thread_id == 0) {
+        return E_UNEXPECTED;
+    }
+    if (!PostThreadMessageA(activator_thread_id, WM_QUIT, 0, 0)) {
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
+    return S_OK;
+}
+
 static HRESULT STDMETHODCALLTYPE callback_activate(LP_NOTIFICATION_ACTIVATION_CALLBACK *self,
                                                    LPCWSTR app_user_model_id, LPCWSTR invoked_args,
                                                    const LP_NOTIFICATION_USER_INPUT_DATA *data,
@@ -96,16 +109,22 @@ static HRESULT STDMETHODCALLTYPE callback_activate(LP_NOTIFICATION_ACTIVATION_CA
     (void)app_user_model_id;
     (void)data;
     (void)data_count;
-    if (invoked_args == NULL || lstrcmpW(invoked_args, L"linkpulse://download-update") != 0) {
-        return S_OK;
+    HRESULT result = S_OK;
+    if (invoked_args != NULL && lstrcmpW(invoked_args, L"linkpulse://download-update") == 0) {
+        HANDLE download_thread =
+            CreateThread(NULL, 0, activation_download_thread_proc, NULL, 0, NULL);
+        if (download_thread == NULL) {
+            result = E_FAIL;
+        } else {
+            CloseHandle(download_thread);
+        }
     }
 
-    HANDLE download_thread = CreateThread(NULL, 0, activation_download_thread_proc, NULL, 0, NULL);
-    if (download_thread == NULL) {
-        return E_FAIL;
+    const HRESULT shutdown_result = request_activator_shutdown();
+    if (FAILED(result)) {
+        return result;
     }
-    CloseHandle(download_thread);
-    return S_OK;
+    return shutdown_result;
 }
 
 static const LP_NOTIFICATION_ACTIVATION_CALLBACK_VTBL callback_vtbl = {
@@ -189,19 +208,23 @@ int lp_win32_run_toast_activator(void)
 
     LP_ACTIVATOR_FACTORY factory = {&factory_vtbl, 1};
     DWORD cookie = 0;
+    MSG message;
+    activator_thread_id = GetCurrentThreadId();
+    PeekMessageA(&message, NULL, WM_USER, WM_USER, PM_NOREMOVE);
     result = CoRegisterClassObject(&CLSID_LinkPulseToastActivator, (IUnknown *)&factory,
                                    CLSCTX_LOCAL_SERVER, REGCLS_MULTIPLEUSE, &cookie);
     if (FAILED(result)) {
+        activator_thread_id = 0;
         CoUninitialize();
         return 1;
     }
 
-    MSG message;
     while (GetMessageA(&message, NULL, 0, 0) > 0) {
         TranslateMessage(&message);
         DispatchMessageA(&message);
     }
 
+    activator_thread_id = 0;
     CoRevokeClassObject(cookie);
     CoUninitialize();
     return 0;
