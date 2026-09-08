@@ -300,12 +300,13 @@ static void show_context_menu(lp_tray_state_t *state)
         AppendMenuA(menu, MF_STRING, IDM_UPDATE, "Download update");
     }
     AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
-    /* AppendMenuW (not the ANSI AppendMenuA used elsewhere) so the heart glyph
-       renders correctly; a menu happily mixes ANSI and Unicode items. A custom
-       MIIM_BITMAP icon was tried first, but Windows does not reliably
-       alpha-blend menu item bitmaps, which left an opaque black square instead
-       of a transparent heart. */
-    AppendMenuW(menu, MF_STRING, IDM_SUPPORT, L"\u2764 Sponsor");
+    /* Plain MF_STRING text is drawn in a single theme color, so a heart glyph
+       there renders black/monochrome, not GitHub's pink. Owner-draw the item
+       instead so the heart can be painted in color; see WM_MEASUREITEM /
+       WM_DRAWITEM below. (A custom MIIM_BITMAP icon was tried first, but
+       Windows does not reliably alpha-blend menu item bitmaps, which left an
+       opaque black square instead of a transparent heart.) */
+    AppendMenuW(menu, MF_OWNERDRAW, IDM_SUPPORT, NULL);
     AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(menu, MF_STRING, IDM_EXIT, "Exit");
 
@@ -410,6 +411,62 @@ static void refresh_icon_and_tooltip(lp_tray_state_t *state)
     Shell_NotifyIconA(NIM_MODIFY, &state->nid);
 }
 
+static const wchar_t LP_SPONSOR_ITEM_TEXT[] = L"\u2764  Sponsor";
+#define LP_SPONSOR_HEART_LEN 1 /* just the "\u2764" glyph, colored separately from the label */
+
+static void measure_sponsor_item(MEASUREITEMSTRUCT *item)
+{
+    HDC dc = GetDC(NULL);
+    SIZE extent = {0};
+    if (dc != NULL) {
+        HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HFONT previous_font = (HFONT)SelectObject(dc, font);
+        GetTextExtentPoint32W(dc, LP_SPONSOR_ITEM_TEXT,
+                              (int)(sizeof(LP_SPONSOR_ITEM_TEXT) / sizeof(wchar_t)) - 1, &extent);
+        SelectObject(dc, previous_font);
+        ReleaseDC(NULL, dc);
+    }
+
+    const int xpad = GetSystemMetrics(SM_CXEDGE);
+    const int gutter = GetSystemMetrics(SM_CXMENUCHECK) + 2 * xpad;
+    item->itemWidth = (UINT)extent.cx + (UINT)gutter + (UINT)xpad;
+
+    const UINT height = (UINT)(extent.cy + 2 * GetSystemMetrics(SM_CYEDGE));
+    const UINT min_height = (UINT)GetSystemMetrics(SM_CYMENU);
+    item->itemHeight = height > min_height ? height : min_height;
+}
+
+static void draw_sponsor_item(const DRAWITEMSTRUCT *item)
+{
+    const bool selected = (item->itemState & ODS_SELECTED) != 0;
+    FillRect(item->hDC, &item->rcItem,
+            GetSysColorBrush(selected ? COLOR_HIGHLIGHT : COLOR_MENU));
+
+    HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    HFONT previous_font = (HFONT)SelectObject(item->hDC, font);
+    SetBkMode(item->hDC, TRANSPARENT);
+
+    RECT text_rect = item->rcItem;
+    text_rect.left += 12;
+
+    /* GitHub Sponsor button pink; the label keeps the normal (selected vs.
+       not) menu text color instead of also being tinted pink. */
+    SetTextColor(item->hDC, RGB(0xEA, 0x4A, 0xAA));
+    DrawTextW(item->hDC, LP_SPONSOR_ITEM_TEXT, LP_SPONSOR_HEART_LEN, &text_rect,
+             DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+
+    SIZE heart_extent;
+    GetTextExtentPoint32W(item->hDC, LP_SPONSOR_ITEM_TEXT, LP_SPONSOR_HEART_LEN, &heart_extent);
+    text_rect.left += heart_extent.cx;
+
+    SetTextColor(item->hDC, GetSysColor(selected ? COLOR_HIGHLIGHTTEXT : COLOR_MENUTEXT));
+    DrawTextW(item->hDC, LP_SPONSOR_ITEM_TEXT + LP_SPONSOR_HEART_LEN,
+             (int)(sizeof(LP_SPONSOR_ITEM_TEXT) / sizeof(wchar_t)) - 1 - LP_SPONSOR_HEART_LEN,
+             &text_rect, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+
+    SelectObject(item->hDC, previous_font);
+}
+
 static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     lp_tray_state_t *state = &g_tray;
@@ -423,6 +480,22 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
     case WM_CREATE:
         SetTimer(hwnd, LP_TRAY_TIMER_ID, state->interval_ms, NULL);
         return 0;
+    case WM_MEASUREITEM: {
+        MEASUREITEMSTRUCT *mi = (MEASUREITEMSTRUCT *)lparam;
+        if (mi != NULL && mi->CtlType == ODT_MENU && mi->itemID == IDM_SUPPORT) {
+            measure_sponsor_item(mi);
+            return TRUE;
+        }
+        return DefWindowProcA(hwnd, msg, wparam, lparam);
+    }
+    case WM_DRAWITEM: {
+        DRAWITEMSTRUCT *di = (DRAWITEMSTRUCT *)lparam;
+        if (di != NULL && di->CtlType == ODT_MENU && di->itemID == IDM_SUPPORT) {
+            draw_sponsor_item(di);
+            return TRUE;
+        }
+        return DefWindowProcA(hwnd, msg, wparam, lparam);
+    }
     case WM_SETTINGCHANGE:
         /* Windows broadcasts this with lParam pointing to "ImmersiveColorSet"
            when the user toggles light/dark mode; without it, the icon would
