@@ -288,9 +288,16 @@ static HBITMAP render_heart_icon(void)
 
     void *bits = NULL;
     HDC screen_dc = GetDC(NULL);
-    HBITMAP bitmap = CreateDIBSection(screen_dc, (BITMAPINFO *)&bi, DIB_RGB_COLORS, &bits, NULL, 0);
+    if (screen_dc == NULL) {
+        return NULL;
+    }
+    HBITMAP bitmap =
+        CreateDIBSection(screen_dc, (BITMAPINFO *)&bi, DIB_RGB_COLORS, &bits, NULL, 0);
     ReleaseDC(NULL, screen_dc);
-    if (bitmap == NULL) {
+    if (bitmap == NULL || bits == NULL) {
+        if (bitmap != NULL) {
+            DeleteObject(bitmap);
+        }
         return NULL;
     }
     memset(bits, 0, (size_t)size * (size_t)size * 4);
