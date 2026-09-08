@@ -173,8 +173,12 @@ static void paint_map(HWND window, HDC dc)
         const int row = (int)visible_index / columns;
         const int device_x = columns == 1 ? center_x : 100 + column * 180;
         const int device_y = 310 + row * 80;
-        char label[32];
-        snprintf(label, sizeof(label), "Device %llu", (unsigned long long)visible_index + 1);
+        char label[LP_HOSTNAME_MAX];
+        if (neighbor->hostname[0] != '\0') {
+            snprintf(label, sizeof(label), "%s", neighbor->hostname);
+        } else {
+            snprintf(label, sizeof(label), "Device %llu", (unsigned long long)visible_index + 1);
+        }
         draw_node(dc, state->label_font, device_fill, line, text, label, neighbor->ip, device_x,
                 device_y, 150);
         ++visible_index;
@@ -306,7 +310,7 @@ void lp_network_map_show(HWND window, const lp_neighbor_list_t *neighbors,
     memset(&monitor_info, 0, sizeof(monitor_info));
     monitor_info.cbSize = sizeof(monitor_info);
     GetMonitorInfoA(monitor, &monitor_info);
-    int x = cursor.x - LP_MAP_WIDTH + 28;
+    int x = cursor.x - LP_MAP_WIDTH - 72;
     int y = monitor_info.rcWork.bottom - LP_MAP_HEIGHT - 8;
     if (x < monitor_info.rcWork.left + 8) {
         x = monitor_info.rcWork.left + 8;
