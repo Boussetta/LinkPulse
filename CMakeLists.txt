@@ -58,7 +58,7 @@ add_library(lp_platform STATIC
   src/platform/win32/update_win32.c
 )
 target_link_libraries(lp_platform PUBLIC lp_core PRIVATE lp_warnings)
-target_link_libraries(lp_platform PUBLIC iphlpapi runtimeobject winhttp ws2_32)
+target_link_libraries(lp_platform PUBLIC iphlpapi ole32 runtimeobject winhttp ws2_32)
 # Windows 10/11 API surface (GetIfTable2, GetBestRoute2).
 target_compile_definitions(lp_platform PUBLIC _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN NOMINMAX)
 
