@@ -21,7 +21,7 @@ int lp_win32_register_toast_shortcut(void)
 
     wchar_t shortcut_path[MAX_PATH];
     const int written = swprintf(shortcut_path, sizeof(shortcut_path) / sizeof(shortcut_path[0]),
-                                 L"%ls\\LinkPulse.lnk",
+                                 L"%ls\\LinkPulse\\LinkPulse.lnk",
                                  programs_path);
     if (written < 0 || (size_t)written >= sizeof(shortcut_path) / sizeof(shortcut_path[0])) {
         return 1;
