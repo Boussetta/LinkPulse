@@ -424,6 +424,7 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             CloseHandle(state->thread);
             state->thread = NULL;
         }
+        bool can_close_update_stop_event = (state->update_thread == NULL);
         if (state->update_thread != NULL) {
             SetEvent(state->update_stop_event);
             const DWORD wait_result =
@@ -432,11 +433,16 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
                 LP_WARN("update-check thread did not exit within %u ms; continuing shutdown",
                         (unsigned)LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
                 can_delete_lock = false;
+            } else if (wait_result == WAIT_OBJECT_0) {
+                can_close_update_stop_event = true;
+            } else {
+                LP_WARN("waiting for update-check thread failed during shutdown");
+                can_delete_lock = false;
             }
             CloseHandle(state->update_thread);
             state->update_thread = NULL;
         }
-        if (state->update_stop_event != NULL) {
+        if (state->update_stop_event != NULL && can_close_update_stop_event) {
             CloseHandle(state->update_stop_event);
             state->update_stop_event = NULL;
         }
