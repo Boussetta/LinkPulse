@@ -60,6 +60,23 @@ static void resolve_hostname(const SOCKADDR_INET *address, char *out, size_t out
     }
 }
 
+static lp_connection_type_t connection_type_for_interface(const NET_LUID *interface_luid)
+{
+    MIB_IF_ROW2 interface_row;
+    memset(&interface_row, 0, sizeof(interface_row));
+    interface_row.InterfaceLuid = *interface_luid;
+    if (GetIfEntry2(&interface_row) != NO_ERROR) {
+        return LP_CONNECTION_UNKNOWN;
+    }
+    if (interface_row.Type == IF_TYPE_IEEE80211) {
+        return LP_CONNECTION_WIFI;
+    }
+    if (interface_row.Type == IF_TYPE_ETHERNET_CSMACD) {
+        return LP_CONNECTION_ETHERNET;
+    }
+    return LP_CONNECTION_UNKNOWN;
+}
+
 lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
 {
     if (out == NULL) {
@@ -100,6 +117,7 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
         snprintf(neighbor->ip, sizeof(neighbor->ip), "%s", ip);
         format_mac(row->PhysicalAddress, row->PhysicalAddressLength, neighbor->mac,
                    sizeof(neighbor->mac));
+        neighbor->connection_type = connection_type_for_interface(&row->InterfaceLuid);
         if (winsock_ready) {
             resolve_hostname(&row->Address, neighbor->hostname, sizeof(neighbor->hostname));
         }

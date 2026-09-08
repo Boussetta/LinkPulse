@@ -14,10 +14,17 @@
 #define LP_DISCOVERY_MAX_EVENTS 32
 #define LP_DISCOVERY_MAX_NETWORKS 32
 
+typedef enum {
+    LP_CONNECTION_UNKNOWN = 0,
+    LP_CONNECTION_WIFI,
+    LP_CONNECTION_ETHERNET
+} lp_connection_type_t;
+
 typedef struct {
     char ip[LP_IP_STR_MAX];
     char mac[LP_MAC_STR_MAX];
     char hostname[LP_HOSTNAME_MAX];
+    lp_connection_type_t connection_type;
 } lp_neighbor_t;
 
 typedef struct {
