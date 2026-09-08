@@ -6,6 +6,7 @@
 #include "linkpulse/format.h"
 #include "linkpulse/log.h"
 #include "linkpulse/net.h"
+#include "linkpulse/notification.h"
 #include "linkpulse/sampler.h"
 #include "linkpulse/update.h"
 
@@ -236,8 +237,12 @@ static void show_update_notification(lp_tray_state_t *state)
     snprintf(notification.szInfoTitle, sizeof(notification.szInfoTitle), "LinkPulse update");
     snprintf(notification.szInfo, sizeof(notification.szInfo),
              "Version %s is available. Right-click the tray icon to download it.", version);
+    notification.uTimeout = 10000;
     notification.dwInfoFlags = NIIF_INFO;
     Shell_NotifyIconA(NIM_MODIFY, &notification);
+    if (!lp_win32_show_update_toast(version)) {
+        LP_WARN("failed to show Windows notification-center toast");
+    }
 }
 
 static void show_context_menu(lp_tray_state_t *state)
@@ -459,6 +464,7 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
 
 int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned interval_ms)
 {
+    lp_win32_set_app_user_model_id();
     HANDLE single_instance_mutex = CreateMutexA(NULL, FALSE, "Local\\LinkPulse_SingleInstance");
     if (single_instance_mutex == NULL || GetLastError() == ERROR_ALREADY_EXISTS) {
         LP_ERROR("LinkPulse is already running (check the system tray)");
