@@ -318,9 +318,15 @@ static void show_discovery_notifications(lp_tray_state_t *state)
 
     for (size_t i = 0; i < event_count; ++i) {
         const bool joined = events[i].type == LP_DISCOVERY_EVENT_JOINED;
-        char message[128];
-        snprintf(message, sizeof(message), "%s (%s)", joined ? "Connected" : "Disconnected",
-                 events[i].neighbor.ip);
+        char message[160];
+        if (events[i].neighbor.mac[0] != '\0') {
+            snprintf(message, sizeof(message), "%s\nIP: %s\nMAC: %s",
+                     joined ? "Connected" : "Disconnected", events[i].neighbor.ip,
+                     events[i].neighbor.mac);
+        } else {
+            snprintf(message, sizeof(message), "%s\nIP: %s", joined ? "Connected" : "Disconnected",
+                     events[i].neighbor.ip);
+        }
         if (!lp_win32_show_toast(joined ? "Network device joined" : "Network device left",
                                  message)) {
             LP_WARN("failed to show network discovery notification");

@@ -37,9 +37,10 @@ static HRESULT make_hstring(PCWSTR value, HSTRING *out)
     return WindowsCreateString(value, (UINT32)wcslen(value), out);
 }
 
-static bool show_toast_internal(const char *title, const char *message, bool update_action)
+static bool show_toast_internal(const char *title, const char *message, const char *tag,
+                                bool update_action)
 {
-    if (title == NULL || message == NULL) {
+    if (title == NULL || message == NULL || tag == NULL) {
         return false;
     }
 
@@ -51,11 +52,12 @@ static bool show_toast_internal(const char *title, const char *message, bool upd
                                  : L"";
     wchar_t xml[512];
     const int written = swprintf(xml, sizeof(xml) / sizeof(xml[0]),
-                                 L"<toast launch=\"%ls\"><visual>"
+                                 L"<toast launch=\"%ls\" tag=\"%hs\" group=\"LinkPulse\"><visual>"
                                  L"<binding template=\"ToastText02\">"
                                  L"<text id=\"1\">%hs</text>"
                                  L"<text id=\"2\">%hs</text>"
-                                 L"</binding></visual>%ls</toast>", launch_uri, title, message, actions);
+                                 L"</binding></visual>%ls</toast>", launch_uri, tag, title, message,
+                                 actions);
     if (written < 0 || (size_t)written >= sizeof(xml) / sizeof(xml[0])) {
         return false;
     }
@@ -165,10 +167,12 @@ static bool show_toast_internal(const char *title, const char *message, bool upd
 
 #else
 
-static bool show_toast_internal(const char *title, const char *message, bool update_action)
+static bool show_toast_internal(const char *title, const char *message, const char *tag,
+                                bool update_action)
 {
     (void)title;
     (void)message;
+    (void)tag;
     (void)update_action;
     return true;
 }
@@ -177,7 +181,10 @@ static bool show_toast_internal(const char *title, const char *message, bool upd
 
 bool lp_win32_show_toast(const char *title, const char *message)
 {
-    return show_toast_internal(title, message, false);
+    static unsigned long long next_tag;
+    char tag[32];
+    snprintf(tag, sizeof(tag), "event-%llu", ++next_tag);
+    return show_toast_internal(title, message, tag, false);
 }
 
 bool lp_win32_show_update_toast(const char *version)
@@ -188,7 +195,7 @@ bool lp_win32_show_update_toast(const char *version)
 
     char message[128];
     snprintf(message, sizeof(message), "Version %s is available.", version);
-    return show_toast_internal("LinkPulse update", message, true);
+    return show_toast_internal("LinkPulse update", message, "update", true);
 }
 
 void lp_win32_set_app_user_model_id(void)
