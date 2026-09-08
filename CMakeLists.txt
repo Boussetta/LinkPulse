@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
-project(linkpulse VERSION 0.1.0 LANGUAGES C)
+set(LINKPULSE_VERSION "0.1.0" CACHE STRING "LinkPulse version")
+if(NOT LINKPULSE_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+  message(FATAL_ERROR "LINKPULSE_VERSION must be MAJOR.MINOR.PATCH (e.g. 0.1.0); got '${LINKPULSE_VERSION}'")
+endif()
+project(linkpulse VERSION ${LINKPULSE_VERSION} LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
