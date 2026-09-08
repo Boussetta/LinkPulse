@@ -4,13 +4,14 @@
 #include <string.h>
 
 #define LP_MAP_WIDTH 380
-#define LP_MAP_HEIGHT 380
+#define LP_MAP_HEIGHT 430
 #define LP_MAP_MAX_VISIBLE_DEVICES 4
 
 typedef struct {
     lp_neighbor_list_t neighbors;
     lp_local_network_list_t networks;
     HFONT cloud_font;
+    HFONT icon_font;
     HFONT label_font;
     HBRUSH background_brush;
 } lp_network_map_state_t;
@@ -75,17 +76,59 @@ static void draw_node(HDC dc, HFONT font, COLORREF fill, COLORREF border, COLORR
     draw_centered_text(dc, font, text_color, detail, detail_rect);
 }
 
+static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF fill,
+                             COLORREF border, COLORREF text_color, COLORREF muted,
+                             const char *label, const lp_neighbor_t *neighbor, int center_x,
+                             int center_y)
+{
+    RECT node = {center_x - 75, center_y - 38, center_x + 75, center_y + 38};
+    HBRUSH brush = CreateSolidBrush(fill);
+    HPEN pen = CreatePen(PS_SOLID, 2, border);
+    HBRUSH old_brush = (HBRUSH)SelectObject(dc, brush);
+    HPEN old_pen = (HPEN)SelectObject(dc, pen);
+    RoundRect(dc, node.left, node.top, node.right, node.bottom, 12, 12);
+    SelectObject(dc, old_pen);
+    SelectObject(dc, old_brush);
+    DeleteObject(pen);
+    DeleteObject(brush);
+
+    RECT label_rect = {node.left + 8, node.top + 5, node.right - 8, node.top + 28};
+    draw_centered_text(dc, label_font, text_color, label, label_rect);
+    RECT detail_rect = {node.left + 8, node.top + 25, node.right - 8, node.top + 49};
+    draw_centered_text(dc, label_font, text_color, neighbor->ip, detail_rect);
+
+    const wchar_t *icon = NULL;
+    const char *connection = NULL;
+    if (neighbor->connection_type == LP_CONNECTION_WIFI) {
+        icon = L"\xE701";
+        connection = "Via Wi-Fi";
+    } else if (neighbor->connection_type == LP_CONNECTION_ETHERNET) {
+        icon = L"\xE839";
+        connection = "Via Ethernet";
+    }
+    if (icon != NULL) {
+        HFONT old_font = (HFONT)SelectObject(dc, icon_font);
+        SetTextColor(dc, muted);
+        SetBkMode(dc, TRANSPARENT);
+        RECT icon_rect = {center_x - 42, node.top + 48, center_x - 16, node.bottom - 3};
+        DrawTextW(dc, icon, 1, &icon_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, old_font);
+        RECT connection_rect = {center_x - 15, node.top + 48, center_x + 66, node.bottom - 3};
+        draw_centered_text(dc, label_font, muted, connection, connection_rect);
+    }
+}
+
 static void draw_internet_cloud(HDC dc, HFONT cloud_font, HFONT label_font, COLORREF fill,
                                 COLORREF text_color, int center_x)
 {
     HFONT old_font = (HFONT)SelectObject(dc, cloud_font);
     SetTextColor(dc, fill);
     SetBkMode(dc, TRANSPARENT);
-    RECT cloud_rect = {center_x - 80, 2, center_x + 80, 96};
+    RECT cloud_rect = {center_x - 100, -4, center_x + 100, 116};
     DrawTextW(dc, L"\x2601", 1, &cloud_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, old_font);
 
-    RECT label_rect = {center_x - 60, 38, center_x + 60, 70};
+    RECT label_rect = {center_x - 60, 46, center_x + 60, 78};
     draw_centered_text(dc, label_font, text_color, "Internet", label_rect);
 }
 
@@ -121,8 +164,8 @@ static void paint_map(HWND window, HDC dc)
     const size_t visible_count =
         device_count < LP_MAP_MAX_VISIBLE_DEVICES ? device_count : LP_MAP_MAX_VISIBLE_DEVICES;
     const int center_x = client.right / 2;
-    const int cloud_bottom_y = 88;
-    const int gateway_y = 140;
+    const int cloud_bottom_y = 104;
+    const int gateway_y = 165;
     char gateway[LP_IP_STR_MAX] = "No gateway";
     for (size_t i = 0; i < state->networks.count; ++i) {
         if (state->networks.items[i].gateway[0] != '\0') {
@@ -136,20 +179,6 @@ static void paint_map(HWND window, HDC dc)
     MoveToEx(dc, center_x, cloud_bottom_y, NULL);
     LineTo(dc, center_x, gateway_y - 31);
 
-    size_t visible_index = 0;
-    for (size_t i = 0; i < state->neighbors.count && visible_index < visible_count; ++i) {
-        if (!is_device_neighbor(state, &state->neighbors.items[i])) {
-            continue;
-        }
-        const int columns = visible_count > 1 ? 2 : 1;
-        const int column = (int)visible_index % columns;
-        const int row = (int)visible_index / columns;
-        const int device_x = columns == 1 ? center_x : 100 + column * 180;
-        const int device_y = 235 + row * 80;
-        MoveToEx(dc, center_x, gateway_y + 31, NULL);
-        LineTo(dc, device_x, device_y - 31);
-        ++visible_index;
-    }
     SelectObject(dc, old_pen);
     DeleteObject(line_pen);
 
@@ -157,7 +186,7 @@ static void paint_map(HWND window, HDC dc)
     draw_node(dc, state->label_font, gateway_fill, line, text, "Gateway", gateway, center_x,
               gateway_y, 170);
 
-    visible_index = 0;
+    size_t visible_index = 0;
     for (size_t i = 0; i < state->neighbors.count && visible_index < visible_count; ++i) {
         const lp_neighbor_t *neighbor = &state->neighbors.items[i];
         if (!is_device_neighbor(state, neighbor)) {
@@ -167,22 +196,30 @@ static void paint_map(HWND window, HDC dc)
         const int column = (int)visible_index % columns;
         const int row = (int)visible_index / columns;
         const int device_x = columns == 1 ? center_x : 100 + column * 180;
-        const int device_y = 235 + row * 80;
+        const int device_y = 275 + row * 95;
         char label[LP_HOSTNAME_MAX];
         if (neighbor->hostname[0] != '\0') {
             snprintf(label, sizeof(label), "%s", neighbor->hostname);
         } else {
             snprintf(label, sizeof(label), "Device %llu", (unsigned long long)visible_index + 1);
         }
-        draw_node(dc, state->label_font, device_fill, line, text, label, neighbor->ip, device_x,
-                device_y, 150);
+        draw_device_node(dc, state->label_font, state->icon_font, device_fill, line, text, muted,
+                 label, neighbor, device_x, device_y);
         ++visible_index;
     }
 
     if (visible_count == 0) {
-        RECT empty = {40, 220, client.right - 40, 280};
+        RECT empty = {40, 255, client.right - 40, 315};
         draw_centered_text(dc, state->label_font, muted, "Waiting for nearby devices...", empty);
     }
+
+    HBRUSH old_brush = (HBRUSH)SelectObject(dc, GetStockObject(NULL_BRUSH));
+    HPEN frame_pen = CreatePen(PS_SOLID, 1, line);
+    old_pen = (HPEN)SelectObject(dc, frame_pen);
+    RoundRect(dc, 0, 0, client.right, client.bottom, 24, 24);
+    SelectObject(dc, old_pen);
+    SelectObject(dc, old_brush);
+    DeleteObject(frame_pen);
 }
 
 static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wparam,
@@ -195,9 +232,12 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
         if (state == NULL) {
             return -1;
         }
-        state->cloud_font = CreateFontA(88, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        state->cloud_font = CreateFontA(112, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                         CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI Symbol");
+        state->icon_font = CreateFontA(15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                           CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe MDL2 Assets");
         state->label_font = CreateFontA(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                         CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
@@ -250,6 +290,7 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
             (lp_network_map_state_t *)GetWindowLongPtrA(window, GWLP_USERDATA);
         if (state != NULL) {
             DeleteObject(state->cloud_font);
+            DeleteObject(state->icon_font);
             DeleteObject(state->label_font);
             DeleteObject(state->background_brush);
             HeapFree(GetProcessHeap(), 0, state);
@@ -274,9 +315,16 @@ HWND lp_network_map_create(HINSTANCE instance, HWND owner)
         return NULL;
     }
 
-    return CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, window_class.lpszClassName,
-                           "LinkPulse network", WS_POPUP | WS_BORDER, 0, 0, LP_MAP_WIDTH,
-                           LP_MAP_HEIGHT, owner, NULL, instance, NULL);
+    HWND window = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, window_class.lpszClassName,
+                                  "LinkPulse network", WS_POPUP, 0, 0, LP_MAP_WIDTH,
+                                  LP_MAP_HEIGHT, owner, NULL, instance, NULL);
+    if (window != NULL) {
+        HRGN region = CreateRoundRectRgn(0, 0, LP_MAP_WIDTH + 1, LP_MAP_HEIGHT + 1, 24, 24);
+        if (region != NULL && SetWindowRgn(window, region, FALSE) == 0) {
+            DeleteObject(region);
+        }
+    }
+    return window;
 }
 
 void lp_network_map_show(HWND window, const lp_neighbor_list_t *neighbors,
