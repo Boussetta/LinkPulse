@@ -263,11 +263,6 @@ static void start_update_download(lp_tray_state_t *state)
     }
 }
 
-/* Renders a small filled heart (GitHub Sponsor button pink) as a 32bpp alpha
-   bitmap, via the implicit heart curve (x^2+y^2-1)^3 <= x^2*y^3 rather than
-   hand-drawn pixel art. Used as a menu item icon; the caller keeps the result
-   alive for as long as it's attached to a menu (Windows does not take
-   ownership of HBITMAP set via MIIM_BITMAP). */
 static void show_update_notification(lp_tray_state_t *state)
 {
     char version[LP_UPDATE_VERSION_MAX];
