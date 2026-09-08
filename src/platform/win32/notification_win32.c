@@ -3,17 +3,18 @@
 #include <string.h>
 #include <wchar.h>
 
+#define CINTERFACE
+#define COBJMACROS
+#define INITGUID
+#define WIDL_using_Windows_Data_Xml_Dom
+#define WIDL_using_Windows_UI_Notifications
+
 #include <windows.h>
 #include <shobjidl.h>
 
 #define LP_APP_USER_MODEL_ID L"LinkPulse.NetworkMonitor"
 
 #if defined(_MSC_VER)
-#define COBJMACROS
-#define CINTERFACE
-#define INITGUID
-#define WIDL_using_Windows_Data_Xml_Dom
-#define WIDL_using_Windows_UI_Notifications
 #include <roapi.h>
 #include <windows.data.xml.dom.h>
 #include <windows.ui.notifications.h>
