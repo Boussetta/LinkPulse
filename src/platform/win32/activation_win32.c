@@ -10,6 +10,7 @@
 #include <shellapi.h>
 
 #if defined(_MSC_VER)
+#define INITGUID
 #include <objbase.h>
 #include <unknwn.h>
 
