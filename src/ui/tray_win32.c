@@ -30,6 +30,7 @@
 #define IDM_AUTOSTART 2003
 #define IDM_EXIT 2004
 #define IDM_UPDATE 2005
+#define IDM_SUPPORT 2006
 
 /* Enough points to fill the icon at the largest realistic SM_CXSMICON (24px at
    125% scaling); render_icon only ever reads the last `size` of them. */
@@ -299,6 +300,8 @@ static void show_context_menu(lp_tray_state_t *state)
         AppendMenuA(menu, MF_STRING, IDM_UPDATE, "Download update");
     }
     AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(menu, MF_STRING, IDM_SUPPORT, "Support LinkPulse...");
+    AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(menu, MF_STRING, IDM_EXIT, "Exit");
 
     POINT cursor;
@@ -327,6 +330,17 @@ static void show_context_menu(lp_tray_state_t *state)
     case IDM_UPDATE:
         start_update_download(state);
         break;
+    case IDM_SUPPORT: {
+        /* Opt-in only: never shown automatically, no telemetry, just a link. */
+        const INT_PTR rc = (INT_PTR)ShellExecuteA(state->hwnd, "open",
+                                                "https://github.com/sponsors/Boussetta", NULL,
+                                                NULL, SW_SHOWNORMAL);
+        if (rc <= 32) {
+            MessageBoxA(state->hwnd, "Could not open the LinkPulse support page.", "LinkPulse",
+                        MB_OK | MB_ICONERROR);
+        }
+        break;
+    }
     case IDM_EXIT:
         DestroyWindow(state->hwnd);
         break;
