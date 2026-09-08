@@ -37,7 +37,12 @@ jobs:
       - name: Build Inno Setup installer
         shell: pwsh
         run: |
-          & ISCC.exe "packaging\LinkPulse.iss"
+          $issArgs = @("packaging\LinkPulse.iss")
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $installerVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+            $issArgs = @("/DMyAppVersion=$installerVersion", "packaging\LinkPulse.iss")
+          }
+          & ISCC.exe @issArgs
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }

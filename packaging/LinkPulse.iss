@@ -5,7 +5,9 @@
 ; Produces build\installer\LinkPulseSetup.exe.
 
 #define MyAppName "LinkPulse"
-#define MyAppVersion "0.1.0"
+#ifndef MyAppVersion
+  #define MyAppVersion "0.1.0"
+#endif
 #define MyAppPublisher "LinkPulse"
 #define MyAppURL "https://github.com/Boussetta/LinkPulse"
 #define MyAppExeName "linkpulse-tray.exe"
