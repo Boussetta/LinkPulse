@@ -4,13 +4,13 @@
 #include <string.h>
 
 #define LP_MAP_WIDTH 380
-#define LP_MAP_HEIGHT 440
+#define LP_MAP_HEIGHT 380
 #define LP_MAP_MAX_VISIBLE_DEVICES 4
 
 typedef struct {
     lp_neighbor_list_t neighbors;
     lp_local_network_list_t networks;
-    HFONT title_font;
+    HFONT cloud_font;
     HFONT label_font;
     HBRUSH background_brush;
 } lp_network_map_state_t;
@@ -75,6 +75,20 @@ static void draw_node(HDC dc, HFONT font, COLORREF fill, COLORREF border, COLORR
     draw_centered_text(dc, font, text_color, detail, detail_rect);
 }
 
+static void draw_internet_cloud(HDC dc, HFONT cloud_font, HFONT label_font, COLORREF fill,
+                                COLORREF text_color, int center_x)
+{
+    HFONT old_font = (HFONT)SelectObject(dc, cloud_font);
+    SetTextColor(dc, fill);
+    SetBkMode(dc, TRANSPARENT);
+    RECT cloud_rect = {center_x - 80, 2, center_x + 80, 96};
+    DrawTextW(dc, L"\x2601", 1, &cloud_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, old_font);
+
+    RECT label_rect = {center_x - 60, 38, center_x + 60, 70};
+    draw_centered_text(dc, label_font, text_color, "Internet", label_rect);
+}
+
 static void paint_map(HWND window, HDC dc)
 {
     lp_network_map_state_t *state =
@@ -95,15 +109,8 @@ static void paint_map(HWND window, HDC dc)
     const COLORREF gateway_fill = light ? RGB(221, 238, 224) : RGB(28, 70, 47);
     const COLORREF device_fill = light ? RGB(242, 244, 247) : RGB(44, 48, 55);
 
-    RECT title_rect = {28, 20, client.right - 60, 54};
-    HFONT old_font = (HFONT)SelectObject(dc, state->title_font);
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, text);
-    DrawTextA(dc, "Your network", -1, &title_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    SelectObject(dc, old_font);
-
-    RECT close_rect = {client.right - 52, 17, client.right - 16, 53};
-    draw_centered_text(dc, state->title_font, muted, "x", close_rect);
+    RECT close_rect = {client.right - 42, 8, client.right - 8, 42};
+    draw_centered_text(dc, state->label_font, muted, "x", close_rect);
 
     size_t device_count = 0;
     for (size_t i = 0; i < state->neighbors.count; ++i) {
@@ -113,20 +120,9 @@ static void paint_map(HWND window, HDC dc)
     }
     const size_t visible_count =
         device_count < LP_MAP_MAX_VISIBLE_DEVICES ? device_count : LP_MAP_MAX_VISIBLE_DEVICES;
-    char summary[64];
-    if (device_count > visible_count) {
-        snprintf(summary, sizeof(summary), "%llu of %llu devices shown",
-                 (unsigned long long)visible_count, (unsigned long long)device_count);
-    } else {
-        snprintf(summary, sizeof(summary), "%llu device%s visible",
-                 (unsigned long long)device_count, device_count == 1 ? "" : "s");
-    }
-    RECT summary_rect = {28, 51, client.right - 28, 78};
-    draw_centered_text(dc, state->label_font, muted, summary, summary_rect);
-
     const int center_x = client.right / 2;
-    const int internet_y = 115;
-    const int gateway_y = 210;
+    const int cloud_bottom_y = 88;
+    const int gateway_y = 140;
     char gateway[LP_IP_STR_MAX] = "No gateway";
     for (size_t i = 0; i < state->networks.count; ++i) {
         if (state->networks.items[i].gateway[0] != '\0') {
@@ -137,7 +133,7 @@ static void paint_map(HWND window, HDC dc)
 
     HPEN line_pen = CreatePen(PS_SOLID, 2, line);
     HPEN old_pen = (HPEN)SelectObject(dc, line_pen);
-    MoveToEx(dc, center_x, internet_y + 31, NULL);
+    MoveToEx(dc, center_x, cloud_bottom_y, NULL);
     LineTo(dc, center_x, gateway_y - 31);
 
     size_t visible_index = 0;
@@ -149,7 +145,7 @@ static void paint_map(HWND window, HDC dc)
         const int column = (int)visible_index % columns;
         const int row = (int)visible_index / columns;
         const int device_x = columns == 1 ? center_x : 100 + column * 180;
-        const int device_y = 310 + row * 80;
+        const int device_y = 235 + row * 80;
         MoveToEx(dc, center_x, gateway_y + 31, NULL);
         LineTo(dc, device_x, device_y - 31);
         ++visible_index;
@@ -157,8 +153,7 @@ static void paint_map(HWND window, HDC dc)
     SelectObject(dc, old_pen);
     DeleteObject(line_pen);
 
-    draw_node(dc, state->label_font, internet_fill, line, text, "Internet", "WAN", center_x,
-              internet_y, 150);
+    draw_internet_cloud(dc, state->cloud_font, state->label_font, internet_fill, text, center_x);
     draw_node(dc, state->label_font, gateway_fill, line, text, "Gateway", gateway, center_x,
               gateway_y, 170);
 
@@ -172,7 +167,7 @@ static void paint_map(HWND window, HDC dc)
         const int column = (int)visible_index % columns;
         const int row = (int)visible_index / columns;
         const int device_x = columns == 1 ? center_x : 100 + column * 180;
-        const int device_y = 310 + row * 80;
+        const int device_y = 235 + row * 80;
         char label[LP_HOSTNAME_MAX];
         if (neighbor->hostname[0] != '\0') {
             snprintf(label, sizeof(label), "%s", neighbor->hostname);
@@ -185,7 +180,7 @@ static void paint_map(HWND window, HDC dc)
     }
 
     if (visible_count == 0) {
-        RECT empty = {40, 320, client.right - 40, 380};
+        RECT empty = {40, 220, client.right - 40, 280};
         draw_centered_text(dc, state->label_font, muted, "Waiting for nearby devices...", empty);
     }
 }
@@ -200,9 +195,9 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
         if (state == NULL) {
             return -1;
         }
-        state->title_font = CreateFontA(24, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-                                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                        CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
+        state->cloud_font = CreateFontA(88, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                        CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI Symbol");
         state->label_font = CreateFontA(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                         CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
@@ -254,7 +249,7 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
         lp_network_map_state_t *state =
             (lp_network_map_state_t *)GetWindowLongPtrA(window, GWLP_USERDATA);
         if (state != NULL) {
-            DeleteObject(state->title_font);
+            DeleteObject(state->cloud_font);
             DeleteObject(state->label_font);
             DeleteObject(state->background_brush);
             HeapFree(GetProcessHeap(), 0, state);
