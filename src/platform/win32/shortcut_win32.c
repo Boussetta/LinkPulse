@@ -62,6 +62,7 @@ int lp_win32_register_toast_shortcut(void)
     if (SUCCEEDED(result)) {
         result = link->lpVtbl->QueryInterface(link, &IID_IPropertyStore, (void **)&properties);
     }
+    LP_INFO("toast shortcut path: %ls", shortcut_path);
     if (SUCCEEDED(result)) {
         CLSID activator_clsid;
         result = CLSIDFromString(LP_TOAST_ACTIVATOR_CLSID_STRING, &activator_clsid);
@@ -78,6 +79,9 @@ int lp_win32_register_toast_shortcut(void)
                                                        &value);
                 if (SUCCEEDED(result)) {
                     result = properties->lpVtbl->Commit(properties);
+                }
+                if (SUCCEEDED(result)) {
+                    result = persist->lpVtbl->Save(persist, shortcut_path, TRUE);
                 }
             }
             PropVariantClear(&value);
