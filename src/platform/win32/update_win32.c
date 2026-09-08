@@ -190,13 +190,25 @@ lp_status_t lp_update_download_latest(char *installer_path, size_t path_cap)
         return LP_ERR_IO;
     }
 
+    if (path_cap < MAX_PATH) {
+        return LP_ERR_INVALID_ARG;
+    }
     char temp_directory[MAX_PATH];
     const DWORD temp_length = GetTempPathA(sizeof(temp_directory), temp_directory);
+    char temp_file[MAX_PATH];
     if (temp_length == 0 || temp_length >= sizeof(temp_directory) ||
-        GetTempFileNameA(temp_directory, "LP", 0, installer_path) == 0) {
+        GetTempFileNameA(temp_directory, "LP", 0, temp_file) == 0) {
         return LP_ERR_IO;
     }
-
+    DeleteFileA(temp_file);
+    char *dot = strrchr(temp_file, '.');
+    if (dot != NULL) {
+        *dot = '\0';
+    }
+    const int installer_written = snprintf(installer_path, path_cap, "%s.exe", temp_file);
+    if (installer_written < 0 || (size_t)installer_written >= path_cap) {
+        return LP_ERR_IO;
+    }
     HANDLE output = CreateFileA(installer_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
                                  FILE_ATTRIBUTE_NORMAL, NULL);
     if (output == INVALID_HANDLE_VALUE) {
