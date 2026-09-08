@@ -9,6 +9,11 @@
 #include <objbase.h>
 #include <windows.h>
 
+#ifndef PKEY_AppUserModel_ToastActivatorCLSID
+DEFINE_PROPERTYKEY(PKEY_AppUserModel_ToastActivatorCLSID,
+                   0x9f4c2855, 0x9f79, 0x4b39, 0xa8, 0xd0, 0xe1, 0xd4, 0x2d, 0xe1, 0xd5, 0xf3, 26);
+#endif
+
 #define LP_TOAST_ACTIVATOR_CLSID_STRING L"{7F2D2E64-9B2A-4B2D-8B4D-714C5A832E11}"
 #define LP_APP_USER_MODEL_ID L"LinkPulse.NetworkMonitor"
 
