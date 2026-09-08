@@ -13,6 +13,8 @@ typedef struct {
     bool include_virtual;
     bool use_bits;
     unsigned interval_ms;
+    bool ads_enabled;
+    bool distributed_compute_enabled;
 } lp_config_t;
 
 void lp_config_defaults(lp_config_t *config);

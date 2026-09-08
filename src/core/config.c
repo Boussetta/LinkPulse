@@ -11,6 +11,8 @@ void lp_config_defaults(lp_config_t *config)
     config->include_virtual = false;
     config->use_bits = false;
     config->interval_ms = 1000;
+    config->ads_enabled = true;
+    config->distributed_compute_enabled = false;
 }
 
 static const char *mode_name(lp_iface_select_mode_t mode)
@@ -88,6 +90,18 @@ static void apply_line(lp_config_t *config, char *line)
         if (end != value && *end == '\0' && parsed > 0 && (unsigned long)as_u == parsed) {
             config->interval_ms = as_u;
         }
+    } else if (strcmp(key, "ads_enabled") == 0) {
+        if (strcmp(value, "1") == 0) {
+            config->ads_enabled = true;
+        } else if (strcmp(value, "0") == 0) {
+            config->ads_enabled = false;
+        }
+    } else if (strcmp(key, "distributed_compute_enabled") == 0) {
+        if (strcmp(value, "1") == 0) {
+            config->distributed_compute_enabled = true;
+        } else if (strcmp(value, "0") == 0) {
+            config->distributed_compute_enabled = false;
+        }
     }
 }
 
@@ -130,9 +144,12 @@ size_t lp_config_serialize(const lp_config_t *config, char *out, size_t cap)
                  "iface=%s\n"
                  "include_virtual=%d\n"
                  "use_bits=%d\n"
-                 "interval_ms=%u\n",
+                 "interval_ms=%u\n"
+                 "ads_enabled=%d\n"
+                 "distributed_compute_enabled=%d\n",
                  mode_name(config->mode), config->iface_name, config->include_virtual ? 1 : 0,
-                 config->use_bits ? 1 : 0, config->interval_ms);
+                 config->use_bits ? 1 : 0, config->interval_ms, config->ads_enabled ? 1 : 0,
+                 config->distributed_compute_enabled ? 1 : 0);
 
     if (written < 0) {
         out[0] = '\0';
