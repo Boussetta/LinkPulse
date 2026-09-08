@@ -231,7 +231,7 @@ static DWORD WINAPI download_thread_proc(LPVOID param)
     lp_tray_state_t *state = (lp_tray_state_t *)param;
     char installer_path[MAX_PATH];
     if (lp_update_download_latest(installer_path, sizeof(installer_path)) != LP_OK) {
-        MessageBoxA(state->hwnd, "Could not download the LinkPulse update.", "LinkPulse update",
+        MessageBoxA(NULL, "Could not download the LinkPulse update.", "LinkPulse update",
                     MB_OK | MB_ICONERROR);
     } else if ((INT_PTR)ShellExecuteA(NULL, "open", installer_path, NULL, NULL, SW_SHOWNORMAL) <= 32) {
         DeleteFileA(installer_path);
