@@ -156,11 +156,10 @@ critical path right now.
       than the running binary itself, so toggling it from the debug CLI can't misfire.
 - [ ] MSVC Release build validated on a machine without the dev toolchain installed (avoids
       MinGW runtime DLL dependencies that wouldn't exist on a clean install)
-- [ ] Inno Setup installer (`packaging/LinkPulse.iss`): per-user install (no admin/UAC), Start
+- [x] Inno Setup installer (`packaging/LinkPulse.iss`): per-user install (no admin/UAC), Start
       Menu shortcut, optional desktop shortcut, uninstaller registered in "Add/Remove
       Programs", cleans up the `HKCU\...\Run` autostart entry on uninstall if present. Script
-      exists; still needs a real install/uninstall test on a native Windows machine with
-      Inno Setup installed
+      validated on a native Windows machine, including startup after reboot
 - [ ] Documentation + screenshots
 
 ### Deferred: Microsoft Store (MSIX) -- picked back up once the installer path is proven
@@ -184,8 +183,8 @@ critical path right now.
 
 ## Next up
 
-**M1 sampler**: `lp_sampler` on top of the existing `lp_net_snapshot()`, plus `--watch` and unit
-tests driven by a fake counter source. All of it is testable without a GUI.
+**M4 host discovery**: begin with local subnet/gateway enumeration and passive neighbour-table
+discovery. Keep the first slice privilege-free and independently testable behind injected sources.
 
 ## Open questions
 
