@@ -74,15 +74,16 @@ Produces `build\installer\LinkPulseSetup.exe`.
 ### Hosting releases on GitHub
 
 The `Release` workflow builds the MSVC Release binaries, runs the tests,
-compiles the installer, and attaches `LinkPulseSetup.exe` to a GitHub Release.
-Publish a version by pushing a tag from `main`:
+compiles the Inno Setup installer, and attaches `LinkPulseSetup.exe` to a
+GitHub Release. To publish a version, push a tag from `main`:
 
 ```powershell
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-GitHub provides the hosting and download bandwidth for free.
+The finished installer is then available from the repository's **Releases**
+page. GitHub provides the hosting and download bandwidth for free.
 
 ### Update detection
 
