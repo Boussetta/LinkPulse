@@ -10,6 +10,13 @@
 #include <objbase.h>
 #include <windows.h>
 
+#ifndef PKEY_AppUserModel_ToastActivatorCLSID
+static const PROPERTYKEY LP_PKEY_AppUserModel_ToastActivatorCLSID = {
+    {0x9f4c2855, 0x9f79, 0x4b39, {0xa8, 0xd0, 0xe1, 0xd4, 0x2d, 0xe1, 0xd5, 0xf3}},
+    26};
+#define PKEY_AppUserModel_ToastActivatorCLSID LP_PKEY_AppUserModel_ToastActivatorCLSID
+#endif
+
 #define LP_TOAST_ACTIVATOR_CLSID_STRING L"{7F2D2E64-9B2A-4B2D-8B4D-714C5A832E11}"
 #define LP_APP_USER_MODEL_ID L"LinkPulse.NetworkMonitor"
 
@@ -27,7 +34,7 @@ int lp_win32_register_toast_shortcut(void)
 
     wchar_t shortcut_path[MAX_PATH];
     const int written = swprintf(shortcut_path, sizeof(shortcut_path) / sizeof(shortcut_path[0]),
-                                 L"%ls\\LinkPulse.lnk",
+                                 L"%ls\\LinkPulse\\LinkPulse.lnk",
                                  programs_path);
     if (written < 0 || (size_t)written >= sizeof(shortcut_path) / sizeof(shortcut_path[0])) {
         LP_ERROR("failed to build toast shortcut path (buffer too small)");
@@ -56,22 +63,26 @@ int lp_win32_register_toast_shortcut(void)
         result = link->lpVtbl->QueryInterface(link, &IID_IPropertyStore, (void **)&properties);
     }
     if (SUCCEEDED(result)) {
-        PROPVARIANT value;
-        PropVariantInit(&value);
-        value.vt = VT_LPWSTR;
-        const size_t bytes = (size_t)(lstrlenW(LP_TOAST_ACTIVATOR_CLSID_STRING) + 1) * sizeof(wchar_t);
-        value.pwszVal = (LPWSTR)CoTaskMemAlloc(bytes);
-        if (value.pwszVal != NULL) {
-            lstrcpyW(value.pwszVal, LP_TOAST_ACTIVATOR_CLSID_STRING);
-            result = properties->lpVtbl->SetValue(properties, &PKEY_AppUserModel_ToastActivatorCLSID,
-                                                   &value);
-            if (SUCCEEDED(result)) {
-                result = properties->lpVtbl->Commit(properties);
+        CLSID activator_clsid;
+        result = CLSIDFromString(LP_TOAST_ACTIVATOR_CLSID_STRING, &activator_clsid);
+        if (SUCCEEDED(result)) {
+            PROPVARIANT value;
+            PropVariantInit(&value);
+            value.vt = VT_CLSID;
+            value.puuid = (CLSID *)CoTaskMemAlloc(sizeof(CLSID));
+            if (value.puuid == NULL) {
+                result = E_OUTOFMEMORY;
+            } else {
+                *value.puuid = activator_clsid;
+                result = properties->lpVtbl->SetValue(properties, &PKEY_AppUserModel_ToastActivatorCLSID,
+                                                       &value);
+                if (SUCCEEDED(result)) {
+                    result = properties->lpVtbl->Commit(properties);
+                }
             }
-        } else {
-            result = E_OUTOFMEMORY;
+            PropVariantClear(&value);
         }
-        PropVariantClear(&value);
+    }
     if (properties != NULL) {
         properties->lpVtbl->Release(properties);
     }
@@ -88,7 +99,21 @@ int lp_win32_register_toast_shortcut(void)
         LP_ERROR("toast shortcut property registration failed: HRESULT=0x%08lx",
                  (unsigned long)result);
     } else {
-        LP_INFO("toast activator shortcut property registered");
-    }
-    return SUCCEEDED(result) ? 0 : 1;
-}
+        CLSID activator_clsid;
+        result = CLSIDFromString(LP_TOAST_ACTIVATOR_CLSID_STRING, &activator_clsid);
+        if (SUCCEEDED(result)) {
+            PROPVARIANT value;
+            PropVariantInit(&value);
+            value.vt = VT_CLSID;
+            value.puuid = (CLSID *)CoTaskMemAlloc(sizeof(CLSID));
+            if (value.puuid == NULL) {
+                result = E_OUTOFMEMORY;
+            } else {
+                *value.puuid = activator_clsid;
+                result = properties->lpVtbl->SetValue(properties, &PKEY_AppUserModel_ToastActivatorCLSID,
+                                                       &value);
+                if (SUCCEEDED(result)) {
+                    result = properties->lpVtbl->Commit(properties);
+                }
+            }
+            PropVariantClear(&value);
