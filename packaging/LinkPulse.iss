@@ -57,8 +57,8 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "LinkPulse"; Flags: uninsdeletevalue dontcreatekey
 Root: HKCU; Subkey: "Software\Classes\linkpulse"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\linkpulse\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\CLSID\{7F2D2E64-9B2A-4B2D-8B4D-714C5A832E11}\LocalServer32"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" /ToastActivator"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\AppUserModelId\LinkPulse.NetworkMonitor"; ValueType: string; ValueName: "ToastActivatorCLSID"; ValueData: "{7F2D2E64-9B2A-4B2D-8B4D-714C5A832E11}"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\CLSID\{{7F2D2E64-9B2A-4B2D-8B4D-714C5A832E11}}\LocalServer32"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" /ToastActivator"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\AppUserModelId\LinkPulse.NetworkMonitor"; ValueType: string; ValueName: "ToastActivatorCLSID"; ValueData: "{{7F2D2E64-9B2A-4B2D-8B4D-714C5A832E11}}"; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: postinstall nowait skipifsilent unchecked
