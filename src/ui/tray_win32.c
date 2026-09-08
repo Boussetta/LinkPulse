@@ -55,6 +55,7 @@ typedef struct {
     unsigned interval_ms;
     HANDLE thread;
     HANDLE update_thread;
+    HANDLE download_thread;
     HANDLE update_stop_event;
 
     HWND hwnd;
@@ -225,6 +226,33 @@ static DWORD WINAPI update_thread_proc(LPVOID param)
     return 0;
 }
 
+static DWORD WINAPI download_thread_proc(LPVOID param)
+{
+    lp_tray_state_t *state = (lp_tray_state_t *)param;
+    char installer_path[MAX_PATH];
+    if (lp_update_download_latest(installer_path, sizeof(installer_path)) != LP_OK) {
+        MessageBoxA(state->hwnd, "Could not download the LinkPulse update.", "LinkPulse update",
+                    MB_OK | MB_ICONERROR);
+    } else if ((INT_PTR)ShellExecuteA(NULL, "open", installer_path, NULL, NULL, SW_SHOWNORMAL) <= 32) {
+        DeleteFileA(installer_path);
+        MessageBoxA(state->hwnd, "Could not launch the LinkPulse installer.", "LinkPulse update",
+                    MB_OK | MB_ICONERROR);
+    }
+    return 0;
+}
+
+static void start_update_download(lp_tray_state_t *state)
+{
+    if (state->download_thread != NULL) {
+        return;
+    }
+    state->download_thread = CreateThread(NULL, 0, download_thread_proc, state, 0, NULL);
+    if (state->download_thread == NULL) {
+        MessageBoxA(state->hwnd, "Could not start the LinkPulse downloader.", "LinkPulse update",
+                    MB_OK | MB_ICONERROR);
+    }
+}
+
 static void show_update_notification(lp_tray_state_t *state)
 {
     char version[LP_UPDATE_VERSION_MAX];
@@ -236,7 +264,7 @@ static void show_update_notification(lp_tray_state_t *state)
     notification.uFlags = NIF_INFO;
     snprintf(notification.szInfoTitle, sizeof(notification.szInfoTitle), "LinkPulse update");
     snprintf(notification.szInfo, sizeof(notification.szInfo),
-             "Version %s is available. Right-click the tray icon to download it.", version);
+             "Version %s is available.", version);
     notification.uTimeout = 10000;
     notification.dwInfoFlags = NIIF_INFO;
     Shell_NotifyIconA(NIM_MODIFY, &notification);
@@ -296,8 +324,7 @@ static void show_context_menu(lp_tray_state_t *state)
         }
         break;
     case IDM_UPDATE:
-        ShellExecuteA(NULL, "open", "https://github.com/Boussetta/LinkPulse/releases/latest", NULL,
-                      NULL, SW_SHOWNORMAL);
+        start_update_download(state);
         break;
     case IDM_EXIT:
         DestroyWindow(state->hwnd);
@@ -446,6 +473,11 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             }
             CloseHandle(state->update_thread);
             state->update_thread = NULL;
+        }
+        if (state->download_thread != NULL) {
+            WaitForSingleObject(state->download_thread, INFINITE);
+            CloseHandle(state->download_thread);
+            state->download_thread = NULL;
         }
         if (state->update_stop_event != NULL && can_close_update_stop_event) {
             CloseHandle(state->update_stop_event);
