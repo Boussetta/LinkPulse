@@ -62,7 +62,6 @@ typedef struct {
     HWND hwnd;
     NOTIFYICONDATAA nid;
     HICON current_icon;
-    HBITMAP sponsor_icon;
     UINT wm_taskbar_created;
 } lp_tray_state_t;
 
@@ -264,68 +263,6 @@ static void start_update_download(lp_tray_state_t *state)
     }
 }
 
-/* Renders a small filled heart (GitHub Sponsor button pink) as a 32bpp alpha
-   bitmap, via the implicit heart curve (x^2+y^2-1)^3 <= x^2*y^3 rather than
-   hand-drawn pixel art. Used as a menu item icon; the caller keeps the result
-   alive for as long as it's attached to a menu (Windows does not take
-   ownership of HBITMAP set via MIIM_BITMAP). */
-static HBITMAP render_heart_icon(void)
-{
-    const int cx = GetSystemMetrics(SM_CXMENUCHECK);
-    const int cy = GetSystemMetrics(SM_CYMENUCHECK);
-    const int size = (cx > 0 && cy > 0) ? ((cx < cy) ? cx : cy) : 0;
-    if (size <= 0) {
-        return NULL;
-    }
-    BITMAPV5HEADER bi;
-    memset(&bi, 0, sizeof(bi));
-    bi.bV5Size = sizeof(bi);
-    bi.bV5Width = size;
-    bi.bV5Height = -size;
-    bi.bV5Planes = 1;
-    bi.bV5BitCount = 32;
-    bi.bV5Compression = BI_BITFIELDS;
-    bi.bV5RedMask = 0x00FF0000;
-    bi.bV5GreenMask = 0x0000FF00;
-    bi.bV5BlueMask = 0x000000FF;
-    bi.bV5AlphaMask = 0xFF000000;
-
-    void *bits = NULL;
-    HDC screen_dc = GetDC(NULL);
-    if (screen_dc == NULL) {
-        return NULL;
-    }
-    HBITMAP bitmap =
-        CreateDIBSection(screen_dc, (BITMAPINFO *)&bi, DIB_RGB_COLORS, &bits, NULL, 0);
-    ReleaseDC(NULL, screen_dc);
-    if (bitmap == NULL || bits == NULL) {
-        if (bitmap != NULL) {
-            DeleteObject(bitmap);
-        }
-        return NULL;
-    }
-    memset(bits, 0, (size_t)size * (size_t)size * 4);
-
-    const uint8_t heart_r = 0xEA, heart_g = 0x4A, heart_b = 0xAA; /* GitHub Sponsor pink */
-    uint8_t *pixels = (uint8_t *)bits;
-    for (int row = 0; row < size; ++row) {
-        const double y = 1.15 - 2.3 * ((double)row / (double)(size - 1));
-        for (int col = 0; col < size; ++col) {
-            const double x = -1.15 + 2.3 * ((double)col / (double)(size - 1));
-            const double lhs = (x * x + y * y - 1.0);
-            const double heart = lhs * lhs * lhs - x * x * y * y * y;
-            if (heart <= 0.0) {
-                uint8_t *pixel = pixels + ((size_t)row * (size_t)size + (size_t)col) * 4;
-                pixel[0] = heart_b;
-                pixel[1] = heart_g;
-                pixel[2] = heart_r;
-                pixel[3] = 0xFF;
-            }
-        }
-    }
-    return bitmap;
-}
-
 static void show_update_notification(lp_tray_state_t *state)
 {
     char version[LP_UPDATE_VERSION_MAX];
@@ -363,21 +300,14 @@ static void show_context_menu(lp_tray_state_t *state)
         AppendMenuA(menu, MF_STRING, IDM_UPDATE, "Download update");
     }
     AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
-    AppendMenuA(menu, MF_STRING, IDM_SUPPORT, "Sponsor");
+    /* AppendMenuW (not the ANSI AppendMenuA used elsewhere) so the heart glyph
+       renders correctly; a menu happily mixes ANSI and Unicode items. A custom
+       MIIM_BITMAP icon was tried first, but Windows does not reliably
+       alpha-blend menu item bitmaps, which left an opaque black square instead
+       of a transparent heart. */
+    AppendMenuW(menu, MF_STRING, IDM_SUPPORT, L"\u2764 Sponsor");
     AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(menu, MF_STRING, IDM_EXIT, "Exit");
-
-    if (state->sponsor_icon == NULL) {
-        state->sponsor_icon = render_heart_icon();
-    }
-    if (state->sponsor_icon != NULL) {
-        MENUITEMINFOA sponsor_info;
-        memset(&sponsor_info, 0, sizeof(sponsor_info));
-        sponsor_info.cbSize = sizeof(sponsor_info);
-        sponsor_info.fMask = MIIM_BITMAP;
-        sponsor_info.hbmpItem = state->sponsor_icon;
-        SetMenuItemInfoA(menu, IDM_SUPPORT, FALSE, &sponsor_info);
-    }
 
     POINT cursor;
     GetCursorPos(&cursor);
@@ -539,10 +469,6 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         if (state->current_icon != NULL) {
             DestroyIcon(state->current_icon);
             state->current_icon = NULL;
-        }
-        if (state->sponsor_icon != NULL) {
-            DeleteObject(state->sponsor_icon);
-            state->sponsor_icon = NULL;
         }
         InterlockedExchange(&state->stop_requested, 1);
         if (state->thread != NULL) {
