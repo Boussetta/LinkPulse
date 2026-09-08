@@ -23,8 +23,8 @@ int main(int argc, char **argv)
     if (lp_win32_log_start() != 0) {
         LP_WARN("failed to start persistent file logging");
     }
-    LP_INFO("tray entrypoint started: argc=%d arg1=%s arg2=%s", argc,
-            argc > 1 ? argv[1] : "(none)", argc > 2 ? argv[2] : "(none)");
+LP_INFO("tray entrypoint started: argc=%d mode=%s", argc,
+        argc > 1 ? argv[1] : "(none)");
     if (argc > 1 &&
         (strcmp(argv[1], "/ToastActivator") == 0 || strcmp(argv[1], "-Embedding") == 0)) {
         LP_INFO("starting toast COM activator");
