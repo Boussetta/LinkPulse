@@ -67,7 +67,7 @@ target_link_libraries(lp_platform PUBLIC iphlpapi ole32 runtimeobject winhttp ws
 target_compile_definitions(lp_platform PUBLIC _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # --- executable ----------------------------------------------------------------
-add_executable(linkpulse src/cli/main.c src/ui/tray_win32.c)
+add_executable(linkpulse src/cli/main.c src/ui/network_map_win32.c src/ui/tray_win32.c)
 target_link_libraries(linkpulse PRIVATE lp_platform lp_warnings)
 target_link_libraries(linkpulse PRIVATE shell32 gdi32 user32 advapi32)
 # Single source of truth for the version string, consumed by --version.
@@ -84,7 +84,7 @@ target_compile_definitions(linkpulse PRIVATE LP_VERSION="${PROJECT_VERSION}")
 # so it never needs a console in the first place; linkpulse.exe (this target,
 # console subsystem, unchanged) remains the CLI/debug tool, including its own
 # --tray for debugging with visible log output.
-add_executable(linkpulse-tray src/cli/tray_main.c src/ui/tray_win32.c)
+add_executable(linkpulse-tray src/cli/tray_main.c src/ui/network_map_win32.c src/ui/tray_win32.c)
 target_link_libraries(linkpulse-tray PRIVATE lp_platform lp_warnings)
 target_link_libraries(linkpulse-tray PRIVATE shell32 gdi32 user32 advapi32)
 target_compile_definitions(linkpulse-tray PRIVATE LP_VERSION="${PROJECT_VERSION}")
