@@ -50,7 +50,7 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
 
     for (ULONG i = 0; i < table->NumEntries && out->count < LP_DISCOVERY_MAX_NEIGHBORS; ++i) {
         const MIB_IPNET_ROW2 *row = &table->Table[i];
-        if (!is_live_state(row->State) || row->PhysicalAddressLength == 0) {
+        if (!is_live_state(row->State)) {
             continue;
         }
 
