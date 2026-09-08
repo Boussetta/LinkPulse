@@ -478,6 +478,9 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
         DestroyWindow(g_tray.hwnd);
     } else {
         g_tray.update_thread = CreateThread(NULL, 0, update_thread_proc, &g_tray, 0, NULL);
+        if (g_tray.update_thread == NULL) {
+            LP_WARN("failed to start the update-check thread");
+        }
     }
 
     MSG msg;
