@@ -81,7 +81,7 @@ lp_status_t lp_update_check_latest(const char *current_version, char *latest_ver
     }
     latest_version[0] = '\0';
 
-    HINTERNET session = WinHttpOpen(L"LinkPulse/0.1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+    HINTERNET session = WinHttpOpen(L"LinkPulse", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                      WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (session == NULL) {
         return LP_ERR_IO;
