@@ -310,14 +310,8 @@ void lp_network_map_show(HWND window, const lp_neighbor_list_t *neighbors,
     memset(&monitor_info, 0, sizeof(monitor_info));
     monitor_info.cbSize = sizeof(monitor_info);
     GetMonitorInfoA(monitor, &monitor_info);
-    int x = cursor.x - LP_MAP_WIDTH - 72;
-    int y = monitor_info.rcWork.bottom - LP_MAP_HEIGHT - 8;
-    if (x < monitor_info.rcWork.left + 8) {
-        x = monitor_info.rcWork.left + 8;
-    }
-    if (x + LP_MAP_WIDTH > monitor_info.rcWork.right - 8) {
-        x = monitor_info.rcWork.right - LP_MAP_WIDTH - 8;
-    }
+    const int x = monitor_info.rcWork.right - LP_MAP_WIDTH - 12;
+    const int y = monitor_info.rcWork.bottom - LP_MAP_HEIGHT - 8;
 
     SetWindowPos(window, HWND_TOPMOST, x, y, LP_MAP_WIDTH, LP_MAP_HEIGHT,
                  SWP_SHOWWINDOW | SWP_NOACTIVATE);
