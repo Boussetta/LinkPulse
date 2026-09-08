@@ -9,6 +9,7 @@
 
 #define LP_MAC_STR_MAX 18
 #define LP_IP_STR_MAX 46
+#define LP_HOSTNAME_MAX 256
 #define LP_DISCOVERY_MAX_NEIGHBORS 256
 #define LP_DISCOVERY_MAX_EVENTS 32
 #define LP_DISCOVERY_MAX_NETWORKS 32
@@ -16,6 +17,7 @@
 typedef struct {
     char ip[LP_IP_STR_MAX];
     char mac[LP_MAC_STR_MAX];
+    char hostname[LP_HOSTNAME_MAX];
 } lp_neighbor_t;
 
 typedef struct {

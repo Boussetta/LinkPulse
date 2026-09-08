@@ -40,6 +40,8 @@ static void test_baseline_and_neighbor_changes(void)
 
     /* The first neighbor keeps its identity while its IP address changes. */
     set_neighbor(&g_fake_snapshots[1].items[0], "192.168.1.20", "AA:BB:CC:DD:EE:01");
+    snprintf(g_fake_snapshots[1].items[0].hostname,
+             sizeof(g_fake_snapshots[1].items[0].hostname), "living-room-tv");
     set_neighbor(&g_fake_snapshots[1].items[1], "192.168.1.4", "AA:BB:CC:DD:EE:03");
     g_fake_snapshots[1].count = 2;
 
@@ -68,6 +70,7 @@ static void test_baseline_and_neighbor_changes(void)
     LP_CHECK(events[0].type == LP_DISCOVERY_EVENT_LEFT);
     LP_CHECK_STR_EQ(events[0].neighbor.mac, "AA:BB:CC:DD:EE:01");
     LP_CHECK_STR_EQ(events[0].neighbor.ip, "192.168.1.20");
+    LP_CHECK_STR_EQ(events[0].neighbor.hostname, "living-room-tv");
 }
 
 static void test_poll_rejects_missing_source(void)

@@ -36,6 +36,30 @@ static void format_mac(const UCHAR *address, ULONG length, char *out, size_t out
              address[3], address[4], address[5]);
 }
 
+static bool is_unicast_address(const SOCKADDR_INET *address)
+{
+    if (address->si_family == AF_INET) {
+        const ULONG host_address = ntohl(address->Ipv4.sin_addr.S_un.S_addr);
+        const unsigned first_octet = (unsigned)(host_address >> 24);
+        return host_address != 0xFFFFFFFFUL && first_octet < 224;
+    }
+    if (address->si_family == AF_INET6) {
+        return !IN6_IS_ADDR_MULTICAST(&address->Ipv6.sin6_addr);
+    }
+    return false;
+}
+
+static void resolve_hostname(const SOCKADDR_INET *address, char *out, size_t out_cap)
+{
+    out[0] = '\0';
+    const int address_length = address->si_family == AF_INET ? sizeof(SOCKADDR_IN)
+                                                             : sizeof(SOCKADDR_IN6);
+    if (GetNameInfoA((const SOCKADDR *)address, address_length, out, (DWORD)out_cap, NULL, 0,
+                     NI_NAMEREQD) != 0) {
+        out[0] = '\0';
+    }
+}
+
 lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
 {
     if (out == NULL) {
@@ -43,14 +67,20 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
     }
     out->count = 0;
 
+    WSADATA winsock_data;
+    const bool winsock_ready = WSAStartup(MAKEWORD(2, 2), &winsock_data) == 0;
+
     MIB_IPNET_TABLE2 *table = NULL;
     if (GetIpNetTable2(AF_UNSPEC, &table) != NO_ERROR || table == NULL) {
+        if (winsock_ready) {
+            WSACleanup();
+        }
         return LP_ERR_IO;
     }
 
     for (ULONG i = 0; i < table->NumEntries && out->count < LP_DISCOVERY_MAX_NEIGHBORS; ++i) {
         const MIB_IPNET_ROW2 *row = &table->Table[i];
-        if (!is_live_state(row->State)) {
+        if (!is_live_state(row->State) || !is_unicast_address(&row->Address)) {
             continue;
         }
 
@@ -70,10 +100,16 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
         snprintf(neighbor->ip, sizeof(neighbor->ip), "%s", ip);
         format_mac(row->PhysicalAddress, row->PhysicalAddressLength, neighbor->mac,
                    sizeof(neighbor->mac));
+        if (winsock_ready) {
+            resolve_hostname(&row->Address, neighbor->hostname, sizeof(neighbor->hostname));
+        }
         ++out->count;
     }
 
     FreeMibTable(table);
+    if (winsock_ready) {
+        WSACleanup();
+    }
     return LP_OK;
 }
 
@@ -101,8 +137,8 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
     out->count = 0;
 
     ULONG buffer_size = 0;
-    DWORD result = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, NULL, NULL,
-                                        &buffer_size);
+    const ULONG flags = GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_INCLUDE_GATEWAYS;
+    DWORD result = GetAdaptersAddresses(AF_UNSPEC, flags, NULL, NULL, &buffer_size);
     if (result != ERROR_BUFFER_OVERFLOW || buffer_size == 0) {
         return LP_ERR_IO;
     }
@@ -112,8 +148,7 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
     if (adapters == NULL) {
         return LP_ERR_NO_MEMORY;
     }
-    result = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, NULL, adapters,
-                                  &buffer_size);
+    result = GetAdaptersAddresses(AF_UNSPEC, flags, NULL, adapters, &buffer_size);
     if (result != NO_ERROR) {
         HeapFree(GetProcessHeap(), 0, adapters);
         return LP_ERR_IO;
