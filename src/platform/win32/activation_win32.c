@@ -72,6 +72,21 @@ static ULONG STDMETHODCALLTYPE callback_release(LP_NOTIFICATION_ACTIVATION_CALLB
     return refs;
 }
 
+static DWORD WINAPI activation_download_thread_proc(LPVOID param)
+{
+    (void)param;
+
+    char installer_path[MAX_PATH];
+    if (lp_update_download_latest(installer_path, sizeof(installer_path)) != LP_OK) {
+        return 1;
+    }
+    if ((INT_PTR)ShellExecuteA(NULL, "open", installer_path, NULL, NULL, SW_SHOWNORMAL) <= 32) {
+        DeleteFileA(installer_path);
+        return 1;
+    }
+    return 0;
+}
+
 static HRESULT STDMETHODCALLTYPE callback_activate(LP_NOTIFICATION_ACTIVATION_CALLBACK *self,
                                                    LPCWSTR app_user_model_id, LPCWSTR invoked_args,
                                                    const LP_NOTIFICATION_USER_INPUT_DATA *data,
@@ -85,14 +100,11 @@ static HRESULT STDMETHODCALLTYPE callback_activate(LP_NOTIFICATION_ACTIVATION_CA
         return S_OK;
     }
 
-    char installer_path[MAX_PATH];
-    if (lp_update_download_latest(installer_path, sizeof(installer_path)) != LP_OK) {
+    HANDLE download_thread = CreateThread(NULL, 0, activation_download_thread_proc, NULL, 0, NULL);
+    if (download_thread == NULL) {
         return E_FAIL;
     }
-    if ((INT_PTR)ShellExecuteA(NULL, "open", installer_path, NULL, NULL, SW_SHOWNORMAL) <= 32) {
-        DeleteFileA(installer_path);
-        return E_FAIL;
-    }
+    CloseHandle(download_thread);
     return S_OK;
 }
 
