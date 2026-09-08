@@ -27,7 +27,12 @@ if (-not $Version) {
     # version as the GitHub release it corresponds to (otherwise the update
     # checker compares against a stale hardcoded "0.1.0" and always thinks a
     # newer release is available).
-    $describe = git describe --tags --match "v*" --abbrev=0 2>$null
+    $describe = $null
+    try {
+        $describe = & git describe --tags --match "v[0-9]*.[0-9]*.[0-9]*" --abbrev=0 2>$null
+    } catch {
+        $describe = $null
+    }
     if ($LASTEXITCODE -eq 0 -and $describe) {
         $Version = $describe -replace '^v', ''
     } else {
