@@ -16,14 +16,19 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Configure MSVC Release
-        run: cmake --preset msvc
+        run: cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build MSVC Release
-        run: cmake --build --preset msvc-release
+        run: cmake --build build/release --config Release
 
       - name: Run MSVC Release tests
-        run: ctest --preset msvc-release
+        run: ctest --test-dir build/release -C Release --output-on-failure
 
       - name: Build Inno Setup installer
         shell: pwsh
