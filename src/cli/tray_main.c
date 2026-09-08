@@ -1,5 +1,6 @@
 #include "linkpulse/config.h"
 #include "linkpulse/activation.h"
+#include "linkpulse/shortcut.h"
 #include "linkpulse/tray.h"
 #include "linkpulse/update.h"
 
@@ -18,6 +19,9 @@ int main(int argc, char **argv)
 {
     if (argc > 1 && strcmp(argv[1], "/ToastActivator") == 0) {
         return lp_win32_run_toast_activator();
+    }
+    if (argc > 1 && strcmp(argv[1], "/RegisterToastShortcut") == 0) {
+        return lp_win32_register_toast_shortcut();
     }
     if (argc > 1 && strcmp(argv[1], "linkpulse://download-update") == 0) {
         char installer_path[MAX_PATH];

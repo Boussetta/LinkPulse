@@ -55,6 +55,7 @@ add_library(lp_platform STATIC
   src/platform/win32/config_win32.c
   src/platform/win32/net_win32.c
   src/platform/win32/notification_win32.c
+  src/platform/win32/shortcut_win32.c
   src/platform/win32/update_win32.c
 )
 target_link_libraries(lp_platform PUBLIC lp_core PRIVATE lp_warnings)

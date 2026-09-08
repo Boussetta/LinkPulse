@@ -1,0 +1,75 @@
+#include "linkpulse/shortcut.h"
+
+#include <stdbool.h>
+#include <stdio.h>
+
+#include <shlobj.h>
+#include <shobjidl.h>
+#include <propkey.h>
+#include <objbase.h>
+#include <windows.h>
+
+#define LP_TOAST_ACTIVATOR_CLSID_STRING L"{7F2D2E64-9B2A-4B2D-8B4D-714C5A832E11}"
+#define LP_APP_USER_MODEL_ID L"LinkPulse.NetworkMonitor"
+
+int lp_win32_register_toast_shortcut(void)
+{
+    wchar_t programs_path[MAX_PATH];
+    if (FAILED(SHGetFolderPathW(NULL, CSIDL_PROGRAMS, NULL, SHGFP_TYPE_CURRENT, programs_path))) {
+        return 1;
+    }
+
+    wchar_t shortcut_path[MAX_PATH];
+    const int written = swprintf(shortcut_path, sizeof(shortcut_path) / sizeof(shortcut_path[0]),
+                                 L"%ls\\LinkPulse.lnk",
+                                 programs_path);
+    if (written < 0 || (size_t)written >= sizeof(shortcut_path) / sizeof(shortcut_path[0])) {
+        return 1;
+    }
+
+    HRESULT result = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    const bool initialized_here = SUCCEEDED(result);
+    if (FAILED(result) && result != RPC_E_CHANGED_MODE) {
+        return 1;
+    }
+
+    IShellLinkW *link = NULL;
+    IPropertyStore *properties = NULL;
+    IPersistFile *persist = NULL;
+    result = CoCreateInstance(&CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, &IID_IShellLinkW,
+                              (void **)&link);
+    if (SUCCEEDED(result)) {
+        result = link->lpVtbl->QueryInterface(link, &IID_IPersistFile, (void **)&persist);
+    }
+    if (SUCCEEDED(result)) {
+        result = persist->lpVtbl->Load(persist, shortcut_path, STGM_READWRITE);
+    }
+    if (SUCCEEDED(result)) {
+        result = link->lpVtbl->QueryInterface(link, &IID_IPropertyStore, (void **)&properties);
+    }
+    if (SUCCEEDED(result)) {
+        PROPVARIANT value;
+        PropVariantInit(&value);
+        value.vt = VT_LPWSTR;
+        value.pwszVal = (LPWSTR)LP_TOAST_ACTIVATOR_CLSID_STRING;
+        result = properties->lpVtbl->SetValue(properties, &PKEY_AppUserModel_ToastActivatorCLSID,
+                                               &value);
+        if (SUCCEEDED(result)) {
+            result = properties->lpVtbl->Commit(properties);
+        }
+        PropVariantClear(&value);
+    }
+    if (properties != NULL) {
+        properties->lpVtbl->Release(properties);
+    }
+    if (persist != NULL) {
+        persist->lpVtbl->Release(persist);
+    }
+    if (link != NULL) {
+        link->lpVtbl->Release(link);
+    }
+    if (initialized_here) {
+        CoUninitialize();
+    }
+    return SUCCEEDED(result) ? 0 : 1;
+}

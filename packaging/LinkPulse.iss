@@ -61,4 +61,5 @@ Root: HKCU; Subkey: "Software\Classes\CLSID\{{7F2D2E64-9B2A-4B2D-8B4D-714C5A832E
 Root: HKCU; Subkey: "Software\Classes\AppUserModelId\LinkPulse.NetworkMonitor"; ValueType: string; ValueName: "ToastActivatorCLSID"; ValueData: "{{7F2D2E64-9B2A-4B2D-8B4D-714C5A832E11}}"; Flags: uninsdeletevalue
 
 [Run]
+Filename: "{app}\{#MyAppExeName}"; Parameters: "/RegisterToastShortcut"; Flags: runhidden waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: postinstall nowait skipifsilent unchecked
