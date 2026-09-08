@@ -83,8 +83,14 @@ git push origin v0.1.0
 ```
 
 The finished installer is then available from the repository's **Releases**
-page. GitHub provides the hosting and download bandwidth for free in this
-workflow.
+page. GitHub provides the hosting and download bandwidth for free.
+
+### Update detection
+
+The tray app checks the public GitHub Releases API in the background at startup.
+When a newer semantic version is available, the tooltip reports it and the
+context menu offers **Download update**, opening the GitHub release page. The
+app never replaces its own executable or installs updates silently.
 
 ### MSIX (Microsoft Store — deferred)
 
