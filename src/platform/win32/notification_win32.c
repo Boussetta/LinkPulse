@@ -71,63 +71,67 @@ bool lp_win32_show_update_toast(const char *version)
     }
     if (SUCCEEDED(result)) {
         result = IInspectable_QueryInterface(
-            xml_inspectable, &IID_IXmlDocumentIO, (void **)&xml_io);
+            xml_inspectable, &IID___x_ABI_CWindows_CData_CXml_CDom_CIXmlDocumentIO,
+            (void **)&xml_io);
     }
     if (SUCCEEDED(result)) {
         result = make_hstring(xml, &xml_text);
     }
     if (SUCCEEDED(result)) {
-        result = IXmlDocumentIO_LoadXml(xml_io, xml_text);
+        result = __x_ABI_CWindows_CData_CXml_CDom_CIXmlDocumentIO_LoadXml(xml_io, xml_text);
     }
     if (SUCCEEDED(result)) {
-        result = IXmlDocumentIO_QueryInterface(xml_io, &IID_IXmlDocument, (void **)&document);
+        result = __x_ABI_CWindows_CData_CXml_CDom_CIXmlDocumentIO_QueryInterface(
+            xml_io, &IID___x_ABI_CWindows_CData_CXml_CDom_CIXmlDocument, (void **)&document);
     }
     if (SUCCEEDED(result)) {
         result = make_hstring(L"Windows.UI.Notifications.ToastNotificationManager", &class_id);
     }
     if (SUCCEEDED(result)) {
-        result = RoGetActivationFactory(class_id, &IID_IToastNotificationManagerStatics,
+        result = RoGetActivationFactory(
+            class_id, &IID___x_ABI_CWindows_CUI_CNotifications_CIToastNotificationManagerStatics,
                                         (void **)&manager);
     }
     if (SUCCEEDED(result)) {
         result = make_hstring(L"LinkPulse.NetworkMonitor", &app_id);
     }
     if (SUCCEEDED(result)) {
-        result = IToastNotificationManagerStatics_CreateToastNotifierWithId(
+        result = __x_ABI_CWindows_CUI_CNotifications_CIToastNotificationManagerStatics_CreateToastNotifierWithId(
             manager, app_id, &notifier);
     }
     if (SUCCEEDED(result)) {
         result = make_hstring(L"Windows.UI.Notifications.ToastNotification", &class_id);
     }
     if (SUCCEEDED(result)) {
-        result = RoGetActivationFactory(class_id, &IID_IToastNotificationFactory,
+        result = RoGetActivationFactory(
+            class_id, &IID___x_ABI_CWindows_CUI_CNotifications_CIToastNotificationFactory,
                                         (void **)&factory);
     }
     if (SUCCEEDED(result)) {
-        result = IToastNotificationFactory_CreateToastNotification(factory, document,
-                                                                    &notification);
+        result = __x_ABI_CWindows_CUI_CNotifications_CIToastNotificationFactory_CreateToastNotification(
+            factory, document, &notification);
     }
     if (SUCCEEDED(result)) {
-        result = IToastNotifier_Show(notifier, notification);
+        result = __x_ABI_CWindows_CUI_CNotifications_CIToastNotifier_Show(notifier, notification);
     }
 
     if (notification != NULL) {
-        IToastNotification_Release(notification);
+        __x_ABI_CWindows_CUI_CNotifications_CIToastNotification_Release(notification);
     }
     if (notifier != NULL) {
-        IToastNotifier_Release(notifier);
+        __x_ABI_CWindows_CUI_CNotifications_CIToastNotifier_Release(notifier);
     }
     if (factory != NULL) {
-        IToastNotificationFactory_Release(factory);
+        __x_ABI_CWindows_CUI_CNotifications_CIToastNotificationFactory_Release(factory);
     }
     if (manager != NULL) {
-        IToastNotificationManagerStatics_Release(manager);
+        __x_ABI_CWindows_CUI_CNotifications_CIToastNotificationManagerStatics_Release(manager);
     }
     if (document != NULL) {
-        IXmlDocument_Release(document);
+        __x_ABI_CWindows_CData_CXml_CDom_CIXmlDocument_Release(document);
     }
     if (xml_io != NULL) {
-        IXmlDocumentIO_Release(xml_io);
+        __x_ABI_CWindows_CData_CXml_CDom_CIXmlDocumentIO_Release(xml_io);
     }
     if (xml_inspectable != NULL) {
         IInspectable_Release(xml_inspectable);
