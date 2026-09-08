@@ -3,12 +3,14 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wchar.h>
 
 #include <windows.h>
 #include <winhttp.h>
 
 #define LP_RELEASE_HOST L"api.github.com"
 #define LP_RELEASE_PATH L"/repos/Boussetta/LinkPulse/releases/latest"
+#define LP_INSTALLER_NAME "LinkPulseSetup.exe"
 
 static bool parse_version(const char *text, unsigned long parts[3])
 {
@@ -71,6 +73,19 @@ static lp_status_t extract_tag(const char *response, char *out, size_t cap)
     memcpy(out, value, length);
     out[length] = '\0';
     return LP_OK;
+}
+
+static void close_http_handles(HINTERNET request, HINTERNET connection, HINTERNET session)
+{
+    if (request != NULL) {
+        WinHttpCloseHandle(request);
+    }
+    if (connection != NULL) {
+        WinHttpCloseHandle(connection);
+    }
+    if (session != NULL) {
+        WinHttpCloseHandle(session);
+    }
 }
 
 lp_status_t lp_update_check_latest(const char *current_version, char *latest_version,
@@ -149,6 +164,109 @@ lp_status_t lp_update_check_latest(const char *current_version, char *latest_ver
     if (!version_is_newer(current_version, latest_version)) {
         latest_version[0] = '\0';
         return LP_ERR_NOT_FOUND;
+    }
+    return LP_OK;
+}
+
+lp_status_t lp_update_download_latest(char *installer_path, size_t path_cap)
+{
+    if (installer_path == NULL || path_cap == 0) {
+        return LP_ERR_INVALID_ARG;
+    }
+    installer_path[0] = '\0';
+
+    char latest_version[32];
+    const lp_status_t check = lp_update_check_latest("0.0.0", latest_version,
+                                                      sizeof(latest_version));
+    if (check != LP_OK) {
+        return check;
+    }
+
+    wchar_t release_path[256];
+    const int path_length = swprintf(
+        release_path, sizeof(release_path) / sizeof(release_path[0]),
+        L"/Boussetta/LinkPulse/releases/download/%hs/%hs", latest_version, LP_INSTALLER_NAME);
+    if (path_length < 0 || (size_t)path_length >= sizeof(release_path) / sizeof(release_path[0])) {
+        return LP_ERR_IO;
+    }
+
+    if (path_cap < MAX_PATH) {
+        return LP_ERR_INVALID_ARG;
+    }
+    char temp_directory[MAX_PATH];
+    const DWORD temp_length = GetTempPathA(sizeof(temp_directory), temp_directory);
+    char temp_file[MAX_PATH];
+    if (temp_length == 0 || temp_length >= sizeof(temp_directory) ||
+        GetTempFileNameA(temp_directory, "LP", 0, temp_file) == 0) {
+        return LP_ERR_IO;
+    }
+    DeleteFileA(temp_file);
+    char *dot = strrchr(temp_file, '.');
+    if (dot != NULL) {
+        *dot = '\0';
+    }
+    const int installer_written = snprintf(installer_path, path_cap, "%s.exe", temp_file);
+    if (installer_written < 0 || (size_t)installer_written >= path_cap) {
+        return LP_ERR_IO;
+    }
+    HANDLE output = CreateFileA(installer_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                                 FILE_ATTRIBUTE_NORMAL, NULL);
+    if (output == INVALID_HANDLE_VALUE) {
+        DeleteFileA(installer_path);
+        installer_path[0] = '\0';
+        return LP_ERR_IO;
+    }
+
+    HINTERNET session = WinHttpOpen(L"LinkPulse", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    HINTERNET connection = NULL;
+    HINTERNET request = NULL;
+    bool success = false;
+    if (session != NULL) {
+        WinHttpSetTimeouts(session, 10000, 10000, 30000, 30000);
+        connection = WinHttpConnect(session, L"github.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
+    }
+    if (connection != NULL) {
+        request = WinHttpOpenRequest(connection, L"GET", release_path, NULL,
+                                     WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                     WINHTTP_FLAG_SECURE);
+    }
+    if (request != NULL && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                               WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+        WinHttpReceiveResponse(request, NULL)) {
+        DWORD status_code = 0;
+        DWORD status_size = sizeof(status_code);
+        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                WINHTTP_HEADER_NAME_BY_INDEX, &status_code, &status_size,
+                                WINHTTP_NO_HEADER_INDEX) &&
+            status_code == 200) {
+            success = true;
+            for (;;) {
+                BYTE buffer[8192];
+                DWORD bytes_read = 0;
+                if (!WinHttpReadData(request, buffer, sizeof(buffer), &bytes_read)) {
+                    success = false;
+                    break;
+                }
+                if (bytes_read == 0) {
+                    break;
+                }
+                DWORD bytes_written = 0;
+                if (!WriteFile(output, buffer, bytes_read, &bytes_written, NULL) ||
+                    bytes_written != bytes_read) {
+                    success = false;
+                    break;
+                }
+            }
+        }
+    }
+
+    CloseHandle(output);
+    close_http_handles(request, connection, session);
+    if (!success) {
+        DeleteFileA(installer_path);
+        installer_path[0] = '\0';
+        return LP_ERR_IO;
     }
     return LP_OK;
 }
