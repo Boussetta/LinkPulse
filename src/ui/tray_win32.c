@@ -484,7 +484,14 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             state->update_thread = NULL;
         }
         if (state->download_thread != NULL) {
-            WaitForSingleObject(state->download_thread, INFINITE);
+            const DWORD wait_result =
+                WaitForSingleObject(state->download_thread, LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
+            if (wait_result == WAIT_TIMEOUT) {
+                LP_WARN("update-download thread did not exit within %u ms; continuing shutdown",
+                        (unsigned)LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
+            } else if (wait_result != WAIT_OBJECT_0) {
+                LP_WARN("waiting for update-download thread failed during shutdown");
+            }
             CloseHandle(state->download_thread);
             state->download_thread = NULL;
         }
