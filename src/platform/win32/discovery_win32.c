@@ -129,6 +129,25 @@ static bool format_sockaddr(const SOCKADDR *address, char *out, size_t out_cap)
     return false;
 }
 
+static bool get_default_gateway(NET_LUID *interface_luid, char *gateway, size_t gateway_cap)
+{
+    SOCKADDR_INET destination;
+    memset(&destination, 0, sizeof(destination));
+    destination.Ipv4.sin_family = AF_INET;
+    destination.Ipv4.sin_addr.S_un.S_addr = htonl(0x08080808); /* 8.8.8.8 */
+
+    MIB_IPFORWARD_ROW2 route;
+    SOCKADDR_INET best_source;
+    if (GetBestRoute2(NULL, 0, NULL, &destination, 0, &route, &best_source) != NO_ERROR ||
+        !format_sockaddr((const SOCKADDR *)&route.NextHop, gateway, gateway_cap) ||
+        strcmp(gateway, "0.0.0.0") == 0) {
+        gateway[0] = '\0';
+        return false;
+    }
+    *interface_luid = route.InterfaceLuid;
+    return true;
+}
+
 lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
 {
     if (out == NULL) {
@@ -136,8 +155,14 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
     }
     out->count = 0;
 
+    NET_LUID default_interface_luid;
+    memset(&default_interface_luid, 0, sizeof(default_interface_luid));
+    char default_gateway[LP_IP_STR_MAX] = {0};
+    const bool has_default_gateway = get_default_gateway(
+        &default_interface_luid, default_gateway, sizeof(default_gateway));
+
     ULONG buffer_size = 0;
-    const ULONG flags = GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_INCLUDE_GATEWAYS;
+    const ULONG flags = GAA_FLAG_INCLUDE_PREFIX;
     DWORD result = GetAdaptersAddresses(AF_UNSPEC, flags, NULL, NULL, &buffer_size);
     if (result != ERROR_BUFFER_OVERFLOW || buffer_size == 0) {
         return LP_ERR_IO;
@@ -157,9 +182,8 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
     for (IP_ADAPTER_ADDRESSES *adapter = adapters; adapter != NULL;
          adapter = adapter->Next) {
         char gateway[LP_IP_STR_MAX] = {0};
-        if (adapter->FirstGatewayAddress != NULL) {
-            (void)format_sockaddr(adapter->FirstGatewayAddress->Address.lpSockaddr, gateway,
-                                  sizeof(gateway));
+        if (has_default_gateway && adapter->Luid.Value == default_interface_luid.Value) {
+            snprintf(gateway, sizeof(gateway), "%s", default_gateway);
         }
 
         for (IP_ADAPTER_UNICAST_ADDRESS *unicast = adapter->FirstUnicastAddress;
