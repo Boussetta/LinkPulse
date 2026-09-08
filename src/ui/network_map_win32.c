@@ -3,9 +3,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#define LP_MAP_WIDTH 680
-#define LP_MAP_HEIGHT 460
-#define LP_MAP_MAX_VISIBLE_DEVICES 8
+#define LP_MAP_WIDTH 380
+#define LP_MAP_HEIGHT 440
+#define LP_MAP_MAX_VISIBLE_DEVICES 4
 
 typedef struct {
     lp_neighbor_list_t neighbors;
@@ -111,17 +111,22 @@ static void paint_map(HWND window, HDC dc)
             ++device_count;
         }
     }
+    const size_t visible_count =
+        device_count < LP_MAP_MAX_VISIBLE_DEVICES ? device_count : LP_MAP_MAX_VISIBLE_DEVICES;
     char summary[64];
-    snprintf(summary, sizeof(summary), "%llu device%s visible",
-             (unsigned long long)device_count,
-             device_count == 1 ? "" : "s");
+    if (device_count > visible_count) {
+        snprintf(summary, sizeof(summary), "%llu of %llu devices shown",
+                 (unsigned long long)visible_count, (unsigned long long)device_count);
+    } else {
+        snprintf(summary, sizeof(summary), "%llu device%s visible",
+                 (unsigned long long)device_count, device_count == 1 ? "" : "s");
+    }
     RECT summary_rect = {28, 51, client.right - 28, 78};
     draw_centered_text(dc, state->label_font, muted, summary, summary_rect);
 
-    const int internet_x = 82;
-    const int gateway_x = 275;
-    const int center_y = client.bottom / 2 + 15;
-    const int device_x = 540;
+    const int center_x = client.right / 2;
+    const int internet_y = 115;
+    const int gateway_y = 210;
     char gateway[LP_IP_STR_MAX] = "No gateway";
     for (size_t i = 0; i < state->networks.count; ++i) {
         if (state->networks.items[i].gateway[0] != '\0') {
@@ -132,29 +137,30 @@ static void paint_map(HWND window, HDC dc)
 
     HPEN line_pen = CreatePen(PS_SOLID, 2, line);
     HPEN old_pen = (HPEN)SelectObject(dc, line_pen);
-    MoveToEx(dc, internet_x + 65, center_y, NULL);
-    LineTo(dc, gateway_x - 75, center_y);
+    MoveToEx(dc, center_x, internet_y + 31, NULL);
+    LineTo(dc, center_x, gateway_y - 31);
 
-    const size_t visible_count =
-        device_count < LP_MAP_MAX_VISIBLE_DEVICES ? device_count : LP_MAP_MAX_VISIBLE_DEVICES;
     size_t visible_index = 0;
     for (size_t i = 0; i < state->neighbors.count && visible_index < visible_count; ++i) {
         if (!is_device_neighbor(state, &state->neighbors.items[i])) {
             continue;
         }
-        const int spacing = visible_count > 1 ? 320 / ((int)visible_count - 1) : 0;
-        const int device_y = visible_count > 1 ? 105 + (int)visible_index * spacing : center_y;
-        MoveToEx(dc, gateway_x + 75, center_y, NULL);
-        LineTo(dc, device_x - 78, device_y);
+        const int columns = visible_count > 1 ? 2 : 1;
+        const int column = (int)visible_index % columns;
+        const int row = (int)visible_index / columns;
+        const int device_x = columns == 1 ? center_x : 100 + column * 180;
+        const int device_y = 310 + row * 80;
+        MoveToEx(dc, center_x, gateway_y + 31, NULL);
+        LineTo(dc, device_x, device_y - 31);
         ++visible_index;
     }
     SelectObject(dc, old_pen);
     DeleteObject(line_pen);
 
-    draw_node(dc, state->label_font, internet_fill, line, text, "Internet", "WAN", internet_x,
-              center_y, 130);
-    draw_node(dc, state->label_font, gateway_fill, line, text, "Gateway", gateway, gateway_x,
-              center_y, 150);
+    draw_node(dc, state->label_font, internet_fill, line, text, "Internet", "WAN", center_x,
+              internet_y, 150);
+    draw_node(dc, state->label_font, gateway_fill, line, text, "Gateway", gateway, center_x,
+              gateway_y, 170);
 
     visible_index = 0;
     for (size_t i = 0; i < state->neighbors.count && visible_index < visible_count; ++i) {
@@ -162,24 +168,21 @@ static void paint_map(HWND window, HDC dc)
         if (!is_device_neighbor(state, neighbor)) {
             continue;
         }
-        const int spacing = visible_count > 1 ? 320 / ((int)visible_count - 1) : 0;
-        const int device_y = visible_count > 1 ? 105 + (int)visible_index * spacing : center_y;
+        const int columns = visible_count > 1 ? 2 : 1;
+        const int column = (int)visible_index % columns;
+        const int row = (int)visible_index / columns;
+        const int device_x = columns == 1 ? center_x : 100 + column * 180;
+        const int device_y = 310 + row * 80;
         char label[32];
         snprintf(label, sizeof(label), "Device %llu", (unsigned long long)visible_index + 1);
         draw_node(dc, state->label_font, device_fill, line, text, label, neighbor->ip, device_x,
-                  device_y, 156);
+                device_y, 150);
         ++visible_index;
     }
 
     if (visible_count == 0) {
-        RECT empty = {430, center_y - 30, 650, center_y + 30};
+        RECT empty = {40, 320, client.right - 40, 380};
         draw_centered_text(dc, state->label_font, muted, "Waiting for nearby devices...", empty);
-    } else if (device_count > visible_count) {
-        char more[48];
-        snprintf(more, sizeof(more), "+%llu more devices",
-             (unsigned long long)(device_count - visible_count));
-        RECT more_rect = {440, client.bottom - 42, 640, client.bottom - 14};
-        draw_centered_text(dc, state->label_font, muted, more, more_rect);
     }
 }
 
@@ -303,7 +306,7 @@ void lp_network_map_show(HWND window, const lp_neighbor_list_t *neighbors,
     memset(&monitor_info, 0, sizeof(monitor_info));
     monitor_info.cbSize = sizeof(monitor_info);
     GetMonitorInfoA(monitor, &monitor_info);
-    int x = cursor.x - LP_MAP_WIDTH + 40;
+    int x = cursor.x - LP_MAP_WIDTH + 28;
     int y = monitor_info.rcWork.bottom - LP_MAP_HEIGHT - 8;
     if (x < monitor_info.rcWork.left + 8) {
         x = monitor_info.rcWork.left + 8;
