@@ -35,9 +35,10 @@ bool lp_win32_show_update_toast(const char *version)
 
     wchar_t xml[512];
     const int written = swprintf(xml, sizeof(xml) / sizeof(xml[0]),
-                                 L"<toast><visual><binding template=\"ToastText02\">"
+                                 L"<toast launch=\"linkpulse://download-update\"><visual>"
+                                 L"<binding template=\"ToastText02\">"
                                  L"<text id=\"1\">LinkPulse update</text>"
-                                 L"<text id=\"2\">Version %hs is available. Open LinkPulse to download it.</text>"
+                                 L"<text id=\"2\">Version %hs is available.</text>"
                                  L"</binding></visual><actions>"
                                  L"<action activationType=\"protocol\" arguments=\"linkpulse://download-update\" "
                                  L"content=\"Download update\"/></actions></toast>",
