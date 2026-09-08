@@ -12,7 +12,8 @@
 #include <windows.h>
 #include <shellapi.h>
 
-/* Dedicated tray-only entry point: no argument parsing, no console I/O -- see
+/* Dedicated tray-only entry point: handles toast/protocol activation arguments
+   and otherwise runs the tray app with no interactive console I/O -- see
    CMakeLists.txt for why this isn't just linkpulse.exe --tray with a GUI
    subsystem. Always configured from the saved config file; use linkpulse.exe
    --tray (console subsystem) instead if you need to override settings or see
