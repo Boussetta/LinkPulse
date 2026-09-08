@@ -244,7 +244,16 @@ static DWORD WINAPI download_thread_proc(LPVOID param)
 static void start_update_download(lp_tray_state_t *state)
 {
     if (state->download_thread != NULL) {
-        return;
+        const DWORD wait_result = WaitForSingleObject(state->download_thread, 0);
+        if (wait_result == WAIT_OBJECT_0 || wait_result == WAIT_FAILED) {
+            if (wait_result == WAIT_FAILED) {
+                LP_WARN("waiting for downloader thread failed");
+            }
+            CloseHandle(state->download_thread);
+            state->download_thread = NULL;
+        } else {
+            return;
+        }
     }
     state->download_thread = CreateThread(NULL, 0, download_thread_proc, state, 0, NULL);
     if (state->download_thread == NULL) {
