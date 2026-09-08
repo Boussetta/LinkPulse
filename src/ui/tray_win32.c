@@ -271,8 +271,12 @@ static void start_update_download(lp_tray_state_t *state)
    ownership of HBITMAP set via MIIM_BITMAP). */
 static HBITMAP render_heart_icon(void)
 {
-    const int size = 16;
-
+    const int cx = GetSystemMetrics(SM_CXMENUCHECK);
+    const int cy = GetSystemMetrics(SM_CYMENUCHECK);
+    const int size = (cx > 0 && cy > 0) ? ((cx < cy) ? cx : cy) : 0;
+    if (size <= 0) {
+        return NULL;
+    }
     BITMAPV5HEADER bi;
     memset(&bi, 0, sizeof(bi));
     bi.bV5Size = sizeof(bi);
