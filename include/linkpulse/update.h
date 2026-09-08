@@ -10,4 +10,6 @@
 lp_status_t lp_update_check_latest(const char *current_version, char *latest_version,
                                    size_t latest_cap);
 
+lp_status_t lp_update_download_latest(char *installer_path, size_t path_cap);
+
 #endif /* LINKPULSE_UPDATE_H */
