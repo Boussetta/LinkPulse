@@ -17,7 +17,11 @@ int lp_win32_register_toast_shortcut(void)
 {
     LP_INFO("registering toast activator shortcut property");
     wchar_t programs_path[MAX_PATH];
-    if (FAILED(SHGetFolderPathW(NULL, CSIDL_PROGRAMS, NULL, SHGFP_TYPE_CURRENT, programs_path))) {
+    const HRESULT programs_result =
+        SHGetFolderPathW(NULL, CSIDL_PROGRAMS, NULL, SHGFP_TYPE_CURRENT, programs_path);
+    if (FAILED(programs_result)) {
+        LP_ERROR("failed to resolve Programs folder: HRESULT=0x%08lx",
+                 (unsigned long)programs_result);
         return 1;
     }
 
@@ -26,12 +30,14 @@ int lp_win32_register_toast_shortcut(void)
                                  L"%ls\\LinkPulse.lnk",
                                  programs_path);
     if (written < 0 || (size_t)written >= sizeof(shortcut_path) / sizeof(shortcut_path[0])) {
+        LP_ERROR("failed to build toast shortcut path (buffer too small)");
         return 1;
     }
 
     HRESULT result = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     const bool initialized_here = SUCCEEDED(result);
     if (FAILED(result) && result != RPC_E_CHANGED_MODE) {
+        LP_ERROR("CoInitializeEx failed: HRESULT=0x%08lx", (unsigned long)result);
         return 1;
     }
 
