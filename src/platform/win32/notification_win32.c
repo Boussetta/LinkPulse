@@ -43,18 +43,19 @@ static bool show_toast_internal(const char *title, const char *message, bool upd
         return false;
     }
 
-        const wchar_t *actions = update_action
-                                                                 ? L"<actions><action activationType=\"protocol\" "
-                                                                     L"arguments=\"linkpulse://download-update\" "
-                                                                     L"content=\"Download update\"/></actions>"
-                                                                 : L"";
-        wchar_t xml[512];
+    const wchar_t *launch_uri = update_action ? L"linkpulse://download-update" : L"";
+    const wchar_t *actions = update_action
+                                 ? L"<actions><action activationType=\"protocol\" "
+                                   L"arguments=\"linkpulse://download-update\" "
+                                   L"content=\"Download update\"/></actions>"
+                                 : L"";
+    wchar_t xml[512];
     const int written = swprintf(xml, sizeof(xml) / sizeof(xml[0]),
-                                 L"<toast launch=\"linkpulse://download-update\"><visual>"
+                                 L"<toast launch=\"%ls\"><visual>"
                                  L"<binding template=\"ToastText02\">"
                                  L"<text id=\"1\">%hs</text>"
                                  L"<text id=\"2\">%hs</text>"
-                                 L"</binding></visual>%ls</toast>", title, message, actions);
+                                 L"</binding></visual>%ls</toast>", launch_uri, title, message, actions);
     if (written < 0 || (size_t)written >= sizeof(xml) / sizeof(xml[0])) {
         return false;
     }
