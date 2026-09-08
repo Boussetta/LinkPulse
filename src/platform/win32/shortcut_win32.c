@@ -53,14 +53,19 @@ int lp_win32_register_toast_shortcut(void)
         PROPVARIANT value;
         PropVariantInit(&value);
         value.vt = VT_LPWSTR;
-        value.pwszVal = (LPWSTR)LP_TOAST_ACTIVATOR_CLSID_STRING;
-        result = properties->lpVtbl->SetValue(properties, &PKEY_AppUserModel_ToastActivatorCLSID,
-                                               &value);
-        if (SUCCEEDED(result)) {
-            result = properties->lpVtbl->Commit(properties);
+        const size_t bytes = (size_t)(lstrlenW(LP_TOAST_ACTIVATOR_CLSID_STRING) + 1) * sizeof(wchar_t);
+        value.pwszVal = (LPWSTR)CoTaskMemAlloc(bytes);
+        if (value.pwszVal != NULL) {
+            lstrcpyW(value.pwszVal, LP_TOAST_ACTIVATOR_CLSID_STRING);
+            result = properties->lpVtbl->SetValue(properties, &PKEY_AppUserModel_ToastActivatorCLSID,
+                                                   &value);
+            if (SUCCEEDED(result)) {
+                result = properties->lpVtbl->Commit(properties);
+            }
+        } else {
+            result = E_OUTOFMEMORY;
         }
         PropVariantClear(&value);
-    }
     if (properties != NULL) {
         properties->lpVtbl->Release(properties);
     }
