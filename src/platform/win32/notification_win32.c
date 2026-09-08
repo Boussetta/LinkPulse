@@ -3,18 +3,24 @@
 #include <string.h>
 #include <wchar.h>
 
+#include <windows.h>
+#include <shobjidl.h>
+
+#define LP_APP_USER_MODEL_ID L"LinkPulse.NetworkMonitor"
+
+#if defined(_MSC_VER)
 #define COBJMACROS
+#define CINTERFACE
 #define INITGUID
 #define WIDL_using_Windows_Data_Xml_Dom
 #define WIDL_using_Windows_UI_Notifications
 #include <roapi.h>
-#include <shobjidl.h>
 #include <windows.data.xml.dom.h>
 #include <windows.ui.notifications.h>
-#include <windows.h>
 #include <winstring.h>
+#endif
 
-#define LP_APP_USER_MODEL_ID L"Boussetta.LinkPulse"
+#if defined(_MSC_VER)
 
 static HRESULT make_hstring(PCWSTR value, HSTRING *out)
 {
@@ -80,7 +86,7 @@ bool lp_win32_show_update_toast(const char *version)
                                         (void **)&manager);
     }
     if (SUCCEEDED(result)) {
-        result = make_hstring(L"Boussetta.LinkPulse", &app_id);
+        result = make_hstring(L"LinkPulse.NetworkMonitor", &app_id);
     }
     if (SUCCEEDED(result)) {
         result = IToastNotificationManagerStatics_CreateToastNotifierWithId(
@@ -136,6 +142,16 @@ bool lp_win32_show_update_toast(const char *version)
     }
     return SUCCEEDED(result);
 }
+
+#else
+
+bool lp_win32_show_update_toast(const char *version)
+{
+    (void)version;
+    return false;
+}
+
+#endif
 
 void lp_win32_set_app_user_model_id(void)
 {
