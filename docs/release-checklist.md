@@ -8,7 +8,7 @@ Run on a native Windows machine with Visual Studio Build Tools and Inno Setup in
 powershell -ExecutionPolicy Bypass -File .\packaging\build-installer.ps1
 ```
 
-Confirm that CMake configure, MSVC Release build, all five tests, and Inno Setup compilation succeed.
+Confirm that CMake configuration, the MSVC Release build, all tests (ctest), and Inno Setup compilation succeed.
 
 ## Clean-Machine Validation
 
