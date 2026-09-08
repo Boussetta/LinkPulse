@@ -37,7 +37,9 @@ LP_INFO("tray entrypoint started: argc=%d mode=%s", argc,
         lp_win32_log_stop();
         return result;
     }
-    if (argc > 1 && strcmp(argv[1], "linkpulse://download-update") == 0) {
+    if (argc > 1 &&
+        (strcmp(argv[1], "linkpulse://download-update") == 0 ||
+         strcmp(argv[1], "linkpulse://download-update/") == 0)) {
         LP_INFO("protocol update activation received");
         char installer_path[MAX_PATH];
         if (lp_update_download_latest(installer_path, sizeof(installer_path)) != LP_OK) {
