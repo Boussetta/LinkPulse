@@ -181,9 +181,15 @@ static bool show_toast_internal(const char *title, const char *message, const ch
 
 bool lp_win32_show_toast(const char *title, const char *message)
 {
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER ts;
+    ts.LowPart = ft.dwLowDateTime;
+    ts.HighPart = ft.dwHighDateTime;
+
     static unsigned long long next_tag;
-    char tag[32];
-    snprintf(tag, sizeof(tag), "event-%llu", ++next_tag);
+    char tag[64];
+    snprintf(tag, sizeof(tag), "event-%llu-%llu", (unsigned long long)ts.QuadPart, ++next_tag);
     return show_toast_internal(title, message, tag, false);
 }
 
