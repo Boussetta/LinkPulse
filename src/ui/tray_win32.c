@@ -607,15 +607,18 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         }
         bool can_close_update_stop_event = true;
         if (state->discovery_thread != NULL) {
+            SetEvent(state->update_stop_event);
             const DWORD wait_result =
                 WaitForSingleObject(state->discovery_thread, LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
             if (wait_result == WAIT_TIMEOUT) {
                 LP_WARN("discovery thread did not exit within %u ms; continuing shutdown",
                         (unsigned)LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
                 can_close_update_stop_event = false;
+                can_delete_lock = false;
             } else if (wait_result != WAIT_OBJECT_0) {
                 LP_WARN("waiting for discovery thread failed during shutdown");
                 can_close_update_stop_event = false;
+                can_delete_lock = false;
             }
             CloseHandle(state->discovery_thread);
             state->discovery_thread = NULL;
