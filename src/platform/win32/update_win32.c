@@ -103,7 +103,7 @@ lp_status_t lp_update_check_latest(const char *current_version, char *latest_ver
         return LP_ERR_IO;
     }
 
-    const wchar_t headers[] = L"Accept: application/vnd.github+json\r\nUser-Agent: LinkPulse\r\n";
+    const wchar_t headers[] = L"Accept: application/vnd.github+json\r\n";
     const BOOL sent = WinHttpSendRequest(request, headers, (DWORD)-1L, WINHTTP_NO_REQUEST_DATA, 0,
                                          0, 0);
     const BOOL received = sent && WinHttpReceiveResponse(request, NULL);
