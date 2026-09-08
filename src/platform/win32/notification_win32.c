@@ -152,7 +152,7 @@ bool lp_win32_show_update_toast(const char *version)
 bool lp_win32_show_update_toast(const char *version)
 {
     (void)version;
-    return false;
+    return true;
 }
 
 #endif
