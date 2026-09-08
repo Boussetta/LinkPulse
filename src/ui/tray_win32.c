@@ -7,6 +7,7 @@
 #include "linkpulse/log.h"
 #include "linkpulse/net.h"
 #include "linkpulse/sampler.h"
+#include "linkpulse/update.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -16,13 +17,16 @@
 #include <shellapi.h>
 
 #define WM_LP_TRAYICON (WM_APP + 1)
+#define WM_LP_UPDATE_RESULT (WM_APP + 2)
 #define LP_TRAY_TIMER_ID 1
 #define LP_TRAY_ICON_UID 1
+#define LP_UPDATE_VERSION_MAX 32
 
 #define IDM_PAUSE 2001
 #define IDM_UNITS_BITS 2002
 #define IDM_AUTOSTART 2003
 #define IDM_EXIT 2004
+#define IDM_UPDATE 2005
 
 /* Enough points to fill the icon at the largest realistic SM_CXSMICON (24px at
    125% scaling); render_icon only ever reads the last `size` of them. */
@@ -41,10 +45,13 @@ typedef struct {
     volatile LONG stop_requested;
     volatile LONG paused;
     volatile LONG use_bits;
+    bool update_available;
+    char update_version[LP_UPDATE_VERSION_MAX];
 
     lp_sampler_t sampler;
     unsigned interval_ms;
     HANDLE thread;
+    HANDLE update_thread;
 
     HWND hwnd;
     NOTIFYICONDATAA nid;
@@ -55,6 +62,10 @@ typedef struct {
 /* One tray per process (enforced by the single-instance mutex), so a single
    global avoids threading GWLP_USERDATA through every message handler. */
 static lp_tray_state_t g_tray;
+
+#ifndef LP_VERSION
+#define LP_VERSION "0.0.0-unknown"
+#endif
 
 /* The taskbar (and its clock/tray icons) follow "SystemUsesLightTheme", not the
    separate "AppsUseLightTheme" value that only affects app windows. Defaults
@@ -186,6 +197,20 @@ static DWORD WINAPI sampler_thread_proc(LPVOID param)
     return 0;
 }
 
+static DWORD WINAPI update_thread_proc(LPVOID param)
+{
+    lp_tray_state_t *state = (lp_tray_state_t *)param;
+    char latest_version[LP_UPDATE_VERSION_MAX];
+    if (lp_update_check_latest(LP_VERSION, latest_version, sizeof(latest_version)) == LP_OK) {
+        EnterCriticalSection(&state->lock);
+        snprintf(state->update_version, sizeof(state->update_version), "%s", latest_version);
+        state->update_available = true;
+        LeaveCriticalSection(&state->lock);
+        PostMessageA(state->hwnd, WM_LP_UPDATE_RESULT, 0, 0);
+    }
+    return 0;
+}
+
 static void show_context_menu(lp_tray_state_t *state)
 {
     HMENU menu = CreatePopupMenu();
@@ -196,12 +221,22 @@ static void show_context_menu(lp_tray_state_t *state)
     const bool paused = InterlockedCompareExchange(&state->paused, 0, 0) != 0;
     const bool use_bits = InterlockedCompareExchange(&state->use_bits, 0, 0) != 0;
     const bool autostart = lp_autostart_is_enabled();
+    bool update_available;
+    char update_version[LP_UPDATE_VERSION_MAX];
+    EnterCriticalSection(&state->lock);
+    update_available = state->update_available;
+    snprintf(update_version, sizeof(update_version), "%s", state->update_version);
+    LeaveCriticalSection(&state->lock);
 
     AppendMenuA(menu, MF_STRING | (paused ? MF_CHECKED : 0), IDM_PAUSE,
                 paused ? "Resume" : "Pause");
     AppendMenuA(menu, MF_STRING | (use_bits ? MF_CHECKED : 0), IDM_UNITS_BITS, "Show bits/s");
     AppendMenuA(menu, MF_STRING | (autostart ? MF_CHECKED : 0), IDM_AUTOSTART,
                 "Start with Windows");
+    if (update_available) {
+        AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
+        AppendMenuA(menu, MF_STRING, IDM_UPDATE, "Download update");
+    }
     AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(menu, MF_STRING, IDM_EXIT, "Exit");
 
@@ -228,6 +263,10 @@ static void show_context_menu(lp_tray_state_t *state)
             LP_WARN("failed to %s start-on-login", autostart ? "disable" : "enable");
         }
         break;
+    case IDM_UPDATE:
+        ShellExecuteA(NULL, "open", "https://github.com/Boussetta/LinkPulse/releases/latest", NULL,
+                      NULL, SW_SHOWNORMAL);
+        break;
     case IDM_EXIT:
         DestroyWindow(state->hwnd);
         break;
@@ -241,6 +280,8 @@ static void refresh_icon_and_tooltip(lp_tray_state_t *state)
     lp_rate_sample_t sample = {0, 0, 0};
     lp_status_t status = LP_ERR_NOT_FOUND;
     bool has_sample = false;
+    bool update_available = false;
+    char update_version[LP_UPDATE_VERSION_MAX];
     uint64_t history[LP_TRAY_GRAPH_POINTS];
     size_t history_count = 0;
 
@@ -248,6 +289,8 @@ static void refresh_icon_and_tooltip(lp_tray_state_t *state)
     sample = state->latest;
     status = state->latest_status;
     has_sample = state->has_sample;
+    update_available = state->update_available;
+    snprintf(update_version, sizeof(update_version), "%s", state->update_version);
     history_count = state->rx_history_count;
     memcpy(history, state->rx_history, history_count * sizeof(history[0]));
     LeaveCriticalSection(&state->lock);
@@ -276,6 +319,13 @@ static void refresh_icon_and_tooltip(lp_tray_state_t *state)
     } else {
         snprintf(state->nid.szTip, sizeof(state->nid.szTip), "LinkPulse\n%s",
                  lp_status_str(status));
+    }
+    if (update_available) {
+        const size_t tip_length = strlen(state->nid.szTip);
+        if (tip_length < sizeof(state->nid.szTip)) {
+            snprintf(state->nid.szTip + tip_length, sizeof(state->nid.szTip) - tip_length,
+                     "\nupdate available: %s", update_version);
+        }
     }
 
     Shell_NotifyIconA(NIM_MODIFY, &state->nid);
@@ -315,6 +365,9 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             show_context_menu(state);
         }
         return 0;
+    case WM_LP_UPDATE_RESULT:
+        refresh_icon_and_tooltip(state);
+        return 0;
     case WM_DESTROY: {
         lp_config_t config_to_save;
         config_to_save.mode = state->sampler.config.mode;
@@ -339,6 +392,11 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             WaitForSingleObject(state->thread, INFINITE);
             CloseHandle(state->thread);
             state->thread = NULL;
+        }
+        if (state->update_thread != NULL) {
+            WaitForSingleObject(state->update_thread, INFINITE);
+            CloseHandle(state->update_thread);
+            state->update_thread = NULL;
         }
         DeleteCriticalSection(&state->lock);
         PostQuitMessage(0);
@@ -420,6 +478,8 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
     if (g_tray.thread == NULL) {
         LP_ERROR("failed to start the sampler thread");
         DestroyWindow(g_tray.hwnd);
+    } else {
+        g_tray.update_thread = CreateThread(NULL, 0, update_thread_proc, &g_tray, 0, NULL);
     }
 
     MSG msg;

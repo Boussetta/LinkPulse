@@ -71,6 +71,26 @@ cmake --build --preset msvc-release
 
 Produces `build\installer\LinkPulseSetup.exe`.
 
+### Hosting releases on GitHub
+
+The `Release` workflow builds the MSVC Release binaries, runs the tests,
+compiles the installer, and attaches `LinkPulseSetup.exe` to a GitHub Release.
+Publish a version by pushing a tag from `main`:
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+GitHub provides the hosting and download bandwidth for free.
+
+### Update detection
+
+The tray app checks the public GitHub Releases API in the background at startup.
+When a newer semantic version is available, the tooltip reports it and the
+context menu offers **Download update**, opening the GitHub release page. The
+app never replaces its own executable or installs updates silently.
+
 ### MSIX (Microsoft Store — deferred)
 
 `packaging/` also contains a `Package.appxmanifest`, placeholder tile art

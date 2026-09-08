@@ -175,7 +175,8 @@ critical path right now.
       the current `HKCU\...\Run` key -- more idiomatic for a packaged app, and avoids the
       WSL-path fragility discovered during dev-environment testing
 - [ ] Release workflow publishing a signed-ready `linkpulse.exe` (moved from M3)
-- [ ] Auto-update check -- likely unnecessary if Store-distributed, since the Store handles updates
+- [x] Update detection: background check against GitHub Releases, with a tray action opening the
+      release page; silent download/replacement is deliberately not performed
 - [ ] *(Owner-only, not automatable)*: Partner Center developer account, reserved app name,
       Store listing content (description, screenshots, age rating, privacy policy URL)
 
