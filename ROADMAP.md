@@ -155,12 +155,14 @@ critical path right now.
       `linkpulse-tray.exe` specifically, resolved next to whichever binary is running rather
       than the running binary itself, so toggling it from the debug CLI can't misfire.
 - [ ] MSVC Release build validated on a machine without the dev toolchain installed (avoids
-      MinGW runtime DLL dependencies that wouldn't exist on a clean install)
+      MinGW runtime DLL dependencies that wouldn't exist on a clean install); checklist:
+      `docs/release-checklist.md`
 - [x] Inno Setup installer (`packaging/LinkPulse.iss`): per-user install (no admin/UAC), Start
       Menu shortcut, optional desktop shortcut, uninstaller registered in "Add/Remove
       Programs", cleans up the `HKCU\...\Run` autostart entry on uninstall if present. Script
       validated on a native Windows machine, including startup after reboot
-- [ ] Documentation + screenshots
+- [ ] Documentation + screenshots: release checklist exists at `docs/release-checklist.md`;
+      capture final Windows screenshots during the clean-machine validation
 
 ### Deferred: Microsoft Store (MSIX) -- picked back up once the installer path is proven
 
@@ -174,7 +176,7 @@ critical path right now.
 - [ ] Autostart via the MSIX `StartupTask` manifest extension instead of (or in addition to)
       the current `HKCU\...\Run` key -- more idiomatic for a packaged app, and avoids the
       WSL-path fragility discovered during dev-environment testing
-- [ ] Release workflow publishing a signed-ready `linkpulse.exe` (moved from M3)
+- [x] Release workflow publishing `LinkPulseSetup.exe` to GitHub Releases on `v*` tags
 - [x] Update detection: background check against GitHub Releases, with a tray action opening the
       release page; silent download/replacement is deliberately not performed
 - [ ] *(Owner-only, not automatable)*: Partner Center developer account, reserved app name,
