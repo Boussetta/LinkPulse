@@ -1,6 +1,8 @@
 #ifndef LINKPULSE_LOG_H
 #define LINKPULSE_LOG_H
 
+#include <stdio.h>
+
 typedef enum {
     LP_LOG_ERROR = 0,
     LP_LOG_WARN,
@@ -10,6 +12,7 @@ typedef enum {
 
 void lp_log_set_level(lp_log_level_t level);
 lp_log_level_t lp_log_get_level(void);
+void lp_log_set_file(FILE *file);
 
 #if defined(__GNUC__)
 __attribute__((format(printf, 2, 3)))

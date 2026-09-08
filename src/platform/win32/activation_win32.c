@@ -1,6 +1,7 @@
 #include "linkpulse/activation.h"
 
 #include "linkpulse/update.h"
+#include "linkpulse/log.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -80,10 +81,13 @@ static DWORD WINAPI activation_download_thread_proc(LPVOID param)
 
     char installer_path[MAX_PATH];
     if (lp_update_download_latest(installer_path, sizeof(installer_path)) != LP_OK) {
+        LP_ERROR("toast update download failed");
         return 1;
     }
+    LP_INFO("toast update downloaded to %s", installer_path);
     if ((INT_PTR)ShellExecuteA(NULL, "open", installer_path, NULL, NULL, SW_SHOWNORMAL) <= 32) {
         DeleteFileA(installer_path);
+        LP_ERROR("toast installer launch failed");
         return 1;
     }
     return 0;
@@ -109,6 +113,7 @@ static HRESULT STDMETHODCALLTYPE callback_activate(LP_NOTIFICATION_ACTIVATION_CA
     (void)app_user_model_id;
     (void)data;
     (void)data_count;
+    LP_INFO("toast activation received: args=%ls", invoked_args != NULL ? invoked_args : L"(null)");
     HRESULT result = S_OK;
     if (invoked_args != NULL && lstrcmpW(invoked_args, L"linkpulse://download-update") == 0) {
         HANDLE download_thread =

@@ -1,4 +1,5 @@
 #include "linkpulse/shortcut.h"
+#include "linkpulse/log.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -14,6 +15,7 @@
 
 int lp_win32_register_toast_shortcut(void)
 {
+    LP_INFO("registering toast activator shortcut property");
     wchar_t programs_path[MAX_PATH];
     if (FAILED(SHGetFolderPathW(NULL, CSIDL_PROGRAMS, NULL, SHGFP_TYPE_CURRENT, programs_path))) {
         return 1;
@@ -70,6 +72,12 @@ int lp_win32_register_toast_shortcut(void)
     }
     if (initialized_here) {
         CoUninitialize();
+    }
+    if (FAILED(result)) {
+        LP_ERROR("toast shortcut property registration failed: HRESULT=0x%08lx",
+                 (unsigned long)result);
+    } else {
+        LP_INFO("toast activator shortcut property registered");
     }
     return SUCCEEDED(result) ? 0 : 1;
 }
