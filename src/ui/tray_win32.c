@@ -11,6 +11,8 @@
 #include "linkpulse/sampler.h"
 #include "linkpulse/update.h"
 
+#include "network_map_win32.h"
+
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -65,8 +67,11 @@ typedef struct {
     HANDLE update_stop_event;
     lp_discovery_event_t discovery_events[LP_DISCOVERY_MAX_EVENTS];
     size_t discovery_event_count;
+    lp_neighbor_list_t map_neighbors;
+    lp_local_network_list_t map_networks;
 
     HWND hwnd;
+    HWND network_map_hwnd;
     NOTIFYICONDATAA nid;
     HICON current_icon;
     UINT wm_taskbar_created;
@@ -241,13 +246,24 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
         lp_discovery_event_t events[LP_DISCOVERY_MAX_EVENTS];
         size_t event_count = 0;
         if (lp_discovery_poll(&state->discovery, events, LP_DISCOVERY_MAX_EVENTS, &event_count) ==
-                LP_OK &&
-            event_count > 0) {
+            LP_OK) {
+            lp_local_network_list_t networks = {0};
+            if (state->discovery.sources.local_networks_fn != NULL) {
+                (void)state->discovery.sources.local_networks_fn(&networks);
+            }
             EnterCriticalSection(&state->lock);
-            memcpy(state->discovery_events, events, event_count * sizeof(events[0]));
+            state->map_neighbors.count = state->discovery.known_count;
+            memcpy(state->map_neighbors.items, state->discovery.known,
+                   state->discovery.known_count * sizeof(state->discovery.known[0]));
+            state->map_networks = networks;
+            if (event_count > 0) {
+                memcpy(state->discovery_events, events, event_count * sizeof(events[0]));
+            }
             state->discovery_event_count = event_count;
             LeaveCriticalSection(&state->lock);
-            PostMessageA(state->hwnd, WM_LP_DISCOVERY_RESULT, 0, 0);
+            if (event_count > 0) {
+                PostMessageA(state->hwnd, WM_LP_DISCOVERY_RESULT, 0, 0);
+            }
         }
 
         if (WaitForSingleObject(state->update_stop_event, LP_DISCOVERY_INTERVAL_MS) ==
@@ -332,6 +348,25 @@ static void show_discovery_notifications(lp_tray_state_t *state)
             LP_WARN("failed to show network discovery notification");
         }
     }
+}
+
+static void toggle_network_map(lp_tray_state_t *state)
+{
+    if (state->network_map_hwnd == NULL) {
+        return;
+    }
+    if (IsWindowVisible(state->network_map_hwnd)) {
+        ShowWindow(state->network_map_hwnd, SW_HIDE);
+        return;
+    }
+
+    lp_neighbor_list_t neighbors;
+    lp_local_network_list_t networks;
+    EnterCriticalSection(&state->lock);
+    neighbors = state->map_neighbors;
+    networks = state->map_networks;
+    LeaveCriticalSection(&state->lock);
+    lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
 }
 
 static void show_context_menu(lp_tray_state_t *state)
@@ -574,6 +609,8 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
     case WM_LP_TRAYICON:
         if (lparam == WM_RBUTTONUP || lparam == WM_CONTEXTMENU) {
             show_context_menu(state);
+        } else if (lparam == WM_LBUTTONUP) {
+            toggle_network_map(state);
         }
         return 0;
     case WM_LP_UPDATE_RESULT:
@@ -584,6 +621,15 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         return 0;
     case WM_LP_DISCOVERY_RESULT:
         show_discovery_notifications(state);
+        if (state->network_map_hwnd != NULL && IsWindowVisible(state->network_map_hwnd)) {
+            lp_neighbor_list_t neighbors;
+            lp_local_network_list_t networks;
+            EnterCriticalSection(&state->lock);
+            neighbors = state->map_neighbors;
+            networks = state->map_networks;
+            LeaveCriticalSection(&state->lock);
+            lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
+        }
         return 0;
     case WM_DESTROY: {
         bool can_delete_lock = true;
@@ -601,6 +647,10 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
 
         KillTimer(hwnd, LP_TRAY_TIMER_ID);
         Shell_NotifyIconA(NIM_DELETE, &state->nid);
+        if (state->network_map_hwnd != NULL) {
+            DestroyWindow(state->network_map_hwnd);
+            state->network_map_hwnd = NULL;
+        }
         if (state->current_icon != NULL) {
             DestroyIcon(state->current_icon);
             state->current_icon = NULL;
@@ -721,6 +771,10 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
         DeleteCriticalSection(&g_tray.lock);
         CloseHandle(single_instance_mutex);
         return 1;
+    }
+    g_tray.network_map_hwnd = lp_network_map_create(instance, g_tray.hwnd);
+    if (g_tray.network_map_hwnd == NULL) {
+        LP_WARN("failed to create network map window");
     }
 
     g_tray.nid.cbSize = sizeof(g_tray.nid);
