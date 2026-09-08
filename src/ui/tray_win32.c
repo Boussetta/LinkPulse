@@ -269,14 +269,6 @@ static void show_update_notification(lp_tray_state_t *state)
     snprintf(version, sizeof(version), "%s", state->update_version);
     LeaveCriticalSection(&state->lock);
 
-    NOTIFYICONDATAA notification = state->nid;
-    notification.uFlags = NIF_INFO;
-    snprintf(notification.szInfoTitle, sizeof(notification.szInfoTitle), "LinkPulse update");
-    snprintf(notification.szInfo, sizeof(notification.szInfo),
-             "Version %s is available.", version);
-    notification.uTimeout = 10000;
-    notification.dwInfoFlags = NIIF_INFO;
-    Shell_NotifyIconA(NIM_MODIFY, &notification);
     if (!lp_win32_show_update_toast(version)) {
         LP_WARN("failed to show Windows notification-center toast");
     }
