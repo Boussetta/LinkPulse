@@ -71,6 +71,16 @@ cmake --build --preset msvc-release
 
 Produces `build\installer\LinkPulseSetup.exe`.
 
+For the complete native Windows workflow, run this from PowerShell:
+
+```powershell
+.\packaging\build-installer.ps1
+```
+
+The script configures MSVC, builds Release, runs all tests, and compiles the
+Inno Setup installer. It uses the per-user Inno Setup location by default; a
+different compiler path can be supplied with `-InnoCompiler`.
+
 ### Hosting releases on GitHub
 
 The `Release` workflow builds the MSVC Release binaries, runs the tests,
