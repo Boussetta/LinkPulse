@@ -330,11 +330,17 @@ static void show_context_menu(lp_tray_state_t *state)
     case IDM_UPDATE:
         start_update_download(state);
         break;
-    case IDM_SUPPORT:
+    case IDM_SUPPORT: {
         /* Opt-in only: never shown automatically, no telemetry, just a link. */
-        ShellExecuteA(NULL, "open", "https://github.com/sponsors/Boussetta", NULL, NULL,
-                      SW_SHOWNORMAL);
+        const INT_PTR rc = (INT_PTR)ShellExecuteA(state->hwnd, "open",
+                                                "https://github.com/sponsors/Boussetta", NULL,
+                                                NULL, SW_SHOWNORMAL);
+        if (rc <= 32) {
+            MessageBoxA(state->hwnd, "Could not open the LinkPulse support page.", "LinkPulse",
+                        MB_OK | MB_ICONERROR);
+        }
         break;
+    }
     case IDM_EXIT:
         DestroyWindow(state->hwnd);
         break;
