@@ -74,7 +74,7 @@ Produces `build\installer\LinkPulseSetup.exe`.
 For the complete native Windows workflow, run this from PowerShell:
 
 ```powershell
-.\packaging\build-installer.ps1
+powershell -ExecutionPolicy Bypass -File .\packaging\build-installer.ps1
 ```
 
 The script configures MSVC, builds Release, runs all tests, and compiles the
