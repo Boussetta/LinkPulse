@@ -291,6 +291,11 @@ void lp_network_map_show(HWND window, const lp_neighbor_list_t *neighbors,
     state->neighbors = *neighbors;
     state->networks = *networks;
 
+    if (IsWindowVisible(window)) {
+        InvalidateRect(window, NULL, TRUE);
+        return;
+    }
+
     POINT cursor;
     GetCursorPos(&cursor);
     HMONITOR monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
