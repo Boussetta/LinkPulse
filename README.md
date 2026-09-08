@@ -87,10 +87,11 @@ page. GitHub provides the hosting and download bandwidth for free.
 
 ### Update detection
 
-The tray app checks the public GitHub Releases API in the background at startup.
-When a newer semantic version is available, the tooltip reports it and the
-context menu offers **Download update**, opening the GitHub release page. The
-app never replaces its own executable or installs updates silently.
+The tray app checks the public GitHub Releases API in the background at startup
+and every six hours. When a newer semantic version is available, Windows shows
+a tray notification, the tooltip reports it, and the context menu offers
+**Download update**, opening the GitHub release page. The app never replaces
+its own executable or installs updates silently.
 
 ### MSIX (Microsoft Store — deferred)
 
