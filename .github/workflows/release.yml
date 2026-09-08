@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Configure MSVC Release
+        run: cmake --preset msvc
+
+      - name: Build MSVC Release
+        run: cmake --build --preset msvc-release
+
+      - name: Run MSVC Release tests
+        run: ctest --preset msvc-release
+
+      - name: Build Inno Setup installer
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            throw "Inno Setup compiler not found at $iscc"
+          }
+          & $iscc "packaging\LinkPulse.iss"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { "manual-$env:GITHUB_SHA" }
+          $title = if ($env:GITHUB_REF_TYPE -eq "tag") { "LinkPulse $tag" } else { "LinkPulse development build" }
+          gh release create $tag "build\installer\LinkPulseSetup.exe" --title $title --generate-notes
