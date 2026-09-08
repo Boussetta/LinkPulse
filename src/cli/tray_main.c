@@ -1,4 +1,5 @@
 #include "linkpulse/config.h"
+#include "linkpulse/activation.h"
 #include "linkpulse/tray.h"
 #include "linkpulse/update.h"
 
@@ -15,6 +16,9 @@
    debug log output while testing. */
 int main(int argc, char **argv)
 {
+    if (argc > 1 && strcmp(argv[1], "/ToastActivator") == 0) {
+        return lp_win32_run_toast_activator();
+    }
     if (argc > 1 && strcmp(argv[1], "linkpulse://download-update") == 0) {
         char installer_path[MAX_PATH];
         if (lp_update_download_latest(installer_path, sizeof(installer_path)) != LP_OK) {
