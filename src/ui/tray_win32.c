@@ -480,20 +480,22 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
     case WM_CREATE:
         SetTimer(hwnd, LP_TRAY_TIMER_ID, state->interval_ms, NULL);
         return 0;
-    case WM_MEASUREITEM:
-        if (((MEASUREITEMSTRUCT *)lparam)->CtlType == ODT_MENU &&
-            ((MEASUREITEMSTRUCT *)lparam)->itemID == IDM_SUPPORT) {
-            measure_sponsor_item((MEASUREITEMSTRUCT *)lparam);
+    case WM_MEASUREITEM: {
+        MEASUREITEMSTRUCT *mi = (MEASUREITEMSTRUCT *)lparam;
+        if (mi != NULL && mi->CtlType == ODT_MENU && mi->itemID == IDM_SUPPORT) {
+            measure_sponsor_item(mi);
             return TRUE;
         }
-        return FALSE;
-    case WM_DRAWITEM:
-        if (((DRAWITEMSTRUCT *)lparam)->CtlType == ODT_MENU &&
-            ((DRAWITEMSTRUCT *)lparam)->itemID == IDM_SUPPORT) {
-            draw_sponsor_item((DRAWITEMSTRUCT *)lparam);
+        return DefWindowProcA(hwnd, msg, wparam, lparam);
+    }
+    case WM_DRAWITEM: {
+        DRAWITEMSTRUCT *di = (DRAWITEMSTRUCT *)lparam;
+        if (di != NULL && di->CtlType == ODT_MENU && di->itemID == IDM_SUPPORT) {
+            draw_sponsor_item(di);
             return TRUE;
         }
-        return FALSE;
+        return DefWindowProcA(hwnd, msg, wparam, lparam);
+    }
     case WM_SETTINGCHANGE:
         /* Windows broadcasts this with lParam pointing to "ImmersiveColorSet"
            when the user toggles light/dark mode; without it, the icon would
