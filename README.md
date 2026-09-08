@@ -3,7 +3,7 @@
 A lightweight Windows 11 system tray monitor for local network activity.
 Written in C11, no runtime dependencies.
 
-Current status: **Milestone 0/1** — see [ROADMAP.md](ROADMAP.md).
+Current status: **Milestone 7 distribution validation** — see [ROADMAP.md](ROADMAP.md).
 
 ## Building
 
@@ -88,8 +88,8 @@ compiles the Inno Setup installer, and attaches `LinkPulseSetup.exe` to a
 GitHub Release. To publish a version, push a tag from `main`:
 
 ```powershell
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.3
+git push origin v0.1.3
 ```
 
 The finished installer is then available from the repository's **Releases**
@@ -99,9 +99,14 @@ page. GitHub provides the hosting and download bandwidth for free.
 
 The tray app checks the public GitHub Releases API in the background at startup
 and every six hours. When a newer semantic version is available, Windows shows
-a tray notification, the tooltip reports it, and the context menu offers
-**Download update**, opening the GitHub release page. The app never replaces
-its own executable or installs updates silently.
+one native toast notification for each newly detected version. Clicking the
+notification body or its **Download
+update** action downloads and launches the installer through LinkPulse's
+internal HTTPS downloader. The tray menu offers the same action. The app never
+replaces its own executable or installs updates silently.
+
+See [docs/release-checklist.md](docs/release-checklist.md) for clean-machine
+validation and release screenshots.
 
 ### MSIX (Microsoft Store — deferred)
 
