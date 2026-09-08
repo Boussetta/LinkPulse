@@ -22,6 +22,7 @@
 #define LP_TRAY_ICON_UID 1
 #define LP_UPDATE_VERSION_MAX 32
 #define LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS 1000
+#define LP_UPDATE_CHECK_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)
 
 #define IDM_PAUSE 2001
 #define IDM_UNITS_BITS 2002
@@ -53,6 +54,7 @@ typedef struct {
     unsigned interval_ms;
     HANDLE thread;
     HANDLE update_thread;
+    HANDLE update_stop_event;
 
     HWND hwnd;
     NOTIFYICONDATAA nid;
@@ -201,15 +203,41 @@ static DWORD WINAPI sampler_thread_proc(LPVOID param)
 static DWORD WINAPI update_thread_proc(LPVOID param)
 {
     lp_tray_state_t *state = (lp_tray_state_t *)param;
-    char latest_version[LP_UPDATE_VERSION_MAX];
-    if (lp_update_check_latest(LP_VERSION, latest_version, sizeof(latest_version)) == LP_OK) {
-        EnterCriticalSection(&state->lock);
-        snprintf(state->update_version, sizeof(state->update_version), "%s", latest_version);
-        state->update_available = true;
-        LeaveCriticalSection(&state->lock);
-        PostMessageA(state->hwnd, WM_LP_UPDATE_RESULT, 0, 0);
+    for (;;) {
+        char latest_version[LP_UPDATE_VERSION_MAX];
+        if (lp_update_check_latest(LP_VERSION, latest_version, sizeof(latest_version)) == LP_OK) {
+            bool notify = false;
+            EnterCriticalSection(&state->lock);
+            notify = !state->update_available ||
+                     strcmp(state->update_version, latest_version) != 0;
+            snprintf(state->update_version, sizeof(state->update_version), "%s", latest_version);
+            state->update_available = true;
+            LeaveCriticalSection(&state->lock);
+            PostMessageA(state->hwnd, WM_LP_UPDATE_RESULT, notify ? 1 : 0, 0);
+        }
+
+        if (WaitForSingleObject(state->update_stop_event, LP_UPDATE_CHECK_INTERVAL_MS) ==
+            WAIT_OBJECT_0) {
+            break;
+        }
     }
     return 0;
+}
+
+static void show_update_notification(lp_tray_state_t *state)
+{
+    char version[LP_UPDATE_VERSION_MAX];
+    EnterCriticalSection(&state->lock);
+    snprintf(version, sizeof(version), "%s", state->update_version);
+    LeaveCriticalSection(&state->lock);
+
+    NOTIFYICONDATAA notification = state->nid;
+    notification.uFlags = NIF_INFO;
+    snprintf(notification.szInfoTitle, sizeof(notification.szInfoTitle), "LinkPulse update");
+    snprintf(notification.szInfo, sizeof(notification.szInfo),
+             "Version %s is available. Right-click the tray icon to download it.", version);
+    notification.dwInfoFlags = NIIF_INFO;
+    Shell_NotifyIconA(NIM_MODIFY, &notification);
 }
 
 static void show_context_menu(lp_tray_state_t *state)
@@ -366,6 +394,9 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         return 0;
     case WM_LP_UPDATE_RESULT:
         refresh_icon_and_tooltip(state);
+        if (wparam != 0) {
+            show_update_notification(state);
+        }
         return 0;
     case WM_DESTROY: {
         bool can_delete_lock = true;
@@ -393,16 +424,27 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             CloseHandle(state->thread);
             state->thread = NULL;
         }
+        bool can_close_update_stop_event = (state->update_thread == NULL);
         if (state->update_thread != NULL) {
+            SetEvent(state->update_stop_event);
             const DWORD wait_result =
                 WaitForSingleObject(state->update_thread, LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
             if (wait_result == WAIT_TIMEOUT) {
                 LP_WARN("update-check thread did not exit within %u ms; continuing shutdown",
                         (unsigned)LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
                 can_delete_lock = false;
+            } else if (wait_result == WAIT_OBJECT_0) {
+                can_close_update_stop_event = true;
+            } else {
+                LP_WARN("waiting for update-check thread failed during shutdown");
+                can_delete_lock = false;
             }
             CloseHandle(state->update_thread);
             state->update_thread = NULL;
+        }
+        if (state->update_stop_event != NULL && can_close_update_stop_event) {
+            CloseHandle(state->update_stop_event);
+            state->update_stop_event = NULL;
         }
         if (can_delete_lock) {
             DeleteCriticalSection(&state->lock);
@@ -482,13 +524,20 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
         return 1;
     }
 
+    g_tray.update_stop_event = CreateEventA(NULL, TRUE, FALSE, NULL);
+    if (g_tray.update_stop_event == NULL) {
+        LP_WARN("failed to create update-check stop event");
+    }
+
     g_tray.thread = CreateThread(NULL, 0, sampler_thread_proc, &g_tray, 0, NULL);
     if (g_tray.thread == NULL) {
         LP_ERROR("failed to start the sampler thread");
         DestroyWindow(g_tray.hwnd);
     } else {
-        g_tray.update_thread = CreateThread(NULL, 0, update_thread_proc, &g_tray, 0, NULL);
-        if (g_tray.update_thread == NULL) {
+        if (g_tray.update_stop_event != NULL) {
+            g_tray.update_thread = CreateThread(NULL, 0, update_thread_proc, &g_tray, 0, NULL);
+        }
+        if (g_tray.update_stop_event != NULL && g_tray.update_thread == NULL) {
             LP_WARN("failed to start the update-check thread");
         }
     }
