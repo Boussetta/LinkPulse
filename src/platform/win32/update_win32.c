@@ -1,4 +1,5 @@
 #include "linkpulse/update.h"
+#include "linkpulse/log.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -171,6 +172,7 @@ lp_status_t lp_update_check_latest(const char *current_version, char *latest_ver
 
 lp_status_t lp_update_download_latest(char *installer_path, size_t path_cap)
 {
+    LP_INFO("starting update installer download");
     if (installer_path == NULL || path_cap == 0) {
         return LP_ERR_INVALID_ARG;
     }
@@ -265,9 +267,11 @@ lp_status_t lp_update_download_latest(char *installer_path, size_t path_cap)
     CloseHandle(output);
     close_http_handles(request, connection, session);
     if (!success) {
+        LP_ERROR("update installer download failed: HTTP status or file write error");
         DeleteFileA(installer_path);
         installer_path[0] = '\0';
         return LP_ERR_IO;
     }
+    LP_INFO("update installer download complete: %s", installer_path);
     return LP_OK;
 }
