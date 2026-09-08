@@ -21,6 +21,7 @@
 #define LP_TRAY_TIMER_ID 1
 #define LP_TRAY_ICON_UID 1
 #define LP_UPDATE_VERSION_MAX 32
+#define LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS 1000
 
 #define IDM_PAUSE 2001
 #define IDM_UNITS_BITS 2002
@@ -367,6 +368,7 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         refresh_icon_and_tooltip(state);
         return 0;
     case WM_DESTROY: {
+        bool can_delete_lock = true;
         lp_config_t config_to_save;
         config_to_save.mode = state->sampler.config.mode;
         memcpy(config_to_save.iface_name, state->sampler.config.iface_name,
@@ -392,11 +394,19 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             state->thread = NULL;
         }
         if (state->update_thread != NULL) {
-            WaitForSingleObject(state->update_thread, INFINITE);
+            const DWORD wait_result =
+                WaitForSingleObject(state->update_thread, LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
+            if (wait_result == WAIT_TIMEOUT) {
+                LP_WARN("update-check thread did not exit within %u ms; continuing shutdown",
+                        (unsigned)LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
+                can_delete_lock = false;
+            }
             CloseHandle(state->update_thread);
             state->update_thread = NULL;
         }
-        DeleteCriticalSection(&state->lock);
+        if (can_delete_lock) {
+            DeleteCriticalSection(&state->lock);
+        }
         PostQuitMessage(0);
         return 0;
     }
