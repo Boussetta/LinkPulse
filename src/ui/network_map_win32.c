@@ -29,7 +29,10 @@ static bool is_taskbar_light_theme(void)
 static bool is_device_neighbor(const lp_network_map_state_t *state,
                                const lp_neighbor_t *neighbor)
 {
-    if (neighbor->mac[0] == '\0' || strncmp(neighbor->ip, "224.", 4) == 0 ||
+    unsigned ip_first_octet = 0;
+    if (neighbor->mac[0] == '\0' ||
+        (sscanf(neighbor->ip, "%u.", &ip_first_octet) == 1 && ip_first_octet >= 224 &&
+         ip_first_octet <= 239) ||
         strncmp(neighbor->ip, "ff", 2) == 0 || strncmp(neighbor->ip, "FF", 2) == 0) {
         return false;
     }
