@@ -24,12 +24,17 @@ jobs:
       - name: Configure MSVC Release
         shell: pwsh
         run: |
-          $version = if ($env:GITHUB_REF_TYPE -eq "tag") {
-            $env:GITHUB_REF_NAME -replace '^v', ''
-          } else {
-            "0.1.0"
+          $version = $null
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $version = $env:GITHUB_REF_NAME -replace '^v', ''
+            if ($version -notmatch '^\d+\.\d+\.\d+$') {
+              throw "Tag '$($env:GITHUB_REF_NAME)' must be vMAJOR.MINOR.PATCH (e.g. v0.1.0)."
+            }
           }
-          cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DLINKPULSE_VERSION=$version
+
+          $cmakeArgs = @("-S", ".", "-B", "build/release", "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release")
+          if ($version) { $cmakeArgs += "-DLINKPULSE_VERSION:STRING=$version" }
+          cmake @cmakeArgs
 
       - name: Build MSVC Release
         run: cmake --build build/release --config Release
