@@ -3,6 +3,7 @@
 #include "linkpulse/autostart.h"
 #include "linkpulse/clock.h"
 #include "linkpulse/config.h"
+#include "linkpulse/discovery.h"
 #include "linkpulse/format.h"
 #include "linkpulse/log.h"
 #include "linkpulse/net.h"
@@ -19,11 +20,13 @@
 
 #define WM_LP_TRAYICON (WM_APP + 1)
 #define WM_LP_UPDATE_RESULT (WM_APP + 2)
+#define WM_LP_DISCOVERY_RESULT (WM_APP + 3)
 #define LP_TRAY_TIMER_ID 1
 #define LP_TRAY_ICON_UID 1
 #define LP_UPDATE_VERSION_MAX 32
 #define LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS 1000
 #define LP_UPDATE_CHECK_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)
+#define LP_DISCOVERY_INTERVAL_MS (30UL * 1000UL)
 
 #define IDM_PAUSE 2001
 #define IDM_UNITS_BITS 2002
@@ -53,11 +56,15 @@ typedef struct {
     char update_version[LP_UPDATE_VERSION_MAX];
 
     lp_sampler_t sampler;
+    lp_discovery_t discovery;
     unsigned interval_ms;
     HANDLE thread;
     HANDLE update_thread;
+    HANDLE discovery_thread;
     HANDLE download_thread;
     HANDLE update_stop_event;
+    lp_discovery_event_t discovery_events[LP_DISCOVERY_MAX_EVENTS];
+    size_t discovery_event_count;
 
     HWND hwnd;
     NOTIFYICONDATAA nid;
@@ -227,6 +234,30 @@ static DWORD WINAPI update_thread_proc(LPVOID param)
     return 0;
 }
 
+static DWORD WINAPI discovery_thread_proc(LPVOID param)
+{
+    lp_tray_state_t *state = (lp_tray_state_t *)param;
+    for (;;) {
+        lp_discovery_event_t events[LP_DISCOVERY_MAX_EVENTS];
+        size_t event_count = 0;
+        if (lp_discovery_poll(&state->discovery, events, LP_DISCOVERY_MAX_EVENTS, &event_count) ==
+                LP_OK &&
+            event_count > 0) {
+            EnterCriticalSection(&state->lock);
+            memcpy(state->discovery_events, events, event_count * sizeof(events[0]));
+            state->discovery_event_count = event_count;
+            LeaveCriticalSection(&state->lock);
+            PostMessageA(state->hwnd, WM_LP_DISCOVERY_RESULT, 0, 0);
+        }
+
+        if (WaitForSingleObject(state->update_stop_event, LP_DISCOVERY_INTERVAL_MS) ==
+            WAIT_OBJECT_0) {
+            break;
+        }
+    }
+    return 0;
+}
+
 static DWORD WINAPI download_thread_proc(LPVOID param)
 {
     lp_tray_state_t *state = (lp_tray_state_t *)param;
@@ -272,6 +303,28 @@ static void show_update_notification(lp_tray_state_t *state)
 
     if (!lp_win32_show_update_toast(version)) {
         LP_WARN("failed to show Windows notification-center toast");
+    }
+}
+
+static void show_discovery_notifications(lp_tray_state_t *state)
+{
+    lp_discovery_event_t events[LP_DISCOVERY_MAX_EVENTS];
+    size_t event_count;
+    EnterCriticalSection(&state->lock);
+    event_count = state->discovery_event_count;
+    memcpy(events, state->discovery_events, event_count * sizeof(events[0]));
+    state->discovery_event_count = 0;
+    LeaveCriticalSection(&state->lock);
+
+    for (size_t i = 0; i < event_count; ++i) {
+        const bool joined = events[i].type == LP_DISCOVERY_EVENT_JOINED;
+        char message[128];
+        snprintf(message, sizeof(message), "%s (%s)", joined ? "Connected" : "Disconnected",
+                 events[i].neighbor.ip);
+        if (!lp_win32_show_toast(joined ? "Network device joined" : "Network device left",
+                                 message)) {
+            LP_WARN("failed to show network discovery notification");
+        }
     }
 }
 
@@ -523,6 +576,9 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             show_update_notification(state);
         }
         return 0;
+    case WM_LP_DISCOVERY_RESULT:
+        show_discovery_notifications(state);
+        return 0;
     case WM_DESTROY: {
         bool can_delete_lock = true;
         lp_config_t config_to_save;
@@ -549,7 +605,24 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             CloseHandle(state->thread);
             state->thread = NULL;
         }
-        bool can_close_update_stop_event = (state->update_thread == NULL);
+        bool can_close_update_stop_event = true;
+        if (state->discovery_thread != NULL) {
+            SetEvent(state->update_stop_event);
+            const DWORD wait_result =
+                WaitForSingleObject(state->discovery_thread, LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
+            if (wait_result == WAIT_TIMEOUT) {
+                LP_WARN("discovery thread did not exit within %u ms; continuing shutdown",
+                        (unsigned)LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
+                can_close_update_stop_event = false;
+                can_delete_lock = false;
+            } else if (wait_result != WAIT_OBJECT_0) {
+                LP_WARN("waiting for discovery thread failed during shutdown");
+                can_close_update_stop_event = false;
+                can_delete_lock = false;
+            }
+            CloseHandle(state->discovery_thread);
+            state->discovery_thread = NULL;
+        }
         if (state->update_thread != NULL) {
             SetEvent(state->update_stop_event);
             const DWORD wait_result =
@@ -559,7 +632,6 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
                         (unsigned)LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
                 can_delete_lock = false;
             } else if (wait_result == WAIT_OBJECT_0) {
-                can_close_update_stop_event = true;
             } else {
                 LP_WARN("waiting for update-check thread failed during shutdown");
                 can_delete_lock = false;
@@ -616,6 +688,10 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
     const lp_sampler_sources_t sources = {lp_net_snapshot, lp_net_default_iface,
                                           lp_clock_monotonic_ns};
     lp_sampler_set_sources(&g_tray.sampler, &sources);
+    lp_discovery_init(&g_tray.discovery);
+    const lp_discovery_sources_t discovery_sources = {lp_net_neighbor_snapshot,
+                                                      lp_net_local_networks};
+    lp_discovery_set_sources(&g_tray.discovery, &discovery_sources);
 
     const HINSTANCE instance = GetModuleHandleA(NULL);
     WNDCLASSEXA wc;
@@ -674,9 +750,14 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
     } else {
         if (g_tray.update_stop_event != NULL) {
             g_tray.update_thread = CreateThread(NULL, 0, update_thread_proc, &g_tray, 0, NULL);
+            g_tray.discovery_thread =
+                CreateThread(NULL, 0, discovery_thread_proc, &g_tray, 0, NULL);
         }
         if (g_tray.update_stop_event != NULL && g_tray.update_thread == NULL) {
             LP_WARN("failed to start the update-check thread");
+        }
+        if (g_tray.update_stop_event != NULL && g_tray.discovery_thread == NULL) {
+            LP_WARN("failed to start the discovery thread");
         }
     }
 
