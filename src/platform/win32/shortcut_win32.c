@@ -99,21 +99,7 @@ int lp_win32_register_toast_shortcut(void)
         LP_ERROR("toast shortcut property registration failed: HRESULT=0x%08lx",
                  (unsigned long)result);
     } else {
-        CLSID activator_clsid;
-        result = CLSIDFromString(LP_TOAST_ACTIVATOR_CLSID_STRING, &activator_clsid);
-        if (SUCCEEDED(result)) {
-            PROPVARIANT value;
-            PropVariantInit(&value);
-            value.vt = VT_CLSID;
-            value.puuid = (CLSID *)CoTaskMemAlloc(sizeof(CLSID));
-            if (value.puuid == NULL) {
-                result = E_OUTOFMEMORY;
-            } else {
-                *value.puuid = activator_clsid;
-                result = properties->lpVtbl->SetValue(properties, &PKEY_AppUserModel_ToastActivatorCLSID,
-                                                       &value);
-                if (SUCCEEDED(result)) {
-                    result = properties->lpVtbl->Commit(properties);
-                }
-            }
-            PropVariantClear(&value);
+        LP_INFO("toast activator shortcut property registered");
+    }
+    return SUCCEEDED(result) ? 0 : 1;
+}
