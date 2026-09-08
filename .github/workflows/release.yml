@@ -49,4 +49,10 @@ jobs:
         run: |
           $tag = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { "manual-$env:GITHUB_SHA" }
           $title = if ($env:GITHUB_REF_TYPE -eq "tag") { "LinkPulse $tag" } else { "LinkPulse development build" }
-          gh release create $tag "build\installer\LinkPulseSetup.exe" --title $title --generate-notes
+
+          & gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            & gh release upload $tag "build\installer\LinkPulseSetup.exe" --clobber
+          } else {
+            & gh release create $tag "build\installer\LinkPulseSetup.exe" --title $title --generate-notes --target $env:GITHUB_SHA
+          }
