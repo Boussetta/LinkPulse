@@ -99,7 +99,8 @@ page. GitHub provides the hosting and download bandwidth for free.
 
 The tray app checks the public GitHub Releases API in the background at startup
 and every six hours. When a newer semantic version is available, Windows shows
-one native toast notification. Clicking the notification body or its **Download
+one native toast notification for each newly detected version. Clicking the
+notification body or its **Download
 update** action downloads and launches the installer through LinkPulse's
 internal HTTPS downloader. The tray menu offers the same action. The app never
 replaces its own executable or installs updates silently.
