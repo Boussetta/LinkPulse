@@ -417,16 +417,23 @@ static const wchar_t LP_SPONSOR_ITEM_TEXT[] = L"\u2764  Sponsor";
 static void measure_sponsor_item(MEASUREITEMSTRUCT *item)
 {
     HDC dc = GetDC(NULL);
-    HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-    HFONT previous_font = (HFONT)SelectObject(dc, font);
-    SIZE extent;
-    GetTextExtentPoint32W(dc, LP_SPONSOR_ITEM_TEXT,
-                          (int)(sizeof(LP_SPONSOR_ITEM_TEXT) / sizeof(wchar_t)) - 1, &extent);
-    SelectObject(dc, previous_font);
-    ReleaseDC(NULL, dc);
+    SIZE extent = {0};
+    if (dc != NULL) {
+        HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HFONT previous_font = (HFONT)SelectObject(dc, font);
+        GetTextExtentPoint32W(dc, LP_SPONSOR_ITEM_TEXT,
+                              (int)(sizeof(LP_SPONSOR_ITEM_TEXT) / sizeof(wchar_t)) - 1, &extent);
+        SelectObject(dc, previous_font);
+        ReleaseDC(NULL, dc);
+    }
 
-    item->itemWidth = (UINT)extent.cx + 24;
-    item->itemHeight = (UINT)extent.cy + 8;
+    const int xpad = GetSystemMetrics(SM_CXEDGE);
+    const int gutter = GetSystemMetrics(SM_CXMENUCHECK) + 2 * xpad;
+    item->itemWidth = (UINT)extent.cx + (UINT)gutter + (UINT)xpad;
+
+    const UINT height = (UINT)(extent.cy + 2 * GetSystemMetrics(SM_CYEDGE));
+    const UINT min_height = (UINT)GetSystemMetrics(SM_CYMENU);
+    item->itemHeight = height > min_height ? height : min_height;
 }
 
 static void draw_sponsor_item(const DRAWITEMSTRUCT *item)
