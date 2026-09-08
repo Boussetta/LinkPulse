@@ -222,10 +222,8 @@ static void show_context_menu(lp_tray_state_t *state)
     const bool use_bits = InterlockedCompareExchange(&state->use_bits, 0, 0) != 0;
     const bool autostart = lp_autostart_is_enabled();
     bool update_available;
-    char update_version[LP_UPDATE_VERSION_MAX];
     EnterCriticalSection(&state->lock);
     update_available = state->update_available;
-    snprintf(update_version, sizeof(update_version), "%s", state->update_version);
     LeaveCriticalSection(&state->lock);
 
     AppendMenuA(menu, MF_STRING | (paused ? MF_CHECKED : 0), IDM_PAUSE,
