@@ -13,10 +13,8 @@
 #include <objbase.h>
 #include <unknwn.h>
 
-#define LP_TOAST_ACTIVATOR_CLSID \
-    { 0x7f2d2e64, 0x9b2a, 0x4b2d, { 0x8b, 0x4d, 0x71, 0x4c, 0x5a, 0x83, 0x2e, 0x11 } }
-
-DEFINE_GUID(CLSID_LinkPulseToastActivator, LP_TOAST_ACTIVATOR_CLSID);
+DEFINE_GUID(CLSID_LinkPulseToastActivator,
+            0x7f2d2e64, 0x9b2a, 0x4b2d, 0x8b, 0x4d, 0x71, 0x4c, 0x5a, 0x83, 0x2e, 0x11);
 DEFINE_GUID(IID_LinkPulseNotificationActivationCallback,
             0x53e31837, 0x6600, 0x4a81, 0x93, 0x95, 0x75, 0xcf, 0xfe, 0x74, 0x6f, 0x94);
 
@@ -88,11 +86,11 @@ static HRESULT STDMETHODCALLTYPE callback_activate(LP_NOTIFICATION_ACTIVATION_CA
 
     char installer_path[MAX_PATH];
     if (lp_update_download_latest(installer_path, sizeof(installer_path)) != LP_OK) {
-        return HRESULT_FROM_WIN32(ERROR_DOWNLOAD_FAILED);
+        return E_FAIL;
     }
     if ((INT_PTR)ShellExecuteA(NULL, "open", installer_path, NULL, NULL, SW_SHOWNORMAL) <= 32) {
         DeleteFileA(installer_path);
-        return HRESULT_FROM_WIN32(ERROR_OPEN_FAILED);
+        return E_FAIL;
     }
     return S_OK;
 }
