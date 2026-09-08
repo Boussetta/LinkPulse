@@ -261,7 +261,8 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
             }
             state->discovery_event_count = event_count;
             LeaveCriticalSection(&state->lock);
-            if (event_count > 0) {
+            if (event_count > 0 ||
+                (state->network_map_hwnd != NULL && IsWindowVisible(state->network_map_hwnd))) {
                 PostMessageA(state->hwnd, WM_LP_DISCOVERY_RESULT, 0, 0);
             }
         }
