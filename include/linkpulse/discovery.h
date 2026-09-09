@@ -5,13 +5,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "linkpulse/isp.h"
 #include "linkpulse/status.h"
 
 #define LP_MAC_STR_MAX 18
 #define LP_IP_STR_MAX 46
 #define LP_HOSTNAME_MAX 256
 #define LP_VENDOR_MAX 64
-#define LP_ISP_MAX 128
 #define LP_DISCOVERY_MAX_NEIGHBORS 256
 #define LP_DISCOVERY_MAX_EVENTS 32
 #define LP_DISCOVERY_MAX_NETWORKS 32
@@ -71,8 +71,7 @@ typedef struct {
     char local_hostname[LP_HOSTNAME_MAX];
     char local_ip[LP_IP_STR_MAX];
     lp_connection_type_t local_connection_type;
-    char isp[LP_ISP_MAX];
-    char public_ip[LP_IP_STR_MAX];
+    lp_isp_info_t isp_info;
 } lp_local_network_list_t;
 
 typedef lp_status_t (*lp_net_neighbor_snapshot_fn)(lp_neighbor_list_t *out);

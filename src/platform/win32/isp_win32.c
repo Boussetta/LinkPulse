@@ -42,20 +42,28 @@ static lp_status_t extract_field(const char *response, const char *key, char *ou
     return LP_OK;
 }
 
-/* Strips the leading "ASxxxxx " announcing-AS prefix from an "org" field. */
-static void strip_as_prefix(char *value)
+/* Strips the leading "ASxxxxx " announcing-AS prefix from an "org" field,
+   copying the removed prefix into asn_out (without the trailing space). */
+static void split_org_field(const char *org, char *isp_out, size_t isp_cap, char *asn_out,
+                            size_t asn_cap)
 {
-    if (value[0] != 'A' || value[1] != 'S') {
-        return;
+    asn_out[0] = '\0';
+    if (org[0] == 'A' && org[1] == 'S') {
+        const char *cursor = org + 2;
+        while (*cursor >= '0' && *cursor <= '9') {
+            ++cursor;
+        }
+        if (cursor != org + 2 && *cursor == ' ') {
+            const size_t asn_length = (size_t)(cursor - org);
+            if (asn_length < asn_cap) {
+                memcpy(asn_out, org, asn_length);
+                asn_out[asn_length] = '\0';
+            }
+            snprintf(isp_out, isp_cap, "%s", cursor + 1);
+            return;
+        }
     }
-    const char *cursor = value + 2;
-    while (*cursor >= '0' && *cursor <= '9') {
-        ++cursor;
-    }
-    if (cursor == value + 2 || *cursor != ' ') {
-        return;
-    }
-    memmove(value, cursor + 1, strlen(cursor + 1) + 1);
+    snprintf(isp_out, isp_cap, "%s", org);
 }
 
 static void close_http_handles(HINTERNET request, HINTERNET connection, HINTERNET session)
@@ -71,14 +79,14 @@ static void close_http_handles(HINTERNET request, HINTERNET connection, HINTERNE
     }
 }
 
-/* Queries the public IP and organization name over HTTPS; failures are best-effort. */
-lp_status_t lp_isp_lookup(char *isp_out, size_t isp_cap, char *ip_out, size_t ip_cap)
+/* Queries every available public IP/ISP/location field over HTTPS; a failed
+   or missing field is simply left empty rather than failing the whole lookup. */
+lp_status_t lp_isp_lookup(lp_isp_info_t *out)
 {
-    if (isp_out == NULL || isp_cap == 0 || ip_out == NULL || ip_cap == 0) {
+    if (out == NULL) {
         return LP_ERR_INVALID_ARG;
     }
-    isp_out[0] = '\0';
-    ip_out[0] = '\0';
+    memset(out, 0, sizeof(*out));
 
     HINTERNET session = WinHttpOpen(L"LinkPulse", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                      WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
@@ -132,13 +140,30 @@ lp_status_t lp_isp_lookup(char *isp_out, size_t isp_cap, char *ip_out, size_t ip
     response[response_length] = '\0';
     close_http_handles(request, connection, session);
 
-    const lp_status_t ip_status = extract_field(response, "ip", ip_out, ip_cap);
-    const lp_status_t org_status = extract_field(response, "org", isp_out, isp_cap);
-    if (org_status == LP_OK) {
-        strip_as_prefix(isp_out);
+    lp_status_t any_field_status = LP_ERR_NOT_FOUND;
+    char org[LP_ISP_NAME_MAX + LP_ISP_ASN_MAX];
+
+    if (extract_field(response, "ip", out->public_ip, sizeof(out->public_ip)) == LP_OK)
+        any_field_status = LP_OK;
+    if (extract_field(response, "org", org, sizeof(org)) == LP_OK) {
+        any_field_status = LP_OK;
+        split_org_field(org, out->isp, sizeof(out->isp), out->asn, sizeof(out->asn));
     }
-    if (ip_status != LP_OK && org_status != LP_OK) {
-        return LP_ERR_NOT_FOUND;
-    }
-    return LP_OK;
+    if (extract_field(response, "hostname", out->hostname, sizeof(out->hostname)) == LP_OK)
+        any_field_status = LP_OK;
+    if (extract_field(response, "city", out->city, sizeof(out->city)) == LP_OK)
+        any_field_status = LP_OK;
+    if (extract_field(response, "region", out->region, sizeof(out->region)) == LP_OK)
+        any_field_status = LP_OK;
+    if (extract_field(response, "country", out->country, sizeof(out->country)) == LP_OK)
+        any_field_status = LP_OK;
+    if (extract_field(response, "postal", out->postal, sizeof(out->postal)) == LP_OK)
+        any_field_status = LP_OK;
+    if (extract_field(response, "timezone", out->timezone, sizeof(out->timezone)) == LP_OK)
+        any_field_status = LP_OK;
+    if (extract_field(response, "loc", out->loc, sizeof(out->loc)) == LP_OK)
+        any_field_status = LP_OK;
+
+    return any_field_status;
 }
+

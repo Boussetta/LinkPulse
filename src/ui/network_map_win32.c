@@ -284,7 +284,7 @@ static void paint_map(HWND window, HDC dc)
     DeleteObject(line_pen);
 
     draw_internet_cloud(dc, state->cloud_font, state->label_font, internet_fill, text, muted,
-                        center_x, state->networks.isp);
+                        center_x, state->networks.isp_info.isp);
     draw_node(dc, state->label_font, gateway_fill, line, text, gateway_label, gateway, center_x,
               gateway_y, 170);
 

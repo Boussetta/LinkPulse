@@ -60,8 +60,7 @@ typedef struct {
     bool update_available;
     char update_version[LP_UPDATE_VERSION_MAX];
     bool isp_available;
-    char isp_name[LP_ISP_MAX];
-    char isp_public_ip[LP_IP_STR_MAX];
+    lp_isp_info_t isp_info;
 
     lp_sampler_t sampler;
     lp_discovery_t discovery;
@@ -277,17 +276,23 @@ static DWORD WINAPI isp_thread_proc(LPVOID param)
     lp_tray_state_t *state = (lp_tray_state_t *)param;
     LP_DEBUG("ISP lookup thread started");
     for (;;) {
-        char isp_name[LP_ISP_MAX];
-        char public_ip[LP_IP_STR_MAX];
-        const lp_status_t status =
-            lp_isp_lookup(isp_name, sizeof(isp_name), public_ip, sizeof(public_ip));
+        lp_isp_info_t info;
+        const lp_status_t status = lp_isp_lookup(&info);
         if (status == LP_OK) {
-            LP_INFO("ISP lookup complete: isp=%s public_ip=%s",
-                    isp_name[0] != '\0' ? isp_name : "(unknown)",
-                    public_ip[0] != '\0' ? public_ip : "(unknown)");
+            LP_INFO("ISP lookup complete: isp=%s asn=%s public_ip=%s hostname=%s city=%s "
+                    "region=%s country=%s postal=%s timezone=%s loc=%s",
+                    info.isp[0] != '\0' ? info.isp : "(unknown)",
+                    info.asn[0] != '\0' ? info.asn : "(unknown)",
+                    info.public_ip[0] != '\0' ? info.public_ip : "(unknown)",
+                    info.hostname[0] != '\0' ? info.hostname : "(unknown)",
+                    info.city[0] != '\0' ? info.city : "(unknown)",
+                    info.region[0] != '\0' ? info.region : "(unknown)",
+                    info.country[0] != '\0' ? info.country : "(unknown)",
+                    info.postal[0] != '\0' ? info.postal : "(unknown)",
+                    info.timezone[0] != '\0' ? info.timezone : "(unknown)",
+                    info.loc[0] != '\0' ? info.loc : "(unknown)");
             EnterCriticalSection(&state->lock);
-            snprintf(state->isp_name, sizeof(state->isp_name), "%s", isp_name);
-            snprintf(state->isp_public_ip, sizeof(state->isp_public_ip), "%s", public_ip);
+            state->isp_info = info;
             state->isp_available = true;
             LeaveCriticalSection(&state->lock);
         } else {
@@ -347,9 +352,7 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                 }
             }
             if (state->isp_available) {
-                snprintf(networks.isp, sizeof(networks.isp), "%s", state->isp_name);
-                snprintf(networks.public_ip, sizeof(networks.public_ip), "%s",
-                         state->isp_public_ip);
+                networks.isp_info = state->isp_info;
             }
             state->map_networks = networks;
             if (event_count > 0) {
