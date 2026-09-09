@@ -126,14 +126,14 @@ static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF
     }
     if (neighbor->vendor[0] != '\0') {
         if (neighbor->device_confidence > 0) {
-            snprintf(identity, sizeof(identity), "%s · %s · %u%%", type, neighbor->vendor,
+            snprintf(identity, sizeof(identity), "%s - %s - %u%%", type, neighbor->vendor,
                      (unsigned)neighbor->device_confidence);
         } else {
-            snprintf(identity, sizeof(identity), "%s · %s", type, neighbor->vendor);
+            snprintf(identity, sizeof(identity), "%s - %s", type, neighbor->vendor);
         }
     } else {
         if (neighbor->device_confidence > 0) {
-            snprintf(identity, sizeof(identity), "%s · %u%%", type,
+            snprintf(identity, sizeof(identity), "%s - %u%%", type,
                      (unsigned)neighbor->device_confidence);
         } else {
             snprintf(identity, sizeof(identity), "%s", type);
@@ -143,23 +143,18 @@ static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF
     draw_centered_text(dc, label_font, muted, identity, identity_rect);
 
     const wchar_t *icon = NULL;
-    const char *connection = NULL;
     if (neighbor->connection_type == LP_CONNECTION_WIFI) {
         icon = L"\xE701";
-        connection = "Via Wi-Fi";
     } else if (neighbor->connection_type == LP_CONNECTION_ETHERNET) {
         icon = L"\xE839";
-        connection = "Via Ethernet";
     }
     if (icon != NULL) {
         HFONT old_font = (HFONT)SelectObject(dc, icon_font);
         SetTextColor(dc, muted);
         SetBkMode(dc, TRANSPARENT);
-        RECT icon_rect = {center_x - 42, node.top + 59, center_x - 16, node.bottom - 3};
+        RECT icon_rect = {center_x - 16, node.top + 59, center_x + 16, node.bottom - 3};
         DrawTextW(dc, icon, 1, &icon_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         SelectObject(dc, old_font);
-        RECT connection_rect = {center_x - 15, node.top + 59, center_x + 66, node.bottom - 3};
-        draw_centered_text(dc, label_font, muted, connection, connection_rect);
     }
 }
 

@@ -88,6 +88,8 @@ static void test_baseline_and_neighbor_changes(void)
     LP_CHECK_STR_EQ(events[0].neighbor.vendor, "Epson");
     LP_CHECK(events[0].neighbor.device_type == LP_DEVICE_PRINTER);
     LP_CHECK(events[0].neighbor.device_confidence == 95);
+    LP_CHECK(discovery.known_count == 3);
+    LP_CHECK(!discovery.known[0].active || !discovery.known[1].active || !discovery.known[2].active);
 }
 
 static void test_poll_rejects_missing_source(void)

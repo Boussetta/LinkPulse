@@ -70,9 +70,16 @@ lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *e
         if (idx >= 0) {
             seen[idx] = true;
             discovery->missing_polls[idx] = 0;
+            if (discovery->has_baseline && !discovery->known[idx].active && emitted < max_events) {
+                events[emitted].type = LP_DISCOVERY_EVENT_JOINED;
+                events[emitted].neighbor = current.items[i];
+                ++emitted;
+            }
+            current.items[i].active = true;
             discovery->known[idx] = current.items[i];
             continue;
         }
+        current.items[i].active = true;
         if (discovery->has_baseline && emitted < max_events) {
             events[emitted].type = LP_DISCOVERY_EVENT_JOINED;
             events[emitted].neighbor = current.items[i];
@@ -96,10 +103,16 @@ lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *e
                 discovery->known[write] = discovery->known[i];
                 discovery->missing_polls[write] = discovery->missing_polls[i] + 1;
                 ++write;
-            } else if (discovery->has_baseline && emitted < max_events) {
-                events[emitted].type = LP_DISCOVERY_EVENT_LEFT;
-                events[emitted].neighbor = discovery->known[i];
-                ++emitted;
+            } else {
+                if (discovery->known[i].active && discovery->has_baseline && emitted < max_events) {
+                    events[emitted].type = LP_DISCOVERY_EVENT_LEFT;
+                    events[emitted].neighbor = discovery->known[i];
+                    ++emitted;
+                }
+                discovery->known[i].active = false;
+                discovery->known[write] = discovery->known[i];
+                discovery->missing_polls[write] = discovery->missing_polls[i];
+                ++write;
             }
         }
     }

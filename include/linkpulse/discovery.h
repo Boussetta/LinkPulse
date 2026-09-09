@@ -41,6 +41,7 @@ typedef struct {
     lp_connection_type_t connection_type;
     lp_device_type_t device_type;
     uint8_t device_confidence;
+    bool active;
 } lp_neighbor_t;
 
 typedef struct {
