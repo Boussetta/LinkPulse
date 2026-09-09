@@ -41,6 +41,10 @@ static bool is_device_neighbor(const lp_network_map_state_t *state,
         if (strcmp(neighbor->ip, state->networks.items[i].gateway) == 0) {
             return false;
         }
+        if (state->networks.items[i].gateway_mac[0] != '\0' &&
+            strcmp(neighbor->mac, state->networks.items[i].gateway_mac) == 0) {
+            return false;
+        }
     }
     return true;
 }

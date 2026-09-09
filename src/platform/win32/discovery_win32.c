@@ -143,6 +143,19 @@ static lp_connection_type_t connection_type_for_interface(const NET_LUID *interf
     return LP_CONNECTION_UNKNOWN;
 }
 
+static long find_neighbor_mac(const lp_neighbor_list_t *list, const char *mac)
+{
+    if (mac[0] == '\0') {
+        return -1;
+    }
+    for (size_t i = 0; i < list->count; ++i) {
+        if (strcmp(list->items[i].mac, mac) == 0) {
+            return (long)i;
+        }
+    }
+    return -1;
+}
+
 lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
 {
     if (out == NULL) {
@@ -183,6 +196,9 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
         snprintf(neighbor->ip, sizeof(neighbor->ip), "%s", ip);
         format_mac(row->PhysicalAddress, row->PhysicalAddressLength, neighbor->mac,
                    sizeof(neighbor->mac));
+        if (find_neighbor_mac(out, neighbor->mac) >= 0) {
+            continue;
+        }
         neighbor->connection_type = connection_type_for_interface(&row->InterfaceLuid);
         if (winsock_ready) {
             resolve_hostname(&row->Address, neighbor->hostname, sizeof(neighbor->hostname));
@@ -233,6 +249,29 @@ static bool get_default_gateway(NET_LUID *interface_luid, char *gateway, size_t 
     return true;
 }
 
+static void get_default_gateway_mac(const char *gateway, char *mac, size_t mac_cap)
+{
+    mac[0] = '\0';
+    MIB_IPNET_TABLE2 *table = NULL;
+    if (GetIpNetTable2(AF_INET, &table) != NO_ERROR || table == NULL) {
+        return;
+    }
+    for (ULONG i = 0; i < table->NumEntries; ++i) {
+        const MIB_IPNET_ROW2 *row = &table->Table[i];
+        if (row->Address.si_family != AF_INET || row->PhysicalAddressLength != 6 ||
+            !is_live_state(row->State)) {
+            continue;
+        }
+        char address[LP_IP_STR_MAX] = {0};
+        if (InetNtopA(AF_INET, (PVOID)&row->Address.Ipv4.sin_addr, address, sizeof(address)) != NULL &&
+            strcmp(address, gateway) == 0) {
+            format_mac(row->PhysicalAddress, row->PhysicalAddressLength, mac, mac_cap);
+            break;
+        }
+    }
+    FreeMibTable(table);
+}
+
 lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
 {
     if (out == NULL) {
@@ -245,6 +284,11 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
     char default_gateway[LP_IP_STR_MAX] = {0};
     const bool has_default_gateway = get_default_gateway(
         &default_interface_luid, default_gateway, sizeof(default_gateway));
+    char default_gateway_mac[LP_MAC_STR_MAX] = {0};
+    if (has_default_gateway) {
+        get_default_gateway_mac(default_gateway, default_gateway_mac,
+                                sizeof(default_gateway_mac));
+    }
     char default_gateway_hostname[LP_HOSTNAME_MAX] = {0};
     lp_device_type_t default_gateway_type = LP_DEVICE_UNKNOWN;
     uint8_t default_gateway_confidence = 0;
@@ -303,6 +347,8 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
             network->prefix_length = unicast->OnLinkPrefixLength;
             snprintf(network->gateway, sizeof(network->gateway), "%s", gateway);
             if (gateway[0] != '\0') {
+                snprintf(network->gateway_mac, sizeof(network->gateway_mac), "%s",
+                         default_gateway_mac);
                 snprintf(network->gateway_hostname, sizeof(network->gateway_hostname), "%s",
                          default_gateway_hostname);
                 snprintf(network->gateway_vendor, sizeof(network->gateway_vendor), "%s",
