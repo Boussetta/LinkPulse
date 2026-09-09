@@ -130,6 +130,15 @@ if(MSVC)
     VERBATIM)
 endif()
 
+# Print a concise artifact report after both application executables are built.
+add_custom_target(linkpulse-artifact-info ALL
+  DEPENDS linkpulse linkpulse-tray
+  COMMAND ${CMAKE_COMMAND}
+    "-DLP_ARTIFACTS=$<TARGET_FILE:linkpulse>;$<TARGET_FILE:linkpulse-tray>"
+    "-DLP_VERSION=${PROJECT_VERSION}"
+    -P "${CMAKE_SOURCE_DIR}/cmake/report_artifacts.cmake"
+  VERBATIM)
+
 if(LINKPULSE_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
