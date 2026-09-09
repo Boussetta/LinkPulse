@@ -12,6 +12,46 @@
 #include <windows.h>
 #include <shellapi.h>
 
+/* Parses the optional diagnostic level before the GUI process starts logging. */
+static bool parse_verbosity(const char *value, lp_log_level_t *level)
+{
+    if (value == NULL || level == NULL) {
+        return false;
+    }
+    if (strcmp(value, "error") == 0) {
+        *level = LP_LOG_ERROR;
+    } else if (strcmp(value, "warn") == 0 || strcmp(value, "warning") == 0) {
+        *level = LP_LOG_WARN;
+    } else if (strcmp(value, "info") == 0) {
+        *level = LP_LOG_INFO;
+    } else if (strcmp(value, "debug") == 0) {
+        *level = LP_LOG_DEBUG;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+/* Applies diagnostic command-line options; GUI output is written to LinkPulse.log. */
+static bool configure_logging_from_args(int argc, char **argv)
+{
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--debug") == 0) {
+            lp_log_set_level(LP_LOG_DEBUG);
+        } else if (strcmp(argv[i], "--verbosity") == 0) {
+            if (i + 1 >= argc || argv[i + 1][0] == '\0' || argv[i + 1][0] == '-') {
+                return false;
+            }
+            lp_log_level_t level;
+            if (!parse_verbosity(argv[++i], &level)) {
+                return false;
+            }
+            lp_log_set_level(level);
+        }
+    }
+    return true;
+}
+
 /* Dedicated tray-only entry point: handles toast/protocol activation arguments
    and otherwise runs the tray app with no interactive console I/O -- see
    CMakeLists.txt for why this isn't just linkpulse.exe --tray with a GUI
@@ -21,11 +61,17 @@
 /* Handles protocol/COM activation or starts the normal argument-free tray app. */
 int main(int argc, char **argv)
 {
+    const bool logging_args_valid = configure_logging_from_args(argc, argv);
     if (lp_win32_log_start() != 0) {
         LP_WARN("failed to start persistent file logging");
     }
 LP_INFO("tray entrypoint started: argc=%d mode=%s", argc,
         argc > 1 ? argv[1] : "(none)");
+    if (!logging_args_valid) {
+        LP_ERROR("invalid logging arguments; use --verbosity error|warn|info|debug");
+        lp_win32_log_stop();
+        return 2;
+    }
     if (argc > 1 &&
         (strcmp(argv[1], "/ToastActivator") == 0 || strcmp(argv[1], "-Embedding") == 0)) {
         LP_INFO("starting toast COM activator");

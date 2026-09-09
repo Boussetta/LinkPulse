@@ -37,6 +37,26 @@ static BOOL WINAPI handle_console_event(DWORD event)
     }
 }
 
+/* Parses the user-facing verbosity names into the logger's severity threshold. */
+static bool parse_verbosity(const char *value, lp_log_level_t *level)
+{
+    if (value == NULL || level == NULL) {
+        return false;
+    }
+    if (strcmp(value, "error") == 0) {
+        *level = LP_LOG_ERROR;
+    } else if (strcmp(value, "warn") == 0 || strcmp(value, "warning") == 0) {
+        *level = LP_LOG_WARN;
+    } else if (strcmp(value, "info") == 0) {
+        *level = LP_LOG_INFO;
+    } else if (strcmp(value, "debug") == 0) {
+        *level = LP_LOG_DEBUG;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 /* Prints the stable CLI contract shared by development and support workflows. */
 static void print_usage(void)
 {
@@ -50,6 +70,7 @@ static void print_usage(void)
            "  --include-virtual      With --all, include virtual/pseudo adapters\n"
            "  --bits                 Show bit rates (Mb/s) instead of byte rates (MB/s)\n"
            "  --interval <ms>        Poll interval for --watch/--tray, default 1000\n"
+           "  --verbosity <level>    Log level: error, warn, info, or debug\n"
            "  --debug                Enable debug logging\n"
            "  --version              Print version and exit\n"
            "  --help                 Show this help\n");
@@ -152,6 +173,20 @@ int main(int argc, char **argv)
         }
         if (strcmp(argv[i], "--debug") == 0) {
             lp_log_set_level(LP_LOG_DEBUG);
+        } else if (strcmp(argv[i], "--verbosity") == 0) {
+            if (i + 1 >= argc || argv[i + 1][0] == '-') {
+                fprintf(stderr, "--verbosity requires a level (error, warn, info, or debug)\n\n");
+                print_usage();
+                return 2;
+            }
+            lp_log_level_t level;
+            if (!parse_verbosity(argv[++i], &level)) {
+                fprintf(stderr, "--verbosity must be error, warn, info, or debug; got '%s'\n\n",
+                        argv[i]);
+                print_usage();
+                return 2;
+            }
+            lp_log_set_level(level);
         } else if (strcmp(argv[i], "--list") == 0) {
             want_list = true;
         } else if (strcmp(argv[i], "--watch") == 0) {
