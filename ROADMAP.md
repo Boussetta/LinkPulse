@@ -46,8 +46,7 @@ Rules:
 - `src/core` includes **no** OS headers. It is where all unit-testable logic lives.
 - All Win32 calls sit behind the headers in `include/linkpulse/`, so the logic can be driven
   by fake counter sources in tests.
-- `core` never calls into `ui`. The UI consumes snapshots and events so later features (gateway
-      adapters, known-device history, alerts) plug in without touching the sampler.
+- `core` never calls into `ui`. The UI consumes snapshots and events so later features (gateway adapters, known-device history, alerts) plug in without touching the sampler.
 
 ---
 
