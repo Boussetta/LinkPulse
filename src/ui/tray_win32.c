@@ -274,17 +274,36 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
         const lp_status_t status =
             lp_discovery_poll(&state->discovery, events, LP_DISCOVERY_MAX_EVENTS, &event_count);
         if (status == LP_OK) {
-            if (event_count > 0) {
-                LP_INFO("discovery generated %zu event(s)", event_count);
+            size_t active_count = 0;
+            for (size_t i = 0; i < state->discovery.known_count; ++i) {
+                if (state->discovery.known[i].active) {
+                    ++active_count;
+                }
+            }
+            LP_DEBUG("discovery poll complete: active=%zu retained=%zu events=%zu", active_count,
+                     state->discovery.known_count, event_count);
+            for (size_t i = 0; i < event_count; ++i) {
+                LP_INFO("discovery event: type=%s ip=%s mac=%s hostname=%s",
+                        events[i].type == LP_DISCOVERY_EVENT_JOINED ? "joined" : "left",
+                        events[i].neighbor.ip[0] != '\0' ? events[i].neighbor.ip : "(unknown)",
+                        events[i].neighbor.mac[0] != '\0' ? events[i].neighbor.mac : "(unknown)",
+                        events[i].neighbor.hostname[0] != '\0' ? events[i].neighbor.hostname
+                                                                 : "(unknown)");
             }
             lp_local_network_list_t networks = {0};
             if (state->discovery.sources.local_networks_fn != NULL) {
                 (void)state->discovery.sources.local_networks_fn(&networks);
             }
             EnterCriticalSection(&state->lock);
-            state->map_neighbors.count = state->discovery.known_count;
-            memcpy(state->map_neighbors.items, state->discovery.known,
-                   state->discovery.known_count * sizeof(state->discovery.known[0]));
+            state->map_neighbors.count = 0;
+            for (size_t i = 0; i < state->discovery.known_count &&
+                                state->map_neighbors.count < LP_DISCOVERY_MAX_NEIGHBORS;
+                 ++i) {
+                if (state->discovery.known[i].active) {
+                    state->map_neighbors.items[state->map_neighbors.count++] =
+                        state->discovery.known[i];
+                }
+            }
             state->map_networks = networks;
             if (event_count > 0) {
                 memcpy(state->discovery_events, events, event_count * sizeof(events[0]));
