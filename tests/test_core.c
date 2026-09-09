@@ -27,6 +27,7 @@ static atomic_flag g_stderr_capture_lock = ATOMIC_FLAG_INIT;
 
 /* tmpfile() fails on Windows without admin rights: the MSVCRT implementation
    tries to create the file in the root of the current drive. */
+/* Creates a temporary capture file safely on both MSVCRT and POSIX runtimes. */
 static FILE *lp_tmpfile(void)
 {
 #if defined(_WIN32)
@@ -48,6 +49,7 @@ static FILE *lp_tmpfile(void)
 #endif
 }
 
+/* Verifies known and unknown status codes have stable diagnostics. */
 static void test_status_strings(void)
 {
     LP_CHECK_STR_EQ(lp_status_str(LP_OK), "ok");
@@ -55,6 +57,7 @@ static void test_status_strings(void)
     LP_CHECK_STR_EQ(lp_status_str((lp_status_t)999), "unknown error");
 }
 
+/* Verifies interface lookup handles hits, misses, and invalid arguments. */
 static void test_iface_list_find(void)
 {
     lp_iface_t items[2] = {0};
@@ -72,6 +75,7 @@ static void test_iface_list_find(void)
     LP_CHECK(lp_iface_list_find(NULL, "Wi-Fi") == NULL);
 }
 
+/* Verifies snapshot cleanup is safe when repeated or passed NULL. */
 static void test_iface_list_free_is_idempotent(void)
 {
     lp_iface_list_t list = {NULL, 0};
@@ -82,12 +86,14 @@ static void test_iface_list_free_is_idempotent(void)
     LP_CHECK(list.count == 0);
 }
 
+/* Reads a capture stream into a bounded NUL-terminated test string. */
 static void read_stream(FILE *stream, char *buffer, size_t buffer_size)
 {
     const size_t bytes_read = fread(buffer, 1, buffer_size - 1, stream);
     buffer[bytes_read] = '\0';
 }
 
+/* Redirects stderr around one logging scenario while serializing test captures. */
 static void with_captured_stderr(FILE *capture, void (*fn)(void))
 {
     while (atomic_flag_test_and_set_explicit(&g_stderr_capture_lock, memory_order_acquire)) {
@@ -122,6 +128,7 @@ static void with_captured_stderr(FILE *capture, void (*fn)(void))
     }
 }
 
+/* Emits a debug message below the active warning threshold. */
 static void log_hidden_debug_message(void)
 {
     lp_log_set_level(LP_LOG_WARN);
@@ -129,6 +136,7 @@ static void log_hidden_debug_message(void)
     LP_DEBUG("hidden debug message");
 }
 
+/* Emits an info message at the active threshold. */
 static void log_visible_info_message(void)
 {
     lp_log_set_level(LP_LOG_INFO);
@@ -136,6 +144,14 @@ static void log_visible_info_message(void)
     LP_INFO("visible info message");
 }
 
+/* Sends one record to the optional file sink so both output paths are covered. */
+static void log_file_message(void)
+{
+    lp_log_set_level(LP_LOG_INFO);
+    LP_INFO("file info message");
+}
+
+/* Verifies severity filtering and visible log formatting. */
 static void test_log_level_and_filtering(void)
 {
     FILE *hidden_capture = lp_tmpfile();
@@ -166,8 +182,25 @@ static void test_log_level_and_filtering(void)
     LP_CHECK(strstr(buffer, "visible info message") != NULL);
 
     fclose(visible_capture);
+
+    FILE *file_capture = lp_tmpfile();
+    LP_CHECK(file_capture != NULL);
+    if (file_capture == NULL) {
+        return;
+    }
+
+    lp_log_set_file(file_capture);
+    with_captured_stderr(file_capture, log_file_message);
+    lp_log_set_file(NULL);
+    rewind(file_capture);
+    read_stream(file_capture, buffer, sizeof(buffer));
+    LP_CHECK(strstr(buffer, "INFO ") != NULL);
+    LP_CHECK(strstr(buffer, "file info message") != NULL);
+    LP_CHECK(buffer[0] == '[' && buffer[5] == '-');
+    fclose(file_capture);
 }
 
+/* Runs status, network-container, and logger contract scenarios. */
 int main(void)
 {
     test_status_strings();

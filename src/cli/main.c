@@ -15,11 +15,15 @@
 #ifndef LP_VERSION
 #define LP_VERSION "0.0.0-unknown" /* overridden by the CMake project version */
 #endif
+#ifndef LP_GIT_DESCRIPTION
+#define LP_GIT_DESCRIPTION LP_VERSION
+#endif
 
 /* Set from the console-control handler, which runs on its own thread; checked
    once per loop iteration in watch_rate(). */
 static volatile LONG g_stop_requested;
 
+/* Converts console shutdown signals into the atomic stop flag polled by watch mode. */
 static BOOL WINAPI handle_console_event(DWORD event)
 {
     switch (event) {
@@ -33,9 +37,30 @@ static BOOL WINAPI handle_console_event(DWORD event)
     }
 }
 
+/* Parses the user-facing verbosity names into the logger's severity threshold. */
+static bool parse_verbosity(const char *value, lp_log_level_t *level)
+{
+    if (value == NULL || level == NULL) {
+        return false;
+    }
+    if (strcmp(value, "error") == 0) {
+        *level = LP_LOG_ERROR;
+    } else if (strcmp(value, "warn") == 0 || strcmp(value, "warning") == 0) {
+        *level = LP_LOG_WARN;
+    } else if (strcmp(value, "info") == 0) {
+        *level = LP_LOG_INFO;
+    } else if (strcmp(value, "debug") == 0) {
+        *level = LP_LOG_DEBUG;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+/* Prints the stable CLI contract shared by development and support workflows. */
 static void print_usage(void)
 {
-    printf("LinkPulse " LP_VERSION " - local network activity monitor\n\n"
+    printf("LinkPulse " LP_GIT_DESCRIPTION " - local network activity monitor\n\n"
            "Usage: linkpulse [options]\n\n"
            "  --list                 List network interfaces and their current byte counters\n"
            "  --watch                Print live download/upload rates once per second\n"
@@ -45,13 +70,16 @@ static void print_usage(void)
            "  --include-virtual      With --all, include virtual/pseudo adapters\n"
            "  --bits                 Show bit rates (Mb/s) instead of byte rates (MB/s)\n"
            "  --interval <ms>        Poll interval for --watch/--tray, default 1000\n"
+           "  --verbosity <level>    Log level: error, warn, info, or debug\n"
            "  --debug                Enable debug logging\n"
            "  --version              Print version and exit\n"
            "  --help                 Show this help\n");
 }
 
+/* Lists raw adapter counters and marks the interface selected by the route table. */
 static int list_interfaces(void)
 {
+    LP_DEBUG("listing network interfaces");
     lp_iface_list_t list;
     const lp_status_t status = lp_net_snapshot(&list);
     if (status != LP_OK) {
@@ -76,10 +104,13 @@ static int list_interfaces(void)
                (unsigned long long)iface->tx_bytes, flags);
     }
 
+    const size_t interface_count = list.count;
     lp_iface_list_free(&list);
+    LP_DEBUG("listed %zu network interfaces", interface_count);
     return 0;
 }
 
+/* Runs the console sampler loop until Ctrl+C or another console close signal. */
 static int watch_rate(const lp_sampler_config_t *config, bool use_bits, unsigned interval_ms)
 {
     lp_sampler_t sampler;
@@ -88,6 +119,9 @@ static int watch_rate(const lp_sampler_config_t *config, bool use_bits, unsigned
                                           lp_clock_monotonic_ns};
     lp_sampler_set_sources(&sampler, &sources);
 
+    LP_INFO("starting watch mode: selection=%d iface=%s virtual=%s bits=%s interval_ms=%u",
+            config->mode, config->iface_name[0] != '\0' ? config->iface_name : "(default)",
+            config->include_virtual ? "yes" : "no", use_bits ? "yes" : "no", interval_ms);
     if (!SetConsoleCtrlHandler(handle_console_event, TRUE)) {
         LP_WARN("failed to install console control handler; Ctrl+C may not exit cleanly");
     }
@@ -99,6 +133,7 @@ static int watch_rate(const lp_sampler_config_t *config, bool use_bits, unsigned
             printf("\rwaiting for interface...                                   ");
             fflush(stdout);
         } else if (status != LP_OK) {
+            LP_ERROR("sampler poll failed in watch mode: %s", lp_status_str(status));
             fprintf(stderr, "\nfailed to sample interface: %s\n", lp_status_str(status));
             return 1;
         } else {
@@ -116,6 +151,7 @@ static int watch_rate(const lp_sampler_config_t *config, bool use_bits, unsigned
     return 0;
 }
 
+/* Loads persisted settings, applies CLI overrides, and dispatches one CLI mode. */
 int main(int argc, char **argv)
 {
     bool want_list = false;
@@ -139,11 +175,25 @@ int main(int argc, char **argv)
             return 0;
         }
         if (strcmp(argv[i], "--version") == 0) {
-            printf(LP_VERSION "\n");
+            printf(LP_GIT_DESCRIPTION "\n");
             return 0;
         }
         if (strcmp(argv[i], "--debug") == 0) {
             lp_log_set_level(LP_LOG_DEBUG);
+        } else if (strcmp(argv[i], "--verbosity") == 0) {
+            if (i + 1 >= argc || argv[i + 1][0] == '-') {
+                fprintf(stderr, "--verbosity requires a level (error, warn, info, or debug)\n\n");
+                print_usage();
+                return 2;
+            }
+            lp_log_level_t level;
+            if (!parse_verbosity(argv[++i], &level)) {
+                fprintf(stderr, "--verbosity must be error, warn, info, or debug; got '%s'\n\n",
+                        argv[i]);
+                print_usage();
+                return 2;
+            }
+            lp_log_set_level(level);
         } else if (strcmp(argv[i], "--list") == 0) {
             want_list = true;
         } else if (strcmp(argv[i], "--watch") == 0) {
@@ -193,6 +243,11 @@ int main(int argc, char **argv)
     LP_DEBUG("monotonic clock reads %llu ns", (unsigned long long)lp_clock_monotonic_ns());
 
     if (want_tray) {
+        LP_INFO("starting tray mode: selection=%d iface=%s virtual=%s bits=%s interval_ms=%u",
+            sampler_config.mode,
+            sampler_config.iface_name[0] != '\0' ? sampler_config.iface_name : "(default)",
+            sampler_config.include_virtual ? "yes" : "no", use_bits ? "yes" : "no",
+            interval_ms);
         return lp_tray_run(&sampler_config, use_bits, interval_ms);
     }
 
@@ -204,6 +259,7 @@ int main(int argc, char **argv)
         return list_interfaces();
     }
 
+    LP_DEBUG("no operating mode selected; showing usage");
     print_usage();
     return 0;
 }

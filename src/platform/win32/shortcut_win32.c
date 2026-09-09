@@ -20,6 +20,7 @@ static const PROPERTYKEY LP_PKEY_AppUserModel_ToastActivatorCLSID = {
 #define LP_TOAST_ACTIVATOR_CLSID_STRING L"{7F2D2E64-9B2A-4B2D-8B4D-714C5A832E11}"
 #define LP_APP_USER_MODEL_ID L"LinkPulse.NetworkMonitor"
 
+/* Opens the installed Start Menu shortcut and writes its toast activator CLSID. */
 int lp_win32_register_toast_shortcut(void)
 {
     LP_INFO("registering toast activator shortcut property");

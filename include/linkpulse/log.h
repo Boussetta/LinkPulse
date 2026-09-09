@@ -10,8 +10,13 @@ typedef enum {
     LP_LOG_DEBUG
 } lp_log_level_t;
 
+/* Sets the process-wide minimum severity emitted by lp_log. */
 void lp_log_set_level(lp_log_level_t level);
+
+/* Returns the process-wide logging threshold. */
 lp_log_level_t lp_log_get_level(void);
+
+/* Redirects log output; NULL restores stderr output. The FILE remains caller-owned. */
 void lp_log_set_file(FILE *file);
 
 #if defined(__GNUC__)

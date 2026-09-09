@@ -14,6 +14,7 @@
 /* States that mean "the OS currently believes this neighbour is present" --
    excludes NlnsIncomplete (resolution in progress, not yet confirmed) and
    NlnsUnreachable (resolution failed / timed out). */
+/* Filters neighbor-table states that represent a currently usable identity. */
 static bool is_live_state(NL_NEIGHBOR_STATE state)
 {
     switch (state) {
@@ -28,6 +29,7 @@ static bool is_live_state(NL_NEIGHBOR_STATE state)
     }
 }
 
+/* Formats only six-byte Ethernet addresses; unsupported link types stay blank. */
 static void format_mac(const UCHAR *address, ULONG length, char *out, size_t out_cap)
 {
     out[0] = '\0';
@@ -38,6 +40,7 @@ static void format_mac(const UCHAR *address, ULONG length, char *out, size_t out
              address[3], address[4], address[5]);
 }
 
+/* Excludes broadcast, multicast, and unspecified addresses from inventory. */
 static bool is_unicast_address(const SOCKADDR_INET *address)
 {
     if (address->si_family == AF_INET) {
@@ -51,6 +54,7 @@ static bool is_unicast_address(const SOCKADDR_INET *address)
     return false;
 }
 
+/* Performs best-effort reverse DNS without making discovery fail on lookup errors. */
 static void resolve_hostname(const SOCKADDR_INET *address, char *out, size_t out_cap)
 {
     out[0] = '\0';
@@ -62,6 +66,7 @@ static void resolve_hostname(const SOCKADDR_INET *address, char *out, size_t out
     }
 }
 
+/* Performs a case-insensitive substring check for hostname classification rules. */
 static bool contains_token(const char *value, const char *token)
 {
     if (value == NULL || token == NULL || token[0] == '\0') {
@@ -82,6 +87,7 @@ static bool contains_token(const char *value, const char *token)
     return false;
 }
 
+/* Applies conservative hostname heuristics and records a confidence score. */
 static void classify_identity(const char *hostname, char *vendor, size_t vendor_cap,
                               lp_device_type_t *device_type, uint8_t *confidence)
 {
@@ -120,12 +126,14 @@ static void classify_identity(const char *hostname, char *vendor, size_t vendor_
     }
 }
 
+/* Fills the user-facing identity fields derived from a neighbor hostname. */
 static void classify_neighbor(lp_neighbor_t *neighbor)
 {
     classify_identity(neighbor->hostname, neighbor->vendor, sizeof(neighbor->vendor),
                       &neighbor->device_type, &neighbor->device_confidence);
 }
 
+/* Maps the Windows adapter media type to the portable connection enum. */
 static lp_connection_type_t connection_type_for_interface(const NET_LUID *interface_luid)
 {
     MIB_IF_ROW2 interface_row;
@@ -143,6 +151,7 @@ static lp_connection_type_t connection_type_for_interface(const NET_LUID *interf
     return LP_CONNECTION_UNKNOWN;
 }
 
+/* Avoids emitting duplicate neighbor entries when the table has repeated MACs. */
 static long find_neighbor_mac(const lp_neighbor_list_t *list, const char *mac)
 {
     if (mac[0] == '\0') {
@@ -156,6 +165,7 @@ static long find_neighbor_mac(const lp_neighbor_list_t *list, const char *mac)
     return -1;
 }
 
+/* Reads the passive ARP/NDP table and enriches live entries with best-effort names. */
 lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
 {
     if (out == NULL) {
@@ -215,6 +225,7 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
     return LP_OK;
 }
 
+/* Converts an IPv4 or IPv6 Windows socket address to presentation text. */
 static bool format_sockaddr(const SOCKADDR *address, char *out, size_t out_cap)
 {
     if (address == NULL) {
@@ -231,6 +242,7 @@ static bool format_sockaddr(const SOCKADDR *address, char *out, size_t out_cap)
     return false;
 }
 
+/* Resolves the gateway and adapter selected by the default route. */
 static bool get_default_gateway(NET_LUID *interface_luid, char *gateway, size_t gateway_cap)
 {
     SOCKADDR_INET destination;
@@ -250,6 +262,7 @@ static bool get_default_gateway(NET_LUID *interface_luid, char *gateway, size_t 
     return true;
 }
 
+/* Looks up the gateway's MAC in the current IPv4 neighbor table. */
 static void get_default_gateway_mac(const char *gateway, char *mac, size_t mac_cap)
 {
     mac[0] = '\0';
@@ -273,6 +286,7 @@ static void get_default_gateway_mac(const char *gateway, char *mac, size_t mac_c
     FreeMibTable(table);
 }
 
+/* Enumerates local prefixes and attaches gateway identity to the default adapter. */
 lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
 {
     if (out == NULL) {

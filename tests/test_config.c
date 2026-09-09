@@ -2,6 +2,7 @@
 
 #include "linkpulse/config.h"
 
+/* Verifies the persisted-settings baseline used on first run. */
 static void test_defaults(void)
 {
     lp_config_t config;
@@ -13,6 +14,7 @@ static void test_defaults(void)
     LP_CHECK(config.interval_ms == 1000);
 }
 
+/* Verifies whitespace, comments, and all supported key overrides. */
 static void test_parse_overrides_fields(void)
 {
     lp_config_t config;
@@ -34,6 +36,7 @@ static void test_parse_overrides_fields(void)
     LP_CHECK(config.interval_ms == 500);
 }
 
+/* Verifies malformed input cannot overwrite a valid existing configuration. */
 static void test_parse_ignores_unknown_and_malformed(void)
 {
     lp_config_t config;
@@ -56,6 +59,7 @@ static void test_parse_ignores_unknown_and_malformed(void)
     LP_CHECK(config.interval_ms == 1000);
 }
 
+/* Verifies canonical serialization can reconstruct every configuration field. */
 static void test_serialize_round_trips_through_parse(void)
 {
     lp_config_t original;
@@ -82,6 +86,7 @@ static void test_serialize_round_trips_through_parse(void)
     LP_CHECK(restored.interval_ms == original.interval_ms);
 }
 
+/* Verifies serialization handles unusable output buffers without writing. */
 static void test_serialize_rejects_null_and_zero_cap(void)
 {
     lp_config_t config;
@@ -92,6 +97,7 @@ static void test_serialize_rejects_null_and_zero_cap(void)
     LP_CHECK(lp_config_serialize(&config, NULL, sizeof(buffer)) == 0);
 }
 
+/* Runs the configuration contract scenarios. */
 int main(void)
 {
     test_defaults();

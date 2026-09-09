@@ -94,15 +94,21 @@ typedef struct {
     bool has_baseline;
 } lp_discovery_t;
 
+/* Initializes an empty discovery baseline; no events are emitted yet. */
 void lp_discovery_init(lp_discovery_t *discovery);
 
+/* Replaces non-NULL provider callbacks while retaining the current baseline. */
 void lp_discovery_set_sources(lp_discovery_t *discovery,
                               const lp_discovery_sources_t *sources);
 
+/* Polls current neighbors and writes at most max_events join/leave events. */
 lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *events,
                               size_t max_events, size_t *event_count);
 
+/* Collects the current passive neighbor table into caller-provided storage. */
 lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out);
+
+/* Collects local networks, gateways, and local-host metadata. */
 lp_status_t lp_net_local_networks(lp_local_network_list_t *out);
 
 #endif /* LINKPULSE_DISCOVERY_H */

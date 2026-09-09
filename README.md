@@ -40,6 +40,12 @@ keep CLI output working after switching an exe to the GUI subsystem) does not
 see a usable console when the process is launched through WSL interop, which
 would have broken this project's whole dev/test workflow.
 
+Local builds expose the full Git description through `linkpulse.exe --version`
+and the artifact report, for example `v0.1.2-54-g365cb31`. Release builds use
+the stable `vMAJOR.MINOR.PATCH` tag instead. The installer script and GitHub
+release workflow enable release mode explicitly so update checks and installer
+metadata never receive a development suffix.
+
 ### Moving between WSL and Windows
 
 Use WSL for fast MinGW cross-builds and portable tests. Use native Windows with MSVC when

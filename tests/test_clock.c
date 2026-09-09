@@ -4,6 +4,7 @@
 
 #include <windows.h>
 
+/* Verifies the Windows monotonic clock advances at a plausible rate. */
 int main(void)
 {
     const uint64_t first = lp_clock_monotonic_ns();

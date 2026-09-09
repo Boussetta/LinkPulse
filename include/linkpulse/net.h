@@ -34,7 +34,10 @@ lp_status_t lp_net_snapshot(lp_iface_list_t *out);
 /* Name of the interface carrying the default route, i.e. the internet-facing one. */
 lp_status_t lp_net_default_iface(char *name_out, size_t name_cap);
 
+/* Releases a snapshot returned by lp_net_snapshot and clears its fields. */
 void lp_iface_list_free(lp_iface_list_t *list);
+
+/* Finds an interface by its platform name, or returns NULL when absent. */
 const lp_iface_t *lp_iface_list_find(const lp_iface_list_t *list, const char *name);
 
 #endif /* LINKPULSE_NET_H */

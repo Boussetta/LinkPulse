@@ -33,6 +33,7 @@ static const char *g_fake_default_iface_values[MAX_FAKE_STEPS];
 static lp_status_t g_fake_default_iface_status[MAX_FAKE_STEPS];
 static size_t g_fake_default_iface_index;
 
+/* Clears all scripted provider sequences before a sampler scenario. */
 static void reset_fakes(void)
 {
     memset(g_fake_snapshots, 0, sizeof(g_fake_snapshots));
@@ -46,6 +47,7 @@ static void reset_fakes(void)
     g_fake_default_iface_index = 0;
 }
 
+/* Materializes one scripted interface snapshot as heap-owned provider output. */
 static lp_status_t fake_snapshot_fn(lp_iface_list_t *out)
 {
     LP_CHECK(g_fake_snapshot_index < MAX_FAKE_STEPS);
@@ -78,6 +80,7 @@ static lp_status_t fake_snapshot_fn(lp_iface_list_t *out)
     return LP_OK;
 }
 
+/* Returns the next scripted monotonic timestamp. */
 static uint64_t fake_clock_fn(void)
 {
     LP_CHECK(g_fake_clock_index < MAX_FAKE_STEPS);
@@ -89,6 +92,7 @@ static uint64_t fake_clock_fn(void)
     return value;
 }
 
+/* Returns the next scripted default-route interface result. */
 static lp_status_t fake_default_iface_fn(char *name_out, size_t name_cap)
 {
     LP_CHECK(g_fake_default_iface_index < MAX_FAKE_STEPS);
@@ -109,6 +113,7 @@ static lp_status_t fake_default_iface_fn(char *name_out, size_t name_cap)
     return LP_OK;
 }
 
+/* Wires the three scripted providers into a sampler instance. */
 static void install_fakes(lp_sampler_t *sampler)
 {
     const lp_sampler_sources_t sources = {fake_snapshot_fn, fake_default_iface_fn, fake_clock_fn};
@@ -117,6 +122,7 @@ static void install_fakes(lp_sampler_t *sampler)
 
 /* ---- scenarios ---- */
 
+/* Verifies manual selection and one-second byte-rate calculation. */
 static void test_manual_basic_rate(void)
 {
     reset_fakes();
@@ -140,6 +146,7 @@ static void test_manual_basic_rate(void)
     LP_CHECK(sample.tx_bytes_per_sec == 500000);
 }
 
+/* Verifies a counter reset yields one zero sample before rates resume. */
 static void test_counter_reset_yields_zero_then_resumes(void)
 {
     reset_fakes();
@@ -169,6 +176,7 @@ static void test_counter_reset_yields_zero_then_resumes(void)
     LP_CHECK(sample.tx_bytes_per_sec == 1000);
 }
 
+/* Verifies RX and TX resets are handled independently. */
 static void test_one_counter_reset_does_not_suppress_the_other(void)
 {
     reset_fakes();
@@ -192,6 +200,7 @@ static void test_one_counter_reset_does_not_suppress_the_other(void)
     LP_CHECK(sample.tx_bytes_per_sec == 500); /* TX's real delta, not suppressed by RX */
 }
 
+/* Verifies all-mode filtering excludes loopback and virtual adapters by default. */
 static void test_all_mode_excludes_loopback_and_virtual(void)
 {
     reset_fakes();
@@ -222,6 +231,7 @@ static void test_all_mode_excludes_loopback_and_virtual(void)
     LP_CHECK(sample.tx_bytes_per_sec == 1000);
 }
 
+/* Verifies a newly appearing adapter cannot mask an existing adapter's delta. */
 static void test_all_mode_new_iface_does_not_mask_existing_traffic(void)
 {
     reset_fakes();
@@ -261,6 +271,7 @@ static void test_all_mode_new_iface_does_not_mask_existing_traffic(void)
     LP_CHECK(sample.tx_bytes_per_sec == 600);  /* (100+500) bytes over 1s */
 }
 
+/* Verifies independent baselines preserve traffic from unaffected adapters. */
 static void test_all_mode_one_iface_reset_does_not_mask_another(void)
 {
     reset_fakes();
@@ -305,6 +316,7 @@ static void test_all_mode_one_iface_reset_does_not_mask_another(void)
     LP_CHECK(sample.tx_bytes_per_sec == 600);  /* (100+500) bytes over 1s */
 }
 
+/* Verifies automatic route changes establish a fresh counter baseline. */
 static void test_auto_mode_resets_baseline_on_iface_change(void)
 {
     reset_fakes();
@@ -337,6 +349,7 @@ static void test_auto_mode_resets_baseline_on_iface_change(void)
     LP_CHECK(sample.tx_bytes_per_sec == 1500);
 }
 
+/* Verifies default-route lookup failures are returned to the caller. */
 static void test_auto_mode_propagates_default_route_failure(void)
 {
     reset_fakes();
@@ -353,6 +366,7 @@ static void test_auto_mode_propagates_default_route_failure(void)
     LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_ERR_NOT_FOUND);
 }
 
+/* Verifies manual selection reports an absent interface explicitly. */
 static void test_manual_mode_missing_interface_is_not_found(void)
 {
     reset_fakes();
@@ -368,6 +382,7 @@ static void test_manual_mode_missing_interface_is_not_found(void)
     LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_ERR_NOT_FOUND);
 }
 
+/* Verifies polling rejects an incompletely wired sampler. */
 static void test_poll_rejects_missing_sources(void)
 {
     reset_fakes();
@@ -380,6 +395,7 @@ static void test_poll_rejects_missing_sources(void)
     LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_ERR_INVALID_ARG);
 }
 
+/* Verifies history reads reject invalid output arguments. */
 static void test_history_rejects_null_and_zero_cap(void)
 {
     reset_fakes();
@@ -405,6 +421,7 @@ static void test_history_rejects_null_and_zero_cap(void)
 static uint64_t g_hist_clock_ns;
 static uint64_t g_hist_rx_bytes;
 
+/* Produces a monotonically growing fake stream for ring-buffer testing. */
 static lp_status_t hist_snapshot_fn(lp_iface_list_t *out)
 {
     lp_iface_t *items = calloc(1, sizeof(*items));
@@ -423,6 +440,7 @@ static lp_status_t hist_snapshot_fn(lp_iface_list_t *out)
     return LP_OK;
 }
 
+/* Advances the history test clock by one second per sample. */
 static uint64_t hist_clock_fn(void)
 {
     const uint64_t value = g_hist_clock_ns;
@@ -430,6 +448,7 @@ static uint64_t hist_clock_fn(void)
     return value;
 }
 
+/* Verifies bounded history retains chronological newest samples after wrapping. */
 static void test_history_wraps_at_capacity(void)
 {
     g_hist_clock_ns = 0;
@@ -463,6 +482,7 @@ static void test_history_wraps_at_capacity(void)
     LP_CHECK(partial[0].timestamp_ns == history[count - 3].timestamp_ns);
 }
 
+/* Runs the sampler's selection, reset, failure, and history scenarios. */
 int main(void)
 {
     test_manual_basic_rate();

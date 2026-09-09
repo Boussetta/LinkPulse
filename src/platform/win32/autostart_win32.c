@@ -32,6 +32,7 @@ static bool tray_exe_path(char *out, size_t cap)
     return needed >= 0 && (size_t)needed < cap;
 }
 
+/* Reads the HKCU Run value directly so external startup changes are visible. */
 bool lp_autostart_is_enabled(void)
 {
     HKEY key;
@@ -46,6 +47,7 @@ bool lp_autostart_is_enabled(void)
     return result == ERROR_SUCCESS;
 }
 
+/* Adds or removes the per-user startup command for the tray-only executable. */
 lp_status_t lp_autostart_set(bool enabled)
 {
     HKEY key;

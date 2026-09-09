@@ -10,6 +10,7 @@ typedef enum {
     LP_ERR_UNSUPPORTED
 } lp_status_t;
 
+/* Returns a stable human-readable name for a status code. */
 const char *lp_status_str(lp_status_t status);
 
 #endif /* LINKPULSE_STATUS_H */

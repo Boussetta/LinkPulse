@@ -1,4 +1,5 @@
 #include "linkpulse/config.h"
+#include "linkpulse/log.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -29,8 +30,10 @@ static bool config_path(char *out, size_t cap)
     return written >= 0 && (size_t)written < cap;
 }
 
+/* Loads the bounded per-user config file, treating a missing file as first run. */
 lp_status_t lp_config_load(lp_config_t *config)
 {
+    LP_DEBUG("loading configuration");
     lp_config_defaults(config);
 
     char appdata[MAX_PATH];
@@ -49,6 +52,7 @@ lp_status_t lp_config_load(lp_config_t *config)
     if (file == NULL) {
         const DWORD attrs = GetFileAttributesA(path);
         if (attrs == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND) {
+            LP_DEBUG("configuration file not found; using defaults");
             return LP_OK; /* first run: no config file yet */
         }
         return LP_ERR_IO;
@@ -64,11 +68,17 @@ lp_status_t lp_config_load(lp_config_t *config)
     text[read] = '\0';
 
     lp_config_parse(config, text);
+    LP_DEBUG("configuration loaded: mode=%d iface=%s virtual=%s bits=%s interval_ms=%u",
+             config->mode, config->iface_name[0] != '\0' ? config->iface_name : "(default)",
+             config->include_virtual ? "yes" : "no", config->use_bits ? "yes" : "no",
+             config->interval_ms);
     return LP_OK;
 }
 
+/* Creates the per-user directory and atomically writes the serialized settings stream. */
 lp_status_t lp_config_save(const lp_config_t *config)
 {
+    LP_DEBUG("saving configuration");
     char path[MAX_PATH + 32];
     if (!config_path(path, sizeof(path))) {
         return LP_ERR_IO;
@@ -84,5 +94,9 @@ lp_status_t lp_config_save(const lp_config_t *config)
     const size_t written = fwrite(text, 1, len, file);
     const bool had_error = (ferror(file) != 0);
     fclose(file);
-    return (had_error || written != len) ? LP_ERR_IO : LP_OK;
+    const lp_status_t status = (had_error || written != len) ? LP_ERR_IO : LP_OK;
+    if (status == LP_OK) {
+        LP_DEBUG("configuration saved");
+    }
+    return status;
 }

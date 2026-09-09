@@ -45,7 +45,27 @@ if ($Version -notmatch '^\d+\.\d+\.\d+$') {
 }
 Write-Host "Building version $Version" -ForegroundColor Cyan
 
-Invoke-Checked "cmake" @("--preset", "msvc", "-DLINKPULSE_VERSION:STRING=$Version")
+$clangFormat = $null
+$clangFormatCommand = Get-Command clang-format.exe -ErrorAction SilentlyContinue
+if ($clangFormatCommand) {
+    $clangFormat = $clangFormatCommand.Source
+} else {
+    $standardClangFormat = Join-Path $env:ProgramFiles "LLVM\bin\clang-format.exe"
+    if (Test-Path -LiteralPath $standardClangFormat) {
+        $clangFormat = $standardClangFormat
+    }
+}
+
+$cmakeConfigureArguments = @(
+    "--preset", "msvc",
+    "-DLINKPULSE_VERSION:STRING=$Version",
+    "-DLINKPULSE_RELEASE_BUILD:BOOL=ON")
+if ($clangFormat) {
+    Write-Host "Using clang-format: $clangFormat" -ForegroundColor Cyan
+    $cmakeConfigureArguments += "-DLINKPULSE_CLANG_FORMAT:FILEPATH=$clangFormat"
+}
+
+Invoke-Checked "cmake" $cmakeConfigureArguments
 Invoke-Checked "cmake" @("--build", "--preset", "msvc-release")
 Invoke-Checked "ctest" @("--preset", "msvc-release")
 

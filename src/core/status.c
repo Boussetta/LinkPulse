@@ -1,5 +1,6 @@
 #include "linkpulse/status.h"
 
+/* Maps machine-readable results to diagnostics suitable for logs and CLI output. */
 const char *lp_status_str(lp_status_t status)
 {
     switch (status) {

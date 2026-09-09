@@ -2,6 +2,7 @@
 
 #include "linkpulse/format.h"
 
+/* Runs one formatting expectation with a fixed-size caller buffer. */
 static void check_rate(uint64_t bytes_per_sec, bool use_bits, const char *expected)
 {
     char buffer[64];
@@ -9,6 +10,7 @@ static void check_rate(uint64_t bytes_per_sec, bool use_bits, const char *expect
     LP_CHECK_STR_EQ(buffer, expected);
 }
 
+/* Covers base units, decimal scaling, bit conversion, and rounding boundaries. */
 int main(void)
 {
     check_rate(0, false, "0 B/s");

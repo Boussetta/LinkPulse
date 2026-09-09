@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+/* Clears retained neighbor identities so the next successful poll establishes a baseline. */
 void lp_discovery_init(lp_discovery_t *discovery)
 {
     if (discovery == NULL) {
@@ -10,6 +11,7 @@ void lp_discovery_init(lp_discovery_t *discovery)
     memset(discovery, 0, sizeof(*discovery));
 }
 
+/* Wires platform or test providers without discarding retained discovery state. */
 void lp_discovery_set_sources(lp_discovery_t *discovery, const lp_discovery_sources_t *sources)
 {
     if (discovery == NULL || sources == NULL) {
@@ -25,6 +27,7 @@ void lp_discovery_set_sources(lp_discovery_t *discovery, const lp_discovery_sour
 
 /* Identifies a neighbour by MAC when both sides have one, falling back to IP
    otherwise (some IPv6 neighbour states can be reported without a MAC). */
+/* Matches stable MAC identities first, falling back to IP for incomplete entries. */
 static bool neighbors_match(const lp_neighbor_t *a, const lp_neighbor_t *b)
 {
     if (a->mac[0] != '\0' && b->mac[0] != '\0') {
@@ -33,6 +36,7 @@ static bool neighbors_match(const lp_neighbor_t *a, const lp_neighbor_t *b)
     return strcmp(a->ip, b->ip) == 0;
 }
 
+/* Finds an existing neighbor in the fixed-capacity retained baseline. */
 static long find_known_index(const lp_neighbor_t *known, size_t known_count,
                              const lp_neighbor_t *item)
 {
@@ -44,6 +48,7 @@ static long find_known_index(const lp_neighbor_t *known, size_t known_count,
     return -1;
 }
 
+/* Reconciles one platform snapshot with the baseline and emits bounded events. */
 lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *events,
                               size_t max_events, size_t *event_count)
 {

@@ -88,6 +88,7 @@ static lp_tray_state_t g_tray;
 /* The taskbar (and its clock/tray icons) follow "SystemUsesLightTheme", not the
    separate "AppsUseLightTheme" value that only affects app windows. Defaults
    to light (Windows' own default) if the value is missing. */
+/* Reads the taskbar theme value rather than the unrelated app-window setting. */
 static bool is_taskbar_light_theme(void)
 {
     DWORD value = 1;
@@ -185,14 +186,27 @@ static HICON render_icon(const uint64_t *history, size_t history_count)
     return icon;
 }
 
+/* Polls core sampler state and publishes the latest values under the shared lock. */
 static DWORD WINAPI sampler_thread_proc(LPVOID param)
 {
     lp_tray_state_t *state = (lp_tray_state_t *)param;
+    lp_status_t previous_status = LP_OK;
+    bool had_previous_status = false;
 
     while (!InterlockedCompareExchange(&state->stop_requested, 0, 0)) {
         if (!InterlockedCompareExchange(&state->paused, 0, 0)) {
             lp_rate_sample_t sample;
             const lp_status_t status = lp_sampler_poll(&state->sampler, &sample);
+
+            if (!had_previous_status || status != previous_status) {
+                if (status == LP_OK) {
+                    LP_INFO("sampler recovered");
+                } else {
+                    LP_WARN("sampler status changed: %s", lp_status_str(status));
+                }
+                previous_status = status;
+                had_previous_status = true;
+            }
 
             EnterCriticalSection(&state->lock);
             state->latest_status = status;
@@ -215,12 +229,17 @@ static DWORD WINAPI sampler_thread_proc(LPVOID param)
     return 0;
 }
 
+/* Checks GitHub on a long interval and notifies the UI only for a new version. */
 static DWORD WINAPI update_thread_proc(LPVOID param)
 {
     lp_tray_state_t *state = (lp_tray_state_t *)param;
+    LP_DEBUG("update-check thread started");
     for (;;) {
         char latest_version[LP_UPDATE_VERSION_MAX];
-        if (lp_update_check_latest(LP_VERSION, latest_version, sizeof(latest_version)) == LP_OK) {
+        const lp_status_t status =
+            lp_update_check_latest(LP_VERSION, latest_version, sizeof(latest_version));
+        if (status == LP_OK) {
+            LP_INFO("update available: version=%s", latest_version);
             bool notify = false;
             EnterCriticalSection(&state->lock);
             notify = !state->update_available ||
@@ -229,6 +248,10 @@ static DWORD WINAPI update_thread_proc(LPVOID param)
             state->update_available = true;
             LeaveCriticalSection(&state->lock);
             PostMessageA(state->hwnd, WM_LP_UPDATE_RESULT, notify ? 1 : 0, 0);
+        } else if (status == LP_ERR_NOT_FOUND) {
+            LP_DEBUG("update check complete: already current");
+        } else {
+            LP_WARN("update check failed: %s", lp_status_str(status));
         }
 
         if (WaitForSingleObject(state->update_stop_event, LP_UPDATE_CHECK_INTERVAL_MS) ==
@@ -236,25 +259,51 @@ static DWORD WINAPI update_thread_proc(LPVOID param)
             break;
         }
     }
+    LP_DEBUG("update-check thread stopped");
     return 0;
 }
 
+/* Polls passive discovery and publishes map/events data to the UI thread. */
 static DWORD WINAPI discovery_thread_proc(LPVOID param)
 {
     lp_tray_state_t *state = (lp_tray_state_t *)param;
+    LP_DEBUG("discovery thread started");
     for (;;) {
         lp_discovery_event_t events[LP_DISCOVERY_MAX_EVENTS];
         size_t event_count = 0;
-        if (lp_discovery_poll(&state->discovery, events, LP_DISCOVERY_MAX_EVENTS, &event_count) ==
-            LP_OK) {
+        const lp_status_t status =
+            lp_discovery_poll(&state->discovery, events, LP_DISCOVERY_MAX_EVENTS, &event_count);
+        if (status == LP_OK) {
+            size_t active_count = 0;
+            for (size_t i = 0; i < state->discovery.known_count; ++i) {
+                if (state->discovery.known[i].active) {
+                    ++active_count;
+                }
+            }
+            LP_DEBUG("discovery poll complete: active=%zu retained=%zu events=%zu", active_count,
+                     state->discovery.known_count, event_count);
+            for (size_t i = 0; i < event_count; ++i) {
+                LP_INFO("discovery event: type=%s ip=%s mac=%s hostname=%s",
+                        events[i].type == LP_DISCOVERY_EVENT_JOINED ? "joined" : "left",
+                        events[i].neighbor.ip[0] != '\0' ? events[i].neighbor.ip : "(unknown)",
+                        events[i].neighbor.mac[0] != '\0' ? events[i].neighbor.mac : "(unknown)",
+                        events[i].neighbor.hostname[0] != '\0' ? events[i].neighbor.hostname
+                                                                 : "(unknown)");
+            }
             lp_local_network_list_t networks = {0};
             if (state->discovery.sources.local_networks_fn != NULL) {
                 (void)state->discovery.sources.local_networks_fn(&networks);
             }
             EnterCriticalSection(&state->lock);
-            state->map_neighbors.count = state->discovery.known_count;
-            memcpy(state->map_neighbors.items, state->discovery.known,
-                   state->discovery.known_count * sizeof(state->discovery.known[0]));
+            state->map_neighbors.count = 0;
+            for (size_t i = 0; i < state->discovery.known_count &&
+                                state->map_neighbors.count < LP_DISCOVERY_MAX_NEIGHBORS;
+                 ++i) {
+                if (state->discovery.known[i].active) {
+                    state->map_neighbors.items[state->map_neighbors.count++] =
+                        state->discovery.known[i];
+                }
+            }
             state->map_networks = networks;
             if (event_count > 0) {
                 memcpy(state->discovery_events, events, event_count * sizeof(events[0]));
@@ -265,6 +314,8 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                 (state->network_map_hwnd != NULL && IsWindowVisible(state->network_map_hwnd))) {
                 PostMessageA(state->hwnd, WM_LP_DISCOVERY_RESULT, 0, 0);
             }
+        } else {
+            LP_WARN("discovery poll failed: %s", lp_status_str(status));
         }
 
         if (WaitForSingleObject(state->update_stop_event, LP_DISCOVERY_INTERVAL_MS) ==
@@ -272,12 +323,15 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
             break;
         }
     }
+    LP_DEBUG("discovery thread stopped");
     return 0;
 }
 
+/* Downloads and launches an update without blocking the tray message loop. */
 static DWORD WINAPI download_thread_proc(LPVOID param)
 {
     lp_tray_state_t *state = (lp_tray_state_t *)param;
+    LP_INFO("update download started");
     char installer_path[MAX_PATH];
     if (lp_update_download_latest(installer_path, sizeof(installer_path)) != LP_OK) {
         MessageBoxA(NULL, "Could not download the LinkPulse update.", "LinkPulse update",
@@ -286,10 +340,13 @@ static DWORD WINAPI download_thread_proc(LPVOID param)
         DeleteFileA(installer_path);
         MessageBoxA(state->hwnd, "Could not launch the LinkPulse installer.", "LinkPulse update",
                     MB_OK | MB_ICONERROR);
+    } else {
+        LP_INFO("update installer launched: %s", installer_path);
     }
     return 0;
 }
 
+/* Ensures only one user-triggered installer download runs at a time. */
 static void start_update_download(lp_tray_state_t *state)
 {
     if (state->download_thread != NULL) {
@@ -301,6 +358,7 @@ static void start_update_download(lp_tray_state_t *state)
             CloseHandle(state->download_thread);
             state->download_thread = NULL;
         } else {
+            LP_DEBUG("update download already in progress");
             return;
         }
     }
@@ -308,9 +366,12 @@ static void start_update_download(lp_tray_state_t *state)
     if (state->download_thread == NULL) {
         MessageBoxA(state->hwnd, "Could not start the LinkPulse downloader.", "LinkPulse update",
                     MB_OK | MB_ICONERROR);
+    } else {
+        LP_DEBUG("update download thread started");
     }
 }
 
+/* Copies the synchronized version string before invoking Windows toast APIs. */
 static void show_update_notification(lp_tray_state_t *state)
 {
     char version[LP_UPDATE_VERSION_MAX];
@@ -323,6 +384,7 @@ static void show_update_notification(lp_tray_state_t *state)
     }
 }
 
+/* Drains queued join/leave events and renders one toast per event. */
 static void show_discovery_notifications(lp_tray_state_t *state)
 {
     lp_discovery_event_t events[LP_DISCOVERY_MAX_EVENTS];
@@ -351,6 +413,7 @@ static void show_discovery_notifications(lp_tray_state_t *state)
     }
 }
 
+/* Toggles the map popup using a consistent locked snapshot of discovery state. */
 static void toggle_network_map(lp_tray_state_t *state)
 {
     if (state->network_map_hwnd == NULL) {
@@ -370,6 +433,7 @@ static void toggle_network_map(lp_tray_state_t *state)
     lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
 }
 
+/* Builds the dynamic tray menu and dispatches the selected user command. */
 static void show_context_menu(lp_tray_state_t *state)
 {
     HMENU menu = CreatePopupMenu();
@@ -450,6 +514,7 @@ static void show_context_menu(lp_tray_state_t *state)
     }
 }
 
+/* Reads shared sampler state and updates the icon graph and tray tooltip. */
 static void refresh_icon_and_tooltip(lp_tray_state_t *state)
 {
     lp_rate_sample_t sample = {0, 0, 0};
@@ -509,6 +574,7 @@ static void refresh_icon_and_tooltip(lp_tray_state_t *state)
 static const wchar_t LP_SPONSOR_ITEM_TEXT[] = L"\u2764  Sponsor";
 #define LP_SPONSOR_HEART_LEN 1 /* just the "\u2764" glyph, colored separately from the label */
 
+/* Supplies the owner-drawn support item dimensions to the Windows menu system. */
 static void measure_sponsor_item(MEASUREITEMSTRUCT *item)
 {
     HDC dc = GetDC(NULL);
@@ -531,6 +597,7 @@ static void measure_sponsor_item(MEASUREITEMSTRUCT *item)
     item->itemHeight = height > min_height ? height : min_height;
 }
 
+/* Paints the support item so the heart can use its accent color. */
 static void draw_sponsor_item(const DRAWITEMSTRUCT *item)
 {
     const bool selected = (item->itemState & ODS_SELECTED) != 0;
@@ -562,6 +629,7 @@ static void draw_sponsor_item(const DRAWITEMSTRUCT *item)
     SelectObject(item->hDC, previous_font);
 }
 
+/* Dispatches taskbar, timer, menu, notification, theme, and shutdown messages. */
 static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     lp_tray_state_t *state = &g_tray;
@@ -723,8 +791,10 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
     }
 }
 
+/* Initializes the singleton tray process, starts workers, and runs its message loop. */
 int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned interval_ms)
 {
+    LP_INFO("initializing tray runtime");
     lp_win32_set_app_user_model_id();
     HANDLE single_instance_mutex = CreateMutexA(NULL, FALSE, "Local\\LinkPulse_SingleInstance");
     if (single_instance_mutex == NULL || GetLastError() == ERROR_ALREADY_EXISTS) {
@@ -798,6 +868,7 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
         CloseHandle(single_instance_mutex);
         return 1;
     }
+    LP_INFO("tray icon initialized");
 
     g_tray.update_stop_event = CreateEventA(NULL, TRUE, FALSE, NULL);
     if (g_tray.update_stop_event == NULL) {
@@ -820,6 +891,7 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
         if (g_tray.update_stop_event != NULL && g_tray.discovery_thread == NULL) {
             LP_WARN("failed to start the discovery thread");
         }
+        LP_INFO("tray worker threads started");
     }
 
     MSG msg;
@@ -829,5 +901,6 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
     }
 
     CloseHandle(single_instance_mutex);
+    LP_INFO("tray runtime stopped");
     return (int)msg.wParam;
 }

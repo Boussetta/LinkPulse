@@ -32,11 +32,13 @@ DEFINE_GUID(IID___x_ABI_CWindows_CUI_CNotifications_CIToastNotificationManagerSt
 
 #if defined(_MSC_VER)
 
+/* Bridges a wide literal into the WinRT string type used by toast APIs. */
 static HRESULT make_hstring(PCWSTR value, HSTRING *out)
 {
     return WindowsCreateString(value, (UINT32)wcslen(value), out);
 }
 
+/* Builds and submits one toast, optionally adding the protocol update action. */
 static bool show_toast_internal(const char *title, const char *message, const char *tag,
                                 bool update_action)
 {
@@ -167,6 +169,7 @@ static bool show_toast_internal(const char *title, const char *message, const ch
 
 #else
 
+/* Keeps the MinGW/non-MSVC build linkable where WinRT toast bindings are unavailable. */
 static bool show_toast_internal(const char *title, const char *message, const char *tag,
                                 bool update_action)
 {
@@ -179,6 +182,7 @@ static bool show_toast_internal(const char *title, const char *message, const ch
 
 #endif
 
+/* Assigns a unique event tag before submitting a normal informational toast. */
 bool lp_win32_show_toast(const char *title, const char *message)
 {
     FILETIME ft;
@@ -193,6 +197,7 @@ bool lp_win32_show_toast(const char *title, const char *message)
     return show_toast_internal(title, message, tag, false);
 }
 
+/* Submits the one-per-version update notification with its download action. */
 bool lp_win32_show_update_toast(const char *version)
 {
     if (version == NULL) {
@@ -204,6 +209,7 @@ bool lp_win32_show_update_toast(const char *version)
     return show_toast_internal("LinkPulse update", message, "update", true);
 }
 
+/* Sets the identity required for Windows to associate LinkPulse notifications. */
 void lp_win32_set_app_user_model_id(void)
 {
     SetCurrentProcessExplicitAppUserModelID(LP_APP_USER_MODEL_ID);

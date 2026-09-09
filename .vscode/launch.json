@@ -8,7 +8,7 @@
       "program": "${workspaceFolder}/out/windows/linkpulse.exe",
       "args": ["--tray", "--iface", "Wi-Fi", "--bits"],
       "cwd": "${workspaceFolder}",
-      "stopAtEntry": false,
+      "stopAtEntry": true,
       "console": "integratedTerminal",
       "preLaunchTask": "LinkPulse: build MSVC Debug"
     },
@@ -19,7 +19,7 @@
       "program": "${workspaceFolder}/out/windows/linkpulse.exe",
       "args": [],
       "cwd": "${workspaceFolder}",
-      "stopAtEntry": false,
+      "stopAtEntry": true,
       "console": "integratedTerminal",
       "preLaunchTask": "LinkPulse: build MSVC Debug"
     },
@@ -30,7 +30,7 @@
       "program": "${workspaceFolder}/out/windows/linkpulse.exe",
       "args": ["--list"],
       "cwd": "${workspaceFolder}",
-      "stopAtEntry": false,
+      "stopAtEntry": true,
       "console": "integratedTerminal",
       "preLaunchTask": "LinkPulse: build MSVC Debug"
     },
@@ -41,7 +41,7 @@
       "program": "${workspaceFolder}/out/windows/linkpulse.exe",
       "args": ["--watch"],
       "cwd": "${workspaceFolder}",
-      "stopAtEntry": false,
+      "stopAtEntry": true,
       "console": "integratedTerminal",
       "preLaunchTask": "LinkPulse: build MSVC Debug"
     },
@@ -52,7 +52,7 @@
       "program": "${workspaceFolder}/out/windows/linkpulse.exe",
       "args": ["--tray"],
       "cwd": "${workspaceFolder}",
-      "stopAtEntry": false,
+      "stopAtEntry": true,
       "console": "integratedTerminal",
       "preLaunchTask": "LinkPulse: build MSVC Debug"
     }

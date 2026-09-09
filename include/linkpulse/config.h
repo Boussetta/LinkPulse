@@ -15,6 +15,7 @@ typedef struct {
     unsigned interval_ms;
 } lp_config_t;
 
+/* Initializes every configuration field to the application default. */
 void lp_config_defaults(lp_config_t *config);
 
 /* Parses "key=value" lines from an in-memory buffer (testable without real
