@@ -278,6 +278,9 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
         return LP_ERR_INVALID_ARG;
     }
     out->count = 0;
+    DWORD hostname_size = LP_HOSTNAME_MAX;
+    (void)GetComputerNameExA(ComputerNamePhysicalDnsHostname, out->local_hostname,
+                             &hostname_size);
 
     NET_LUID default_interface_luid;
     memset(&default_interface_luid, 0, sizeof(default_interface_luid));
@@ -331,6 +334,8 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
     for (IP_ADAPTER_ADDRESSES *adapter = adapters; adapter != NULL;
          adapter = adapter->Next) {
         char gateway[LP_IP_STR_MAX] = {0};
+        const bool is_default_adapter =
+            has_default_gateway && adapter->Luid.Value == default_interface_luid.Value;
         if (has_default_gateway && adapter->Luid.Value == default_interface_luid.Value) {
             snprintf(gateway, sizeof(gateway), "%s", default_gateway);
         }
@@ -355,6 +360,11 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
                          default_gateway_vendor);
                 network->gateway_device_type = default_gateway_type;
                 network->gateway_confidence = default_gateway_confidence;
+            }
+            if (out->local_ip[0] == '\0' &&
+                unicast->Address.lpSockaddr->sa_family == AF_INET && is_default_adapter) {
+                snprintf(out->local_ip, sizeof(out->local_ip), "%s", address);
+                out->local_connection_type = connection_type_for_interface(&adapter->Luid);
             }
         }
     }

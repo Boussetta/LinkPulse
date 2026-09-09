@@ -63,6 +63,9 @@ typedef struct {
 typedef struct {
     lp_local_network_t items[LP_DISCOVERY_MAX_NETWORKS];
     size_t count;
+    char local_hostname[LP_HOSTNAME_MAX];
+    char local_ip[LP_IP_STR_MAX];
+    lp_connection_type_t local_connection_type;
 } lp_local_network_list_t;
 
 typedef lp_status_t (*lp_net_neighbor_snapshot_fn)(lp_neighbor_list_t *out);

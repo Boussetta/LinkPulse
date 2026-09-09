@@ -216,7 +216,18 @@ static void paint_map(HWND window, HDC dc)
     RECT close_rect = {client.right - 42, 8, client.right - 8, 42};
     draw_centered_text(dc, state->label_font, muted, "x", close_rect);
 
-    size_t device_count = 0;
+    lp_neighbor_t local_device = {0};
+    bool has_local_device = false;
+    if (state->networks.local_hostname[0] != '\0' || state->networks.local_ip[0] != '\0') {
+        snprintf(local_device.hostname, sizeof(local_device.hostname), "%s",
+                 state->networks.local_hostname);
+        snprintf(local_device.ip, sizeof(local_device.ip), "%s", state->networks.local_ip);
+            local_device.device_type = LP_DEVICE_DESKTOP;
+            local_device.device_confidence = 100;
+            local_device.connection_type = state->networks.local_connection_type;
+            has_local_device = true;
+    }
+    size_t device_count = has_local_device ? 1 : 0;
     for (size_t i = 0; i < state->neighbors.count; ++i) {
         if (is_device_neighbor(state, &state->neighbors.items[i])) {
             ++device_count;
@@ -260,6 +271,16 @@ static void paint_map(HWND window, HDC dc)
               gateway_y, 170);
 
     size_t visible_index = 0;
+    if (has_local_device && visible_index < visible_count) {
+        const int columns = visible_count > 1 ? 2 : 1;
+        const int column = (int)visible_index % columns;
+        const int row = (int)visible_index / columns;
+        const int device_x = columns == 1 ? center_x : 100 + column * 180;
+        const int device_y = 285 + row * 112;
+        draw_device_node(dc, state->label_font, state->icon_font, device_fill, line, text, muted,
+                         "This PC", &local_device, device_x, device_y);
+        ++visible_index;
+    }
     for (size_t i = 0; i < state->neighbors.count && visible_index < visible_count; ++i) {
         const lp_neighbor_t *neighbor = &state->neighbors.items[i];
         if (!is_device_neighbor(state, neighbor)) {
