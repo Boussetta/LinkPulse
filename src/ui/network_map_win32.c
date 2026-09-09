@@ -86,6 +86,40 @@ static void display_hostname(const char *hostname, char *out, size_t out_cap)
     out[display_length] = '\0';
 }
 
+/* Selects a stable Segoe MDL2 glyph from persisted or inferred device metadata. */
+static const wchar_t *device_icon_glyph(const lp_neighbor_t *neighbor)
+{
+    if (strcmp(neighbor->icon, "phone") == 0 || strcmp(neighbor->icon, "mobile") == 0) {
+        return L"\xE8EA";
+    }
+    if (strcmp(neighbor->icon, "watch") == 0 || strcmp(neighbor->icon, "smartwatch") == 0) {
+        return L"\xE91B";
+    }
+    if (strcmp(neighbor->icon, "printer") == 0) {
+        return L"\xE749";
+    }
+    if (strcmp(neighbor->icon, "tv") == 0 || strcmp(neighbor->icon, "television") == 0) {
+        return L"\xE7F4";
+    }
+    switch (neighbor->device_type) {
+    case LP_DEVICE_LAPTOP:
+    case LP_DEVICE_DESKTOP:
+        return L"\xE770";
+    case LP_DEVICE_MOBILE:
+        return L"\xE8EA";
+    case LP_DEVICE_SMARTWATCH:
+        return L"\xE91B";
+    case LP_DEVICE_PRINTER:
+        return L"\xE749";
+    case LP_DEVICE_TELEVISION:
+        return L"\xE7F4";
+    case LP_DEVICE_ROUTER:
+        return L"\xE968";
+    default:
+        return L"\xE7B3";
+    }
+}
+
 /* Draws a gateway-style rounded node with a label and detail line. */
 static void draw_node(HDC dc, HFONT font, COLORREF fill, COLORREF border, COLORREF text_color,
                       const char *label, const char *detail, int center_x, int center_y,
@@ -174,6 +208,14 @@ static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF
     }
     RECT identity_rect = {node.left + 8, node.top + 40, node.right - 8, node.top + 59};
     draw_centered_text(dc, label_font, muted, identity, identity_rect);
+
+    HFONT old_icon_font = (HFONT)SelectObject(dc, icon_font);
+    SetTextColor(dc, muted);
+    SetBkMode(dc, TRANSPARENT);
+    RECT device_icon_rect = {node.left + 8, node.bottom - 28, node.left + 34, node.bottom - 4};
+    DrawTextW(dc, device_icon_glyph(neighbor), 1, &device_icon_rect,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, old_icon_font);
 
     const wchar_t *icon = NULL;
     if (neighbor->connection_type == LP_CONNECTION_WIFI) {
