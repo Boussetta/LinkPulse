@@ -59,6 +59,23 @@ static void draw_centered_text(HDC dc, HFONT font, COLORREF color, const char *t
     SelectObject(dc, old_font);
 }
 
+static void display_hostname(const char *hostname, char *out, size_t out_cap)
+{
+    const char *suffix = ".fritz.box";
+    const size_t hostname_length = strlen(hostname);
+    const size_t suffix_length = strlen(suffix);
+    size_t display_length = hostname_length;
+    if (hostname_length > suffix_length &&
+        _stricmp(hostname + hostname_length - suffix_length, suffix) == 0) {
+        display_length -= suffix_length;
+    }
+    if (display_length >= out_cap) {
+        display_length = out_cap - 1;
+    }
+    memcpy(out, hostname, display_length);
+    out[display_length] = '\0';
+}
+
 static void draw_node(HDC dc, HFONT font, COLORREF fill, COLORREF border, COLORREF text_color,
                       const char *label, const char *detail, int center_x, int center_y,
                       int width)
@@ -255,7 +272,11 @@ static void paint_map(HWND window, HDC dc)
         const int device_y = 285 + row * 112;
         char label[LP_HOSTNAME_MAX];
         if (neighbor->hostname[0] != '\0') {
-            snprintf(label, sizeof(label), "%s", neighbor->hostname);
+            display_hostname(neighbor->hostname, label, sizeof(label));
+            if (label[0] == '\0') {
+                snprintf(label, sizeof(label), "Device %llu",
+                         (unsigned long long)visible_index + 1);
+            }
         } else {
             snprintf(label, sizeof(label), "Device %llu", (unsigned long long)visible_index + 1);
         }
