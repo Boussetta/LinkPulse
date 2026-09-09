@@ -11,11 +11,11 @@ Local network activity monitor with a system tray UI. **Target: Windows 11.**
 | Counters | `GetIfTable2()` from `iphlpapi` | 64-bit counters, no privileges required |
 | Default route | `GetBestRoute2()` | Identifies the internet-facing NIC |
 | Tray | `Shell_NotifyIcon` + hidden message-only window | Icon built with GDI into a `CreateDIBSection`, then `CreateIconIndirect` |
-| Deps policy | Vendored single-file libraries only (SQLite amalgamation, `inih`, `mdns.h`) | Keeps the build hermetic |
+| Deps policy | Keep optional integrations isolated; add SQLite, mDNS, and gateway adapters only when their runtime and licensing costs are understood | Keeps the base build small and testable |
 | Tests | Plain C asserts driven by CTest | No framework dependency |
 | API level | `_WIN32_WINNT=0x0A00` | Windows 10/11 only; no legacy fallbacks |
 
-### Development workflow from WSL
+### Development workflow from WSL and Windows
 
 WSL2 cannot call `Shell_NotifyIcon` and its virtual NIC is behind NAT, so its counters are
 not the host's real traffic. Two options, both supported by the build:
@@ -25,6 +25,9 @@ not the host's real traffic. Two options, both supported by the build:
 
 Core logic stays free of `windows.h` so it can be unit-tested anywhere.
 
+For native Windows setup, MSVC debugging, WSL validation, and environment handoff, see
+[`docs/development-handoff.md`](docs/development-handoff.md).
+
 ## Architecture
 
 ```
@@ -33,7 +36,8 @@ src/core/            portable C11 only: rate math, ring buffer, formatting, conf
 src/platform/win32/  iphlpapi, GDI, clock, toasts, registry
 src/ui/              tray window, menu, icon rendering
 src/cli/             headless mode: print rates to stdout (the dev/validation target)
-src/discovery/       (M4+) ARP table, mDNS, OUI lookup
+src/core/            discovery diffing and retained device identity
+src/platform/win32/  ARP/NDP, gateway, hostname, and interface discovery
 tests/               CTest
 ```
 
@@ -42,8 +46,7 @@ Rules:
 - `src/core` includes **no** OS headers. It is where all unit-testable logic lives.
 - All Win32 calls sit behind the headers in `include/linkpulse/`, so the logic can be driven
   by fake counter sources in tests.
-- `core` never calls into `ui`. The UI subscribes via callbacks so later features (new-host
-  alerts, thresholds) plug in without touching the sampler.
+- `core` never calls into `ui`. The UI consumes snapshots and events so later features (gateway adapters, known-device history, alerts) plug in without touching the sampler.
 
 ---
 
@@ -111,15 +114,20 @@ Release workflow moved to Milestone 7, where it actually belongs.
 
 ## Milestone 4 — Network host discovery
 
-- [ ] Enumerate local subnets + gateway via `GetAdaptersAddresses()`
-- [ ] Passive discovery first: neighbour table via `GetIpNetTable2()` — no privileges needed
+- [x] Enumerate local subnets + gateway via `GetAdaptersAddresses()` and `GetBestRoute2()`
+- [x] Passive discovery first: neighbour table via `GetIpNetTable2()` — no privileges needed
+- [x] Tray network-map flyout with gateway, retained neighbors, local device, and connection icons
+- [x] Best-effort reverse DNS names and conservative hostname-based device classification
+- [x] Retain device identities across transient neighbor-cache misses
+- [x] Deduplicate gateway neighbor entries by MAC
 - [ ] Optional active discovery: `SendARP()` sweep, or raw sockets/Npcap for anything deeper
       (needs admin) — document the requirement and degrade gracefully
 - [ ] mDNS name resolution via vendored `mdns.h`, plus NetBIOS lookup
 - [ ] MAC → vendor lookup against a bundled OUI table
 - [ ] Device inventory in SQLite (amalgamation): first seen, last seen, label, trusted flag
-- [ ] **New host notification** via `Shell_NotifyIcon` balloon (`NIIF_INFO`), or a WinRT toast
+- [x] **New host notification** via a WinRT toast
 - [ ] "Known devices" list in the UI with rename + mark-as-trusted
+- [ ] Gateway adapters, beginning with Fritz!Box connected-device APIs
 
 ## Milestone 5 — Per-connection / per-process insight
 
@@ -186,8 +194,10 @@ critical path right now.
 
 ## Next up
 
-**M4 host discovery**: begin with local subnet/gateway enumeration and passive neighbour-table
-discovery. Keep the first slice privilege-free and independently testable behind injected sources.
+**Next M4 slice**: add an optional gateway adapter interface, beginning with Fritz!Box connected-
+device data so Wi-Fi clients that do not appear in Windows ARP/NDP can still be listed. Keep the
+adapter optional, isolated, and testable with injected responses. SQLite persistence follows once
+the live sources are unified.
 
 ## Open questions
 

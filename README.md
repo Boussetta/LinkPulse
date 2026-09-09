@@ -3,7 +3,8 @@
 A lightweight Windows 11 system tray monitor for local network activity.
 Written in C11, no runtime dependencies.
 
-Current status: **Milestone 7 distribution validation** — see [ROADMAP.md](ROADMAP.md).
+Current status: **Milestone 4 network discovery** — see [ROADMAP.md](ROADMAP.md) and the
+[development handoff](docs/development-handoff.md).
 
 ## Building
 
@@ -38,6 +39,15 @@ rather than one dual-mode executable because `AttachConsole` (the usual way to
 keep CLI output working after switching an exe to the GUI subsystem) does not
 see a usable console when the process is launched through WSL interop, which
 would have broken this project's whole dev/test workflow.
+
+### Moving between WSL and Windows
+
+Use WSL for fast MinGW cross-builds and portable tests. Use native Windows with MSVC when
+debugging the tray, WinRT notifications, ARP/NDP discovery, gateway selection, or the network
+map. The checked-in VS Code launch profiles use `cppvsdbg` and the MSVC Debug preset.
+
+See [docs/development-handoff.md](docs/development-handoff.md) for setup, debugger entry points,
+runtime locations, discovery limitations, and a copy-paste handoff prompt for a new environment.
 
 ## Layout
 

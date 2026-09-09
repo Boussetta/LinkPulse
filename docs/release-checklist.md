@@ -10,6 +10,9 @@ powershell -ExecutionPolicy Bypass -File .\packaging\build-installer.ps1
 
 Confirm that CMake configuration, the MSVC Release build, all tests (ctest), and Inno Setup compilation succeed.
 
+For moving the repository between WSL and native Windows, including MSVC debugger setup and
+runtime diagnostics, see [development-handoff.md](development-handoff.md).
+
 ## Clean-Machine Validation
 
 Copy `build\installer\LinkPulseSetup.exe` to a Windows machine without Visual Studio, CMake, MinGW, or Inno Setup installed. Verify:
@@ -24,6 +27,8 @@ Copy `build\installer\LinkPulseSetup.exe` to a Windows machine without Visual St
 - Clicking the notification body downloads and launches the installer without opening a browser.
 - Right-clicking **Download update** uses the same internal downloader.
 - Uninstall removes the application, shortcuts, protocol registration, COM registration, and autostart entry.
+- Native network validation shows the local computer, gateway, and currently visible devices in the network map.
+- A quiet Wi-Fi device may be absent from the Windows ARP/NDP cache; gateway-adapter validation is required for complete client inventory.
 
 ## Publish
 
