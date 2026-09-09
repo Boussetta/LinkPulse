@@ -14,6 +14,7 @@
 #define LP_DISCOVERY_MAX_NEIGHBORS 256
 #define LP_DISCOVERY_MAX_EVENTS 32
 #define LP_DISCOVERY_MAX_NETWORKS 32
+#define LP_DISCOVERY_MISSING_POLLS_BEFORE_LEFT 3
 
 typedef enum {
     LP_CONNECTION_UNKNOWN = 0,
@@ -83,6 +84,7 @@ typedef struct {
 typedef struct {
     lp_discovery_sources_t sources;
     lp_neighbor_t known[LP_DISCOVERY_MAX_NEIGHBORS];
+    uint8_t missing_polls[LP_DISCOVERY_MAX_NEIGHBORS];
     size_t known_count;
     bool has_baseline;
 } lp_discovery_t;

@@ -69,6 +69,7 @@ lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *e
         const long idx = find_known_index(discovery->known, old_known_count, &current.items[i]);
         if (idx >= 0) {
             seen[idx] = true;
+            discovery->missing_polls[idx] = 0;
             discovery->known[idx] = current.items[i];
             continue;
         }
@@ -79,6 +80,7 @@ lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *e
         }
         if (discovery->known_count < LP_DISCOVERY_MAX_NEIGHBORS) {
             discovery->known[discovery->known_count++] = current.items[i];
+            discovery->missing_polls[discovery->known_count - 1] = 0;
         }
     }
 
@@ -88,14 +90,22 @@ lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *e
     for (size_t i = 0; i < old_known_count; ++i) {
         if (seen[i]) {
             discovery->known[write++] = discovery->known[i];
-        } else if (discovery->has_baseline && emitted < max_events) {
-            events[emitted].type = LP_DISCOVERY_EVENT_LEFT;
-            events[emitted].neighbor = discovery->known[i];
-            ++emitted;
+            discovery->missing_polls[write - 1] = 0;
+        } else {
+            if (discovery->missing_polls[i] + 1 < LP_DISCOVERY_MISSING_POLLS_BEFORE_LEFT) {
+                discovery->known[write] = discovery->known[i];
+                discovery->missing_polls[write] = discovery->missing_polls[i] + 1;
+                ++write;
+            } else if (discovery->has_baseline && emitted < max_events) {
+                events[emitted].type = LP_DISCOVERY_EVENT_LEFT;
+                events[emitted].neighbor = discovery->known[i];
+                ++emitted;
+            }
         }
     }
     for (size_t i = old_known_count; i < discovery->known_count; ++i) {
         discovery->known[write++] = discovery->known[i];
+        discovery->missing_polls[write - 1] = 0;
     }
     discovery->known_count = write;
     discovery->has_baseline = true;

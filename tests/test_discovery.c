@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define FAKE_STEP_COUNT 3
+#define FAKE_STEP_COUNT 5
 
 static lp_neighbor_list_t g_fake_snapshots[FAKE_STEP_COUNT];
 static size_t g_fake_snapshot_index;
@@ -52,6 +52,8 @@ static void test_baseline_and_neighbor_changes(void)
 
     set_neighbor(&g_fake_snapshots[2].items[0], "192.168.1.4", "AA:BB:CC:DD:EE:03");
     g_fake_snapshots[2].count = 1;
+    g_fake_snapshots[3] = g_fake_snapshots[2];
+    g_fake_snapshots[4] = g_fake_snapshots[2];
 
     lp_discovery_t discovery;
     const lp_discovery_sources_t sources = {fake_snapshot_fn, NULL};
@@ -64,11 +66,17 @@ static void test_baseline_and_neighbor_changes(void)
     LP_CHECK(event_count == 0);
 
     LP_CHECK(lp_discovery_poll(&discovery, events, LP_DISCOVERY_MAX_EVENTS, &event_count) == LP_OK);
-    LP_CHECK(event_count == 2);
+    LP_CHECK(event_count == 1);
     LP_CHECK(events[0].type == LP_DISCOVERY_EVENT_JOINED);
     LP_CHECK_STR_EQ(events[0].neighbor.ip, "192.168.1.4");
-    LP_CHECK(events[1].type == LP_DISCOVERY_EVENT_LEFT);
-    LP_CHECK_STR_EQ(events[1].neighbor.ip, "192.168.1.3");
+
+    LP_CHECK(lp_discovery_poll(&discovery, events, LP_DISCOVERY_MAX_EVENTS, &event_count) == LP_OK);
+    LP_CHECK(event_count == 0);
+
+    LP_CHECK(lp_discovery_poll(&discovery, events, LP_DISCOVERY_MAX_EVENTS, &event_count) == LP_OK);
+    LP_CHECK(event_count == 1);
+    LP_CHECK(events[0].type == LP_DISCOVERY_EVENT_LEFT);
+    LP_CHECK_STR_EQ(events[0].neighbor.mac, "AA:BB:CC:DD:EE:02");
 
     LP_CHECK(lp_discovery_poll(&discovery, events, LP_DISCOVERY_MAX_EVENTS, &event_count) == LP_OK);
     LP_CHECK(event_count == 1);
