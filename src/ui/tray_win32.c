@@ -319,10 +319,28 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
         const lp_status_t status =
             lp_discovery_poll(&state->discovery, events, LP_DISCOVERY_MAX_EVENTS, &event_count);
         if (status == LP_OK) {
+            lp_local_network_list_t networks = {0};
+            if (state->discovery.sources.local_networks_fn != NULL) {
+                (void)state->discovery.sources.local_networks_fn(&networks);
+            }
+            /* Scopes the device store to whichever router is currently the
+               default gateway, so switching networks (home, work, a
+               relative's house) keeps separate device lists and ISP identity. */
+            const char *gateway_mac = "";
+            const char *gateway_hostname = "";
+            const char *gateway_vendor = "";
+            for (size_t i = 0; i < networks.count; ++i) {
+                if (networks.items[i].gateway_mac[0] != '\0') {
+                    gateway_mac = networks.items[i].gateway_mac;
+                    gateway_hostname = networks.items[i].gateway_hostname;
+                    gateway_vendor = networks.items[i].gateway_vendor;
+                    break;
+                }
+            }
             /* Applies previously learned identity to notifications/logging too,
                not just the map, so a transient DNS miss doesn't hide a known name. */
             for (size_t i = 0; i < event_count; ++i) {
-                lp_win32_device_store_apply(state->device_store, &events[i].neighbor);
+                lp_win32_device_store_apply(state->device_store, gateway_mac, &events[i].neighbor);
             }
             size_t active_count = 0;
             for (size_t i = 0; i < state->discovery.known_count; ++i) {
@@ -342,19 +360,18 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                         events[i].neighbor.hostname[0] != '\0' ? events[i].neighbor.hostname
                                                                  : "(unknown)");
             }
-            lp_local_network_list_t networks = {0};
-            if (state->discovery.sources.local_networks_fn != NULL) {
-                (void)state->discovery.sources.local_networks_fn(&networks);
-            }
             EnterCriticalSection(&state->lock);
+            const lp_network_context_t network_context = {
+                gateway_mac, gateway_hostname, gateway_vendor,
+                state->isp_available ? &state->isp_info : NULL};
             state->map_neighbors.count = 0;
             for (size_t i = 0; i < state->discovery.known_count &&
                                 state->map_neighbors.count < LP_DISCOVERY_MAX_NEIGHBORS;
                  ++i) {
                 if (state->discovery.known[i].active) {
                     lp_neighbor_t neighbor = state->discovery.known[i];
-                    lp_win32_device_store_apply(state->device_store, &neighbor);
-                    lp_win32_device_store_observe(state->device_store, &neighbor);
+                    lp_win32_device_store_apply(state->device_store, gateway_mac, &neighbor);
+                    lp_win32_device_store_observe(state->device_store, &network_context, &neighbor);
                     state->map_neighbors.items[state->map_neighbors.count++] = neighbor;
                 }
             }
