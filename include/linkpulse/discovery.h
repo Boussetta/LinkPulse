@@ -10,6 +10,7 @@
 #define LP_MAC_STR_MAX 18
 #define LP_IP_STR_MAX 46
 #define LP_HOSTNAME_MAX 256
+#define LP_VENDOR_MAX 64
 #define LP_DISCOVERY_MAX_NEIGHBORS 256
 #define LP_DISCOVERY_MAX_EVENTS 32
 #define LP_DISCOVERY_MAX_NETWORKS 32
@@ -20,11 +21,25 @@ typedef enum {
     LP_CONNECTION_ETHERNET
 } lp_connection_type_t;
 
+typedef enum {
+    LP_DEVICE_UNKNOWN = 0,
+    LP_DEVICE_LAPTOP,
+    LP_DEVICE_MOBILE,
+    LP_DEVICE_SMARTWATCH,
+    LP_DEVICE_PRINTER,
+    LP_DEVICE_TELEVISION,
+    LP_DEVICE_ROUTER,
+    LP_DEVICE_DESKTOP
+} lp_device_type_t;
+
 typedef struct {
     char ip[LP_IP_STR_MAX];
     char mac[LP_MAC_STR_MAX];
     char hostname[LP_HOSTNAME_MAX];
+    char vendor[LP_VENDOR_MAX];
     lp_connection_type_t connection_type;
+    lp_device_type_t device_type;
+    uint8_t device_confidence;
 } lp_neighbor_t;
 
 typedef struct {

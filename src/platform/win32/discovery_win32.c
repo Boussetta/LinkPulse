@@ -7,7 +7,9 @@
 #include <iphlpapi.h>
 #include <netioapi.h>
 
+#include <ctype.h>
 #include <stdio.h>
+#include <string.h>
 
 /* States that mean "the OS currently believes this neighbour is present" --
    excludes NlnsIncomplete (resolution in progress, not yet confirmed) and
@@ -57,6 +59,63 @@ static void resolve_hostname(const SOCKADDR_INET *address, char *out, size_t out
     if (GetNameInfoA((const SOCKADDR *)address, address_length, out, (DWORD)out_cap, NULL, 0,
                      NI_NAMEREQD) != 0) {
         out[0] = '\0';
+    }
+}
+
+static bool contains_token(const char *value, const char *token)
+{
+    if (value == NULL || token == NULL || token[0] == '\0') {
+        return false;
+    }
+    for (const char *cursor = value; *cursor != '\0'; ++cursor) {
+        const char *left = cursor;
+        const char *right = token;
+        while (*left != '\0' && *right != '\0' &&
+               tolower((unsigned char)*left) == tolower((unsigned char)*right)) {
+            ++left;
+            ++right;
+        }
+        if (*right == '\0') {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void classify_neighbor(lp_neighbor_t *neighbor)
+{
+    neighbor->vendor[0] = '\0';
+    neighbor->device_type = LP_DEVICE_UNKNOWN;
+    neighbor->device_confidence = 0;
+    const char *name = neighbor->hostname;
+    if (contains_token(name, "epson")) {
+        snprintf(neighbor->vendor, sizeof(neighbor->vendor), "Epson");
+        neighbor->device_type = LP_DEVICE_PRINTER;
+        neighbor->device_confidence = 95;
+    } else if (contains_token(name, "printer") || contains_token(name, "print")) {
+        neighbor->device_type = LP_DEVICE_PRINTER;
+        neighbor->device_confidence = 90;
+    } else if (contains_token(name, "iphone") || contains_token(name, "android") ||
+               contains_token(name, "pixel") || contains_token(name, "galaxy")) {
+        neighbor->device_type = LP_DEVICE_MOBILE;
+        neighbor->device_confidence = 85;
+    } else if (contains_token(name, "watch") || contains_token(name, "fitbit")) {
+        neighbor->device_type = LP_DEVICE_SMARTWATCH;
+        neighbor->device_confidence = 85;
+    } else if (contains_token(name, "laptop") || contains_token(name, "macbook")) {
+        neighbor->device_type = LP_DEVICE_LAPTOP;
+        neighbor->device_confidence = 80;
+    } else if (contains_token(name, "desktop") || contains_token(name, "computer")) {
+        neighbor->device_type = LP_DEVICE_DESKTOP;
+        neighbor->device_confidence = 80;
+    } else if (contains_token(name, "tv") || contains_token(name, "roku") ||
+               contains_token(name, "chromecast")) {
+        neighbor->device_type = LP_DEVICE_TELEVISION;
+        neighbor->device_confidence = 80;
+    } else if (contains_token(name, "router") || contains_token(name, "gateway") ||
+               contains_token(name, "fritz")) {
+        neighbor->device_type = LP_DEVICE_ROUTER;
+        neighbor->device_confidence = 80;
     }
 }
 
@@ -121,6 +180,7 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
         if (winsock_ready) {
             resolve_hostname(&row->Address, neighbor->hostname, sizeof(neighbor->hostname));
         }
+        classify_neighbor(neighbor);
         ++out->count;
     }
 
