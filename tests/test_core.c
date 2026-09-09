@@ -144,6 +144,13 @@ static void log_visible_info_message(void)
     LP_INFO("visible info message");
 }
 
+/* Sends one record to the optional file sink so both output paths are covered. */
+static void log_file_message(void)
+{
+    lp_log_set_level(LP_LOG_INFO);
+    LP_INFO("file info message");
+}
+
 /* Verifies severity filtering and visible log formatting. */
 static void test_log_level_and_filtering(void)
 {
@@ -175,6 +182,22 @@ static void test_log_level_and_filtering(void)
     LP_CHECK(strstr(buffer, "visible info message") != NULL);
 
     fclose(visible_capture);
+
+    FILE *file_capture = lp_tmpfile();
+    LP_CHECK(file_capture != NULL);
+    if (file_capture == NULL) {
+        return;
+    }
+
+    lp_log_set_file(file_capture);
+    with_captured_stderr(file_capture, log_file_message);
+    lp_log_set_file(NULL);
+    rewind(file_capture);
+    read_stream(file_capture, buffer, sizeof(buffer));
+    LP_CHECK(strstr(buffer, "INFO ") != NULL);
+    LP_CHECK(strstr(buffer, "file info message") != NULL);
+    LP_CHECK(buffer[0] == '[' && buffer[5] == '-');
+    fclose(file_capture);
 }
 
 /* Runs status, network-container, and logger contract scenarios. */
