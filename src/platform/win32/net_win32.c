@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Converts Windows adapter names to the UTF-8 strings used by the portable core. */
 static void wide_to_utf8(const WCHAR *src, char *dst, size_t dst_cap)
 {
     if (dst == NULL || dst_cap == 0) {
@@ -28,6 +29,7 @@ static void wide_to_utf8(const WCHAR *src, char *dst, size_t dst_cap)
     }
 }
 
+/* Converts GetIfTable2 rows into a heap-owned portable interface snapshot. */
 lp_status_t lp_net_snapshot(lp_iface_list_t *out)
 {
     if (out == NULL) {
@@ -79,6 +81,7 @@ done:
     return status;
 }
 
+/* Resolves the adapter selected by Windows for a public default-route destination. */
 lp_status_t lp_net_default_iface(char *name_out, size_t name_cap)
 {
     if (name_out == NULL || name_cap == 0) {

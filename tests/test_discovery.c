@@ -10,18 +10,21 @@
 static lp_neighbor_list_t g_fake_snapshots[FAKE_STEP_COUNT];
 static size_t g_fake_snapshot_index;
 
+/* Resets the scripted neighbor snapshots used by the reconciliation test. */
 static void reset_fakes(void)
 {
     memset(g_fake_snapshots, 0, sizeof(g_fake_snapshots));
     g_fake_snapshot_index = 0;
 }
 
+/* Seeds the stable identity fields for one fake neighbor. */
 static void set_neighbor(lp_neighbor_t *neighbor, const char *ip, const char *mac)
 {
     snprintf(neighbor->ip, sizeof(neighbor->ip), "%s", ip);
     snprintf(neighbor->mac, sizeof(neighbor->mac), "%s", mac);
 }
 
+/* Supplies the next scripted neighbor snapshot to the core. */
 static lp_status_t fake_snapshot_fn(lp_neighbor_list_t *out)
 {
     if (g_fake_snapshot_index >= FAKE_STEP_COUNT) {
@@ -31,6 +34,7 @@ static lp_status_t fake_snapshot_fn(lp_neighbor_list_t *out)
     return LP_OK;
 }
 
+/* Verifies baseline suppression, MAC identity changes, joins, and delayed leaves. */
 static void test_baseline_and_neighbor_changes(void)
 {
     reset_fakes();
@@ -92,6 +96,7 @@ static void test_baseline_and_neighbor_changes(void)
     LP_CHECK(!discovery.known[0].active || !discovery.known[1].active || !discovery.known[2].active);
 }
 
+/* Verifies discovery reports an unconfigured provider instead of dereferencing it. */
 static void test_poll_rejects_missing_source(void)
 {
     lp_discovery_t discovery;
@@ -103,6 +108,7 @@ static void test_poll_rejects_missing_source(void)
     LP_CHECK(event_count == 0);
 }
 
+/* Runs discovery reconciliation and provider-validation scenarios. */
 int main(void)
 {
     test_baseline_and_neighbor_changes();

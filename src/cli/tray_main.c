@@ -18,6 +18,7 @@
    subsystem. Always configured from the saved config file; use linkpulse.exe
    --tray (console subsystem) instead if you need to override settings or see
    debug log output while testing. */
+/* Handles protocol/COM activation or starts the normal argument-free tray app. */
 int main(int argc, char **argv)
 {
     if (lp_win32_log_start() != 0) {

@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 
+/* Chooses a decimal unit and formats a rate without exposing floating-point details to callers. */
 void lp_format_rate(uint64_t bytes_per_sec, bool use_bits, char *out, size_t out_cap)
 {
     if (out == NULL || out_cap == 0) {

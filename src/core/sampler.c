@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Resets sampler state and copies configuration without binding platform code. */
 void lp_sampler_init(lp_sampler_t *sampler, const lp_sampler_config_t *config)
 {
     if (sampler == NULL) {
@@ -19,6 +20,7 @@ void lp_sampler_init(lp_sampler_t *sampler, const lp_sampler_config_t *config)
        functions via lp_sampler_set_sources(). */
 }
 
+/* Installs only the non-NULL providers supplied by the caller. */
 void lp_sampler_set_sources(lp_sampler_t *sampler, const lp_sampler_sources_t *sources)
 {
     if (sampler == NULL || sources == NULL) {
@@ -35,6 +37,7 @@ void lp_sampler_set_sources(lp_sampler_t *sampler, const lp_sampler_sources_t *s
     }
 }
 
+/* Appends a sample to the ring and advances its oldest slot when full. */
 static void push_history(lp_sampler_t *sampler, const lp_rate_sample_t *sample)
 {
     const size_t next_slot =
@@ -48,6 +51,7 @@ static void push_history(lp_sampler_t *sampler, const lp_rate_sample_t *sample)
     }
 }
 
+/* Converts a byte delta and monotonic duration to a rounded rate. */
 static uint64_t bytes_per_sec(uint64_t delta_bytes, uint64_t elapsed_ns)
 {
     if (elapsed_ns == 0) {
@@ -57,6 +61,7 @@ static uint64_t bytes_per_sec(uint64_t delta_bytes, uint64_t elapsed_ns)
     return (uint64_t)(rate + 0.5);
 }
 
+/* Locates the independent counter baseline for one adapter. */
 static lp_sampler_target_t *find_target(lp_sampler_t *sampler, const char *name)
 {
     for (size_t i = 0; i < sampler->target_count; ++i) {
@@ -171,6 +176,7 @@ static lp_status_t resolve_deltas(lp_sampler_t *sampler, const lp_iface_list_t *
     return LP_OK;
 }
 
+/* Reads providers, resolves targets, computes deltas, and records one sample. */
 lp_status_t lp_sampler_poll(lp_sampler_t *sampler, lp_rate_sample_t *out)
 {
     if (sampler == NULL || out == NULL || sampler->sources.snapshot_fn == NULL ||
@@ -210,6 +216,7 @@ lp_status_t lp_sampler_poll(lp_sampler_t *sampler, lp_rate_sample_t *out)
     return LP_OK;
 }
 
+/* Copies the newest ring entries in chronological order for UI consumers. */
 size_t lp_sampler_history(const lp_sampler_t *sampler, lp_rate_sample_t *out, size_t cap)
 {
     if (sampler == NULL || out == NULL || cap == 0) {

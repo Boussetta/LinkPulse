@@ -45,6 +45,7 @@ struct LP_NOTIFICATION_ACTIVATION_CALLBACK {
 
 static DWORD activator_thread_id = 0;
 
+/* Exposes the COM interfaces implemented by the toast callback object. */
 static HRESULT STDMETHODCALLTYPE callback_query_interface(LP_NOTIFICATION_ACTIVATION_CALLBACK *self,
                                                             REFIID iid, void **object)
 {
@@ -61,11 +62,13 @@ static HRESULT STDMETHODCALLTYPE callback_query_interface(LP_NOTIFICATION_ACTIVA
     return E_NOINTERFACE;
 }
 
+/* Retains a callback object across COM clients and worker dispatch. */
 static ULONG STDMETHODCALLTYPE callback_add_ref(LP_NOTIFICATION_ACTIVATION_CALLBACK *self)
 {
     return (ULONG)InterlockedIncrement(&self->refs);
 }
 
+/* Releases the callback allocation when its final COM reference disappears. */
 static ULONG STDMETHODCALLTYPE callback_release(LP_NOTIFICATION_ACTIVATION_CALLBACK *self)
 {
     const ULONG refs = (ULONG)InterlockedDecrement(&self->refs);
@@ -75,6 +78,7 @@ static ULONG STDMETHODCALLTYPE callback_release(LP_NOTIFICATION_ACTIVATION_CALLB
     return refs;
 }
 
+/* Downloads and launches an update away from the COM activation callback thread. */
 static DWORD WINAPI activation_download_thread_proc(LPVOID param)
 {
     (void)param;
@@ -93,6 +97,7 @@ static DWORD WINAPI activation_download_thread_proc(LPVOID param)
     return 0;
 }
 
+/* Stops the local-server message loop after activation has been dispatched. */
 static HRESULT request_activator_shutdown(void)
 {
     if (activator_thread_id == 0) {
@@ -104,6 +109,7 @@ static HRESULT request_activator_shutdown(void)
     return S_OK;
 }
 
+/* Handles the toast protocol argument and requests activator shutdown. */
 static HRESULT STDMETHODCALLTYPE callback_activate(LP_NOTIFICATION_ACTIVATION_CALLBACK *self,
                                                    LPCWSTR app_user_model_id, LPCWSTR invoked_args,
                                                    const LP_NOTIFICATION_USER_INPUT_DATA *data,
@@ -149,6 +155,7 @@ struct LP_ACTIVATOR_FACTORY {
     LONG refs;
 };
 
+/* Exposes the IClassFactory interfaces required by COM local-server registration. */
 static HRESULT STDMETHODCALLTYPE factory_query_interface(LP_ACTIVATOR_FACTORY *self, REFIID iid,
                                                           void **object)
 {
@@ -164,16 +171,19 @@ static HRESULT STDMETHODCALLTYPE factory_query_interface(LP_ACTIVATOR_FACTORY *s
     return E_NOINTERFACE;
 }
 
+/* Retains the process-lifetime class factory reference. */
 static ULONG STDMETHODCALLTYPE factory_add_ref(LP_ACTIVATOR_FACTORY *self)
 {
     return (ULONG)InterlockedIncrement(&self->refs);
 }
 
+/* Drops a class-factory reference; the stack-owned factory remains process-lived. */
 static ULONG STDMETHODCALLTYPE factory_release(LP_ACTIVATOR_FACTORY *self)
 {
     return (ULONG)InterlockedDecrement(&self->refs);
 }
 
+/* Creates a callback object for the COM toast activation request. */
 static HRESULT STDMETHODCALLTYPE factory_create_instance(LP_ACTIVATOR_FACTORY *self, IUnknown *outer,
                                                            REFIID iid, void **object)
 {
@@ -193,6 +203,7 @@ static HRESULT STDMETHODCALLTYPE factory_create_instance(LP_ACTIVATOR_FACTORY *s
     return result;
 }
 
+/* Accepts COM server-lock requests; activation lifetime is controlled by the message loop. */
 static HRESULT STDMETHODCALLTYPE factory_lock_server(LP_ACTIVATOR_FACTORY *self, BOOL lock)
 {
     (void)self;
@@ -204,6 +215,7 @@ static const LP_ACTIVATOR_FACTORY_VTBL factory_vtbl = {
     factory_query_interface, factory_add_ref, factory_release, factory_create_instance,
     factory_lock_server};
 
+/* Registers the COM class factory and services toast activations until WM_QUIT. */
 int lp_win32_run_toast_activator(void)
 {
     HRESULT result = CoInitializeEx(NULL, COINIT_MULTITHREADED);

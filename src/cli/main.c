@@ -20,6 +20,7 @@
    once per loop iteration in watch_rate(). */
 static volatile LONG g_stop_requested;
 
+/* Converts console shutdown signals into the atomic stop flag polled by watch mode. */
 static BOOL WINAPI handle_console_event(DWORD event)
 {
     switch (event) {
@@ -33,6 +34,7 @@ static BOOL WINAPI handle_console_event(DWORD event)
     }
 }
 
+/* Prints the stable CLI contract shared by development and support workflows. */
 static void print_usage(void)
 {
     printf("LinkPulse " LP_VERSION " - local network activity monitor\n\n"
@@ -50,6 +52,7 @@ static void print_usage(void)
            "  --help                 Show this help\n");
 }
 
+/* Lists raw adapter counters and marks the interface selected by the route table. */
 static int list_interfaces(void)
 {
     lp_iface_list_t list;
@@ -80,6 +83,7 @@ static int list_interfaces(void)
     return 0;
 }
 
+/* Runs the console sampler loop until Ctrl+C or another console close signal. */
 static int watch_rate(const lp_sampler_config_t *config, bool use_bits, unsigned interval_ms)
 {
     lp_sampler_t sampler;
@@ -116,6 +120,7 @@ static int watch_rate(const lp_sampler_config_t *config, bool use_bits, unsigned
     return 0;
 }
 
+/* Loads persisted settings, applies CLI overrides, and dispatches one CLI mode. */
 int main(int argc, char **argv)
 {
     bool want_list = false;

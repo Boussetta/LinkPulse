@@ -88,6 +88,7 @@ static lp_tray_state_t g_tray;
 /* The taskbar (and its clock/tray icons) follow "SystemUsesLightTheme", not the
    separate "AppsUseLightTheme" value that only affects app windows. Defaults
    to light (Windows' own default) if the value is missing. */
+/* Reads the taskbar theme value rather than the unrelated app-window setting. */
 static bool is_taskbar_light_theme(void)
 {
     DWORD value = 1;
@@ -185,6 +186,7 @@ static HICON render_icon(const uint64_t *history, size_t history_count)
     return icon;
 }
 
+/* Polls core sampler state and publishes the latest values under the shared lock. */
 static DWORD WINAPI sampler_thread_proc(LPVOID param)
 {
     lp_tray_state_t *state = (lp_tray_state_t *)param;
@@ -215,6 +217,7 @@ static DWORD WINAPI sampler_thread_proc(LPVOID param)
     return 0;
 }
 
+/* Checks GitHub on a long interval and notifies the UI only for a new version. */
 static DWORD WINAPI update_thread_proc(LPVOID param)
 {
     lp_tray_state_t *state = (lp_tray_state_t *)param;
@@ -239,6 +242,7 @@ static DWORD WINAPI update_thread_proc(LPVOID param)
     return 0;
 }
 
+/* Polls passive discovery and publishes map/events data to the UI thread. */
 static DWORD WINAPI discovery_thread_proc(LPVOID param)
 {
     lp_tray_state_t *state = (lp_tray_state_t *)param;
@@ -275,6 +279,7 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
     return 0;
 }
 
+/* Downloads and launches an update without blocking the tray message loop. */
 static DWORD WINAPI download_thread_proc(LPVOID param)
 {
     lp_tray_state_t *state = (lp_tray_state_t *)param;
@@ -290,6 +295,7 @@ static DWORD WINAPI download_thread_proc(LPVOID param)
     return 0;
 }
 
+/* Ensures only one user-triggered installer download runs at a time. */
 static void start_update_download(lp_tray_state_t *state)
 {
     if (state->download_thread != NULL) {
@@ -311,6 +317,7 @@ static void start_update_download(lp_tray_state_t *state)
     }
 }
 
+/* Copies the synchronized version string before invoking Windows toast APIs. */
 static void show_update_notification(lp_tray_state_t *state)
 {
     char version[LP_UPDATE_VERSION_MAX];
@@ -323,6 +330,7 @@ static void show_update_notification(lp_tray_state_t *state)
     }
 }
 
+/* Drains queued join/leave events and renders one toast per event. */
 static void show_discovery_notifications(lp_tray_state_t *state)
 {
     lp_discovery_event_t events[LP_DISCOVERY_MAX_EVENTS];
@@ -351,6 +359,7 @@ static void show_discovery_notifications(lp_tray_state_t *state)
     }
 }
 
+/* Toggles the map popup using a consistent locked snapshot of discovery state. */
 static void toggle_network_map(lp_tray_state_t *state)
 {
     if (state->network_map_hwnd == NULL) {
@@ -370,6 +379,7 @@ static void toggle_network_map(lp_tray_state_t *state)
     lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
 }
 
+/* Builds the dynamic tray menu and dispatches the selected user command. */
 static void show_context_menu(lp_tray_state_t *state)
 {
     HMENU menu = CreatePopupMenu();
@@ -450,6 +460,7 @@ static void show_context_menu(lp_tray_state_t *state)
     }
 }
 
+/* Reads shared sampler state and updates the icon graph and tray tooltip. */
 static void refresh_icon_and_tooltip(lp_tray_state_t *state)
 {
     lp_rate_sample_t sample = {0, 0, 0};
@@ -509,6 +520,7 @@ static void refresh_icon_and_tooltip(lp_tray_state_t *state)
 static const wchar_t LP_SPONSOR_ITEM_TEXT[] = L"\u2764  Sponsor";
 #define LP_SPONSOR_HEART_LEN 1 /* just the "\u2764" glyph, colored separately from the label */
 
+/* Supplies the owner-drawn support item dimensions to the Windows menu system. */
 static void measure_sponsor_item(MEASUREITEMSTRUCT *item)
 {
     HDC dc = GetDC(NULL);
@@ -531,6 +543,7 @@ static void measure_sponsor_item(MEASUREITEMSTRUCT *item)
     item->itemHeight = height > min_height ? height : min_height;
 }
 
+/* Paints the support item so the heart can use its accent color. */
 static void draw_sponsor_item(const DRAWITEMSTRUCT *item)
 {
     const bool selected = (item->itemState & ODS_SELECTED) != 0;
@@ -562,6 +575,7 @@ static void draw_sponsor_item(const DRAWITEMSTRUCT *item)
     SelectObject(item->hDC, previous_font);
 }
 
+/* Dispatches taskbar, timer, menu, notification, theme, and shutdown messages. */
 static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     lp_tray_state_t *state = &g_tray;
@@ -723,6 +737,7 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
     }
 }
 
+/* Initializes the singleton tray process, starts workers, and runs its message loop. */
 int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned interval_ms)
 {
     lp_win32_set_app_user_model_id();

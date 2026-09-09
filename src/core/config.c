@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Establishes the safe baseline used before file or command-line overrides. */
 void lp_config_defaults(lp_config_t *config)
 {
     config->mode = LP_IFACE_SELECT_AUTO;
@@ -13,6 +14,7 @@ void lp_config_defaults(lp_config_t *config)
     config->interval_ms = 1000;
 }
 
+/* Converts the enum used in memory to the stable config-file spelling. */
 static const char *mode_name(lp_iface_select_mode_t mode)
 {
     switch (mode) {
@@ -26,6 +28,7 @@ static const char *mode_name(lp_iface_select_mode_t mode)
     }
 }
 
+/* Removes whitespace at both ends of a mutable config token. */
 static void trim(char *s)
 {
     char *start = s;
@@ -42,6 +45,7 @@ static void trim(char *s)
     }
 }
 
+/* Applies one already-buffered config line, ignoring unsupported input. */
 static void apply_line(lp_config_t *config, char *line)
 {
     trim(line);
@@ -91,6 +95,7 @@ static void apply_line(lp_config_t *config, char *line)
     }
 }
 
+/* Splits an in-memory config document into bounded lines for apply_line. */
 void lp_config_parse(lp_config_t *config, const char *text)
 {
     if (config == NULL || text == NULL) {
@@ -114,6 +119,7 @@ void lp_config_parse(lp_config_t *config, const char *text)
     }
 }
 
+/* Writes the canonical config representation without exceeding the caller buffer. */
 size_t lp_config_serialize(const lp_config_t *config, char *out, size_t cap)
 {
     if (out == NULL || cap == 0) {

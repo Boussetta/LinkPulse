@@ -22,6 +22,7 @@ typedef struct {
     DWORD animation_started_at;
 } lp_network_map_state_t;
 
+/* Reads the taskbar theme setting used to keep the map consistent with the tray. */
 static bool is_taskbar_light_theme(void)
 {
     DWORD value = 1;
@@ -33,6 +34,7 @@ static bool is_taskbar_light_theme(void)
            value != 0;
 }
 
+/* Removes gateways and non-device multicast entries from the visible map. */
 static bool is_device_neighbor(const lp_network_map_state_t *state,
                                const lp_neighbor_t *neighbor)
 {
@@ -55,6 +57,7 @@ static bool is_device_neighbor(const lp_network_map_state_t *state,
     return true;
 }
 
+/* Draws one clipped, centered ANSI label while restoring the selected font. */
 static void draw_centered_text(HDC dc, HFONT font, COLORREF color, const char *text,
                                RECT rect)
 {
@@ -65,6 +68,7 @@ static void draw_centered_text(HDC dc, HFONT font, COLORREF color, const char *t
     SelectObject(dc, old_font);
 }
 
+/* Shortens local DNS names for the fixed-width device node labels. */
 static void display_hostname(const char *hostname, char *out, size_t out_cap)
 {
     const char *suffix = ".fritz.box";
@@ -82,6 +86,7 @@ static void display_hostname(const char *hostname, char *out, size_t out_cap)
     out[display_length] = '\0';
 }
 
+/* Draws a gateway-style rounded node with a label and detail line. */
 static void draw_node(HDC dc, HFONT font, COLORREF fill, COLORREF border, COLORREF text_color,
                       const char *label, const char *detail, int center_x, int center_y,
                       int width)
@@ -103,6 +108,7 @@ static void draw_node(HDC dc, HFONT font, COLORREF fill, COLORREF border, COLORR
     draw_centered_text(dc, font, text_color, detail, detail_rect);
 }
 
+/* Draws a device node with IP, inferred identity, confidence, and link icon. */
 static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF fill,
                              COLORREF border, COLORREF text_color, COLORREF muted,
                              const char *label, const lp_neighbor_t *neighbor, int center_x,
@@ -185,6 +191,7 @@ static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF
     }
 }
 
+/* Draws the top-level Internet node shared by all map layouts. */
 static void draw_internet_cloud(HDC dc, HFONT cloud_font, HFONT label_font, COLORREF fill,
                                 COLORREF text_color, int center_x)
 {
@@ -199,6 +206,7 @@ static void draw_internet_cloud(HDC dc, HFONT cloud_font, HFONT label_font, COLO
     draw_centered_text(dc, label_font, text_color, "Internet", label_rect);
 }
 
+/* Paints a snapshot of gateway and device state using the current theme. */
 static void paint_map(HWND window, HDC dc)
 {
     lp_network_map_state_t *state =
@@ -326,6 +334,7 @@ static void paint_map(HWND window, HDC dc)
     DeleteObject(frame_pen);
 }
 
+/* Owns map window resources, animation, repaint, theme, and close handling. */
 static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wparam,
                                             LPARAM lparam)
 {
@@ -429,6 +438,7 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
     }
 }
 
+/* Registers and creates the popup map window owned by the hidden tray window. */
 HWND lp_network_map_create(HINSTANCE instance, HWND owner)
 {
     WNDCLASSEXA window_class;
@@ -454,6 +464,7 @@ HWND lp_network_map_create(HINSTANCE instance, HWND owner)
     return window;
 }
 
+/* Copies the latest discovery snapshot and animates the map beside the cursor monitor. */
 void lp_network_map_show(HWND window, const lp_neighbor_list_t *neighbors,
                          const lp_local_network_list_t *networks)
 {

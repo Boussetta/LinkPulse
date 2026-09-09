@@ -14,16 +14,19 @@ static atomic_int g_level = LP_LOG_INFO;
 static atomic_flag g_log_lock = ATOMIC_FLAG_INIT;
 static FILE *g_file;
 
+/* Publishes the threshold atomically because workers can log concurrently. */
 void lp_log_set_level(lp_log_level_t level)
 {
     atomic_store_explicit(&g_level, (int)level, memory_order_relaxed);
 }
 
+/* Reads the current threshold without taking the output lock. */
 lp_log_level_t lp_log_get_level(void)
 {
     return (lp_log_level_t)atomic_load_explicit(&g_level, memory_order_relaxed);
 }
 
+/* Swaps the optional file sink while serializing with active log writers. */
 void lp_log_set_file(FILE *file)
 {
     while (atomic_flag_test_and_set_explicit(&g_log_lock, memory_order_acquire)) {
@@ -32,6 +35,7 @@ void lp_log_set_file(FILE *file)
     atomic_flag_clear_explicit(&g_log_lock, memory_order_release);
 }
 
+/* Keeps the textual severity width fixed for readable console and file logs. */
 static const char *level_tag(lp_log_level_t level)
 {
     switch (level) {
@@ -47,6 +51,7 @@ static const char *level_tag(lp_log_level_t level)
     return "?????";
 }
 
+/* Emits one timestamped message to stderr and, when configured, the file sink. */
 void lp_log(lp_log_level_t level, const char *fmt, ...)
 {
     if (level > lp_log_get_level()) {

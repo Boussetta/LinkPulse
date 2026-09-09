@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+/* Computes value * multiplier / divisor without overflowing intermediate products. */
 static uint64_t muldiv_fraction_u64(uint64_t value, uint32_t multiplier, uint64_t divisor)
 {
     uint64_t quotient = 0;
@@ -31,6 +32,7 @@ static uint64_t muldiv_fraction_u64(uint64_t value, uint32_t multiplier, uint64_
     return quotient;
 }
 
+/* Converts QueryPerformanceCounter ticks to a monotonic nanosecond timestamp. */
 uint64_t lp_clock_monotonic_ns(void)
 {
     /* Queried every call rather than cached in a static: QueryPerformanceFrequency

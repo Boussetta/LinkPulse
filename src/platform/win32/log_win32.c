@@ -11,6 +11,7 @@
 
 static FILE *g_file;
 
+/* Opens or rotates the per-user log before attaching it to the core logger. */
 int lp_win32_log_start(void)
 {
     char local_app_data[MAX_PATH];
@@ -59,6 +60,7 @@ int lp_win32_log_start(void)
     return 0;
 }
 
+/* Detaches and closes the file sink while preserving stderr logging. */
 void lp_win32_log_stop(void)
 {
     if (g_file != NULL) {

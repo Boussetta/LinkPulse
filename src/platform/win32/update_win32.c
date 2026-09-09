@@ -14,6 +14,7 @@
 #define LP_RELEASE_PATH L"/repos/Boussetta/LinkPulse/releases/latest"
 #define LP_INSTALLER_NAME "LinkPulseSetup.exe"
 
+/* Parses the strict MAJOR.MINOR.PATCH form accepted by update comparisons. */
 static bool parse_version(const char *text, unsigned long parts[3])
 {
     if (text == NULL) {
@@ -34,6 +35,7 @@ static bool parse_version(const char *text, unsigned long parts[3])
     return true;
 }
 
+/* Compares semantic release components without treating lexical order as numeric order. */
 static bool version_is_newer(const char *current, const char *candidate)
 {
     unsigned long current_parts[3];
@@ -49,6 +51,7 @@ static bool version_is_newer(const char *current, const char *candidate)
     return false;
 }
 
+/* Extracts the latest release tag from the bounded GitHub response payload. */
 static lp_status_t extract_tag(const char *response, char *out, size_t cap)
 {
     const char *key = strstr(response, "\"tag_name\"");
@@ -77,6 +80,7 @@ static lp_status_t extract_tag(const char *response, char *out, size_t cap)
     return LP_OK;
 }
 
+/* Closes any partially-created WinHTTP handle set during error unwinding. */
 static void close_http_handles(HINTERNET request, HINTERNET connection, HINTERNET session)
 {
     if (request != NULL) {
@@ -90,6 +94,7 @@ static void close_http_handles(HINTERNET request, HINTERNET connection, HINTERNE
     }
 }
 
+/* Queries GitHub over HTTPS and reports only releases newer than current_version. */
 lp_status_t lp_update_check_latest(const char *current_version, char *latest_version,
                                    size_t latest_cap)
 {
@@ -170,6 +175,7 @@ lp_status_t lp_update_check_latest(const char *current_version, char *latest_ver
     return LP_OK;
 }
 
+/* Resolves the latest installer asset, streams it to a temp file, and returns its path. */
 lp_status_t lp_update_download_latest(char *installer_path, size_t path_cap)
 {
     LP_INFO("starting update installer download");

@@ -29,6 +29,7 @@ static bool config_path(char *out, size_t cap)
     return written >= 0 && (size_t)written < cap;
 }
 
+/* Loads the bounded per-user config file, treating a missing file as first run. */
 lp_status_t lp_config_load(lp_config_t *config)
 {
     lp_config_defaults(config);
@@ -67,6 +68,7 @@ lp_status_t lp_config_load(lp_config_t *config)
     return LP_OK;
 }
 
+/* Creates the per-user directory and atomically writes the serialized settings stream. */
 lp_status_t lp_config_save(const lp_config_t *config)
 {
     char path[MAX_PATH + 32];
