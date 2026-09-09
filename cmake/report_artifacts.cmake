@@ -4,6 +4,9 @@ endif()
 if(NOT DEFINED LP_VERSION)
   set(LP_VERSION "unknown")
 endif()
+if(NOT DEFINED LP_GIT_DESCRIPTION)
+  set(LP_GIT_DESCRIPTION "v${LP_VERSION}")
+endif()
 
 find_program(LP_SIZE_TOOL
   NAMES llvm-size size
@@ -14,6 +17,7 @@ find_program(LP_SIZE_TOOL
 message(STATUS "")
 message(STATUS "LinkPulse build artifacts")
 message(STATUS "  Version: ${LP_VERSION}")
+message(STATUS "  Git description: ${LP_GIT_DESCRIPTION}")
 message(STATUS "  Size tool: ${LP_SIZE_TOOL}")
 
 foreach(artifact IN LISTS LP_ARTIFACTS)
@@ -27,6 +31,7 @@ foreach(artifact IN LISTS LP_ARTIFACTS)
   math(EXPR artifact_size_kib "(${artifact_size} + 1023) / 1024")
   message(STATUS "  ${artifact_name}")
   message(STATUS "    Version: ${LP_VERSION}")
+  message(STATUS "    Git description: ${LP_GIT_DESCRIPTION}")
   message(STATUS "    File size: ${artifact_size} bytes (${artifact_size_kib} KiB)")
 
   if(LP_SIZE_TOOL)

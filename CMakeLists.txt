@@ -1,9 +1,43 @@
 cmake_minimum_required(VERSION 3.21)
-set(LINKPULSE_VERSION "0.1.0" CACHE STRING "LinkPulse version")
+set(LINKPULSE_DEFAULT_VERSION "0.1.0")
+set(LINKPULSE_VERSION "${LINKPULSE_DEFAULT_VERSION}" CACHE STRING "LinkPulse version")
+option(LINKPULSE_RELEASE_BUILD "Use a stable release version in user-facing metadata" OFF)
+
+# A tagged checkout is the authoritative source for normal development builds.
+# Refresh the cache on every configure so switching commits in the same build
+# directory cannot silently retain the previous checkout's version.
+if(NOT LINKPULSE_RELEASE_BUILD)
+  execute_process(
+    COMMAND git -C "${CMAKE_SOURCE_DIR}" describe --tags --match "v[0-9]*.[0-9]*.[0-9]*" --abbrev=0
+    OUTPUT_VARIABLE LINKPULSE_GIT_TAG
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE LINKPULSE_GIT_RESULT)
+  if(LINKPULSE_GIT_RESULT EQUAL 0 AND LINKPULSE_GIT_TAG MATCHES "^v[0-9]+\\.[0-9]+\\.[0-9]+$")
+    string(SUBSTRING "${LINKPULSE_GIT_TAG}" 1 -1 LINKPULSE_VERSION)
+    set(LINKPULSE_VERSION "${LINKPULSE_VERSION}" CACHE STRING "LinkPulse version" FORCE)
+  endif()
+endif()
+
 if(NOT LINKPULSE_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
   message(FATAL_ERROR "LINKPULSE_VERSION must be MAJOR.MINOR.PATCH (e.g. 0.1.0); got '${LINKPULSE_VERSION}'")
 endif()
 project(linkpulse VERSION ${LINKPULSE_VERSION} LANGUAGES C)
+
+if(LINKPULSE_RELEASE_BUILD)
+  set(LINKPULSE_GIT_DESCRIPTION "v${PROJECT_VERSION}")
+else()
+  execute_process(
+    COMMAND git -C "${CMAKE_SOURCE_DIR}" describe --tags --match "v[0-9]*.[0-9]*.[0-9]*" --long --always
+    OUTPUT_VARIABLE LINKPULSE_GIT_DESCRIPTION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE LINKPULSE_DESCRIPTION_RESULT)
+  if(NOT LINKPULSE_DESCRIPTION_RESULT EQUAL 0 OR LINKPULSE_GIT_DESCRIPTION STREQUAL "")
+    set(LINKPULSE_GIT_DESCRIPTION "v${PROJECT_VERSION}")
+  endif()
+endif()
+message(STATUS "LinkPulse version: ${PROJECT_VERSION} (${LINKPULSE_GIT_DESCRIPTION})")
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -71,7 +105,9 @@ add_executable(linkpulse src/cli/main.c src/ui/network_map_win32.c src/ui/tray_w
 target_link_libraries(linkpulse PRIVATE lp_platform lp_warnings)
 target_link_libraries(linkpulse PRIVATE shell32 gdi32 user32 advapi32)
 # Single source of truth for the version string, consumed by --version.
-target_compile_definitions(linkpulse PRIVATE LP_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(linkpulse PRIVATE
+  LP_VERSION="${PROJECT_VERSION}"
+  LP_GIT_DESCRIPTION="${LINKPULSE_GIT_DESCRIPTION}")
 
 # --- tray-only executable --------------------------------------------------
 # A second, dedicated binary rather than making `linkpulse` itself GUI-subsystem:
@@ -87,7 +123,9 @@ target_compile_definitions(linkpulse PRIVATE LP_VERSION="${PROJECT_VERSION}")
 add_executable(linkpulse-tray src/cli/tray_main.c src/ui/network_map_win32.c src/ui/tray_win32.c)
 target_link_libraries(linkpulse-tray PRIVATE lp_platform lp_warnings)
 target_link_libraries(linkpulse-tray PRIVATE shell32 gdi32 user32 advapi32)
-target_compile_definitions(linkpulse-tray PRIVATE LP_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(linkpulse-tray PRIVATE
+  LP_VERSION="${PROJECT_VERSION}"
+  LP_GIT_DESCRIPTION="${LINKPULSE_GIT_DESCRIPTION}")
 if(MSVC)
   target_link_options(linkpulse-tray PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
 else()
@@ -136,6 +174,7 @@ add_custom_target(linkpulse-artifact-info ALL
   COMMAND ${CMAKE_COMMAND}
     "-DLP_ARTIFACTS=$<TARGET_FILE:linkpulse>;$<TARGET_FILE:linkpulse-tray>"
     "-DLP_VERSION=${PROJECT_VERSION}"
+    "-DLP_GIT_DESCRIPTION=${LINKPULSE_GIT_DESCRIPTION}"
     -P "${CMAKE_SOURCE_DIR}/cmake/report_artifacts.cmake"
   VERBATIM)
 

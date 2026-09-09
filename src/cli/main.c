@@ -15,6 +15,9 @@
 #ifndef LP_VERSION
 #define LP_VERSION "0.0.0-unknown" /* overridden by the CMake project version */
 #endif
+#ifndef LP_GIT_DESCRIPTION
+#define LP_GIT_DESCRIPTION LP_VERSION
+#endif
 
 /* Set from the console-control handler, which runs on its own thread; checked
    once per loop iteration in watch_rate(). */
@@ -37,7 +40,7 @@ static BOOL WINAPI handle_console_event(DWORD event)
 /* Prints the stable CLI contract shared by development and support workflows. */
 static void print_usage(void)
 {
-    printf("LinkPulse " LP_VERSION " - local network activity monitor\n\n"
+    printf("LinkPulse " LP_GIT_DESCRIPTION " - local network activity monitor\n\n"
            "Usage: linkpulse [options]\n\n"
            "  --list                 List network interfaces and their current byte counters\n"
            "  --watch                Print live download/upload rates once per second\n"
@@ -144,7 +147,7 @@ int main(int argc, char **argv)
             return 0;
         }
         if (strcmp(argv[i], "--version") == 0) {
-            printf(LP_VERSION "\n");
+            printf(LP_GIT_DESCRIPTION "\n");
             return 0;
         }
         if (strcmp(argv[i], "--debug") == 0) {

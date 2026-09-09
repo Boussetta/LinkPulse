@@ -32,7 +32,7 @@ jobs:
             }
           }
 
-          $cmakeArgs = @("-S", ".", "-B", "build/release", "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release")
+          $cmakeArgs = @("-S", ".", "-B", "build/release", "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DLINKPULSE_RELEASE_BUILD:BOOL=ON")
           if ($version) { $cmakeArgs += "-DLINKPULSE_VERSION:STRING=$version" }
           cmake @cmakeArgs
 

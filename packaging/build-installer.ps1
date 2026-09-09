@@ -56,7 +56,10 @@ if ($clangFormatCommand) {
     }
 }
 
-$cmakeConfigureArguments = @("--preset", "msvc", "-DLINKPULSE_VERSION:STRING=$Version")
+$cmakeConfigureArguments = @(
+    "--preset", "msvc",
+    "-DLINKPULSE_VERSION:STRING=$Version",
+    "-DLINKPULSE_RELEASE_BUILD:BOOL=ON")
 if ($clangFormat) {
     Write-Host "Using clang-format: $clangFormat" -ForegroundColor Cyan
     $cmakeConfigureArguments += "-DLINKPULSE_CLANG_FORMAT:FILEPATH=$clangFormat"
