@@ -111,6 +111,7 @@ LP_INFO("tray entrypoint started: argc=%d mode=%s", argc,
 
     lp_config_t config;
     if (lp_config_load(&config) != LP_OK) {
+        LP_WARN("config load failed; using defaults");
         lp_config_defaults(&config);
     }
 
@@ -118,6 +119,12 @@ LP_INFO("tray entrypoint started: argc=%d mode=%s", argc,
     sampler_config.mode = config.mode;
     sampler_config.include_virtual = config.include_virtual;
     snprintf(sampler_config.iface_name, sizeof(sampler_config.iface_name), "%s", config.iface_name);
+
+        LP_INFO("starting tray: selection=%d iface=%s virtual=%s bits=%s interval_ms=%u",
+            sampler_config.mode,
+            sampler_config.iface_name[0] != '\0' ? sampler_config.iface_name : "(default)",
+            sampler_config.include_virtual ? "yes" : "no", config.use_bits ? "yes" : "no",
+            config.interval_ms);
 
     const int result = lp_tray_run(&sampler_config, config.use_bits, config.interval_ms);
     lp_win32_log_stop();

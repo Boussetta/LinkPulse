@@ -79,6 +79,7 @@ static void print_usage(void)
 /* Lists raw adapter counters and marks the interface selected by the route table. */
 static int list_interfaces(void)
 {
+    LP_DEBUG("listing network interfaces");
     lp_iface_list_t list;
     const lp_status_t status = lp_net_snapshot(&list);
     if (status != LP_OK) {
@@ -103,7 +104,9 @@ static int list_interfaces(void)
                (unsigned long long)iface->tx_bytes, flags);
     }
 
+    const size_t interface_count = list.count;
     lp_iface_list_free(&list);
+    LP_DEBUG("listed %zu network interfaces", interface_count);
     return 0;
 }
 
@@ -116,6 +119,10 @@ static int watch_rate(const lp_sampler_config_t *config, bool use_bits, unsigned
                                           lp_clock_monotonic_ns};
     lp_sampler_set_sources(&sampler, &sources);
 
+        LP_INFO("starting watch mode: selection=%d iface=%s virtual=%s bits=%s interval_ms=%u",
+            config->mode, config->iface_name[0] != '\0' ? config->iface_name : "(default)",
+            config->include_virtual ? "yes" : "no", use_bits ? "yes" : "no", interval_ms);
+
     if (!SetConsoleCtrlHandler(handle_console_event, TRUE)) {
         LP_WARN("failed to install console control handler; Ctrl+C may not exit cleanly");
     }
@@ -127,6 +134,7 @@ static int watch_rate(const lp_sampler_config_t *config, bool use_bits, unsigned
             printf("\rwaiting for interface...                                   ");
             fflush(stdout);
         } else if (status != LP_OK) {
+            LP_ERROR("sampler poll failed in watch mode: %s", lp_status_str(status));
             fprintf(stderr, "\nfailed to sample interface: %s\n", lp_status_str(status));
             return 1;
         } else {
@@ -236,6 +244,11 @@ int main(int argc, char **argv)
     LP_DEBUG("monotonic clock reads %llu ns", (unsigned long long)lp_clock_monotonic_ns());
 
     if (want_tray) {
+        LP_INFO("starting tray mode: selection=%d iface=%s virtual=%s bits=%s interval_ms=%u",
+            sampler_config.mode,
+            sampler_config.iface_name[0] != '\0' ? sampler_config.iface_name : "(default)",
+            sampler_config.include_virtual ? "yes" : "no", use_bits ? "yes" : "no",
+            interval_ms);
         return lp_tray_run(&sampler_config, use_bits, interval_ms);
     }
 
@@ -247,6 +260,7 @@ int main(int argc, char **argv)
         return list_interfaces();
     }
 
+    LP_DEBUG("no operating mode selected; showing usage");
     print_usage();
     return 0;
 }
