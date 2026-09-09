@@ -9,6 +9,9 @@
 #define LP_MAP_ANIMATION_TIMER 2
 #define LP_MAP_ANIMATION_STEP_MS 10
 #define LP_MAP_ANIMATION_DURATION_MS 180
+#define LP_ISP_DETAIL_LINE_MAX 300
+#define LP_ISP_DETAIL_LINES_MAX 3
+#define LP_ISP_DETAIL_LINE_HEIGHT 20
 
 typedef struct {
     lp_neighbor_list_t neighbors;
@@ -20,6 +23,7 @@ typedef struct {
     int target_x;
     int target_y;
     DWORD animation_started_at;
+    bool show_isp_details;
 } lp_network_map_state_t;
 
 /* Reads the taskbar theme setting used to keep the map consistent with the tray. */
@@ -86,6 +90,40 @@ static void display_hostname(const char *hostname, char *out, size_t out_cap)
     out[display_length] = '\0';
 }
 
+/* Selects a stable Segoe MDL2 glyph from persisted or inferred device metadata. */
+static const wchar_t *device_icon_glyph(const lp_neighbor_t *neighbor)
+{
+    if (strcmp(neighbor->icon, "phone") == 0 || strcmp(neighbor->icon, "mobile") == 0) {
+        return L"\xE8EA";
+    }
+    if (strcmp(neighbor->icon, "watch") == 0 || strcmp(neighbor->icon, "smartwatch") == 0) {
+        return L"\xE91B";
+    }
+    if (strcmp(neighbor->icon, "printer") == 0) {
+        return L"\xE749";
+    }
+    if (strcmp(neighbor->icon, "tv") == 0 || strcmp(neighbor->icon, "television") == 0) {
+        return L"\xE7F4";
+    }
+    switch (neighbor->device_type) {
+    case LP_DEVICE_LAPTOP:
+    case LP_DEVICE_DESKTOP:
+        return L"\xE770";
+    case LP_DEVICE_MOBILE:
+        return L"\xE8EA";
+    case LP_DEVICE_SMARTWATCH:
+        return L"\xE91B";
+    case LP_DEVICE_PRINTER:
+        return L"\xE749";
+    case LP_DEVICE_TELEVISION:
+        return L"\xE7F4";
+    case LP_DEVICE_ROUTER:
+        return L"\xE968";
+    default:
+        return L"\xE7B3";
+    }
+}
+
 /* Draws a gateway-style rounded node with a label and detail line. */
 static void draw_node(HDC dc, HFONT font, COLORREF fill, COLORREF border, COLORREF text_color,
                       const char *label, const char *detail, int center_x, int center_y,
@@ -108,7 +146,7 @@ static void draw_node(HDC dc, HFONT font, COLORREF fill, COLORREF border, COLORR
     draw_centered_text(dc, font, text_color, detail, detail_rect);
 }
 
-/* Draws a device node with IP, inferred identity, confidence, and link icon. */
+/* Draws a device node with IP and paired device/connection icons. */
 static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF fill,
                              COLORREF border, COLORREF text_color, COLORREF muted,
                              const char *label, const lp_neighbor_t *neighbor, int center_x,
@@ -130,50 +168,13 @@ static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF
     RECT detail_rect = {node.left + 8, node.top + 22, node.right - 8, node.top + 41};
     draw_centered_text(dc, label_font, text_color, neighbor->ip, detail_rect);
 
-    char identity[LP_VENDOR_MAX + 32];
-    const char *type = "Unknown device";
-    switch (neighbor->device_type) {
-    case LP_DEVICE_LAPTOP:
-        type = "Laptop";
-        break;
-    case LP_DEVICE_MOBILE:
-        type = "Mobile phone";
-        break;
-    case LP_DEVICE_SMARTWATCH:
-        type = "Smartwatch";
-        break;
-    case LP_DEVICE_PRINTER:
-        type = "Printer";
-        break;
-    case LP_DEVICE_TELEVISION:
-        type = "Television";
-        break;
-    case LP_DEVICE_ROUTER:
-        type = "Router";
-        break;
-    case LP_DEVICE_DESKTOP:
-        type = "Desktop";
-        break;
-    default:
-        break;
-    }
-    if (neighbor->vendor[0] != '\0') {
-        if (neighbor->device_confidence > 0) {
-            snprintf(identity, sizeof(identity), "%s - %s - %u%%", type, neighbor->vendor,
-                     (unsigned)neighbor->device_confidence);
-        } else {
-            snprintf(identity, sizeof(identity), "%s - %s", type, neighbor->vendor);
-        }
-    } else {
-        if (neighbor->device_confidence > 0) {
-            snprintf(identity, sizeof(identity), "%s - %u%%", type,
-                     (unsigned)neighbor->device_confidence);
-        } else {
-            snprintf(identity, sizeof(identity), "%s", type);
-        }
-    }
-    RECT identity_rect = {node.left + 8, node.top + 40, node.right - 8, node.top + 59};
-    draw_centered_text(dc, label_font, muted, identity, identity_rect);
+    HFONT old_icon_font = (HFONT)SelectObject(dc, icon_font);
+    SetTextColor(dc, muted);
+    SetBkMode(dc, TRANSPARENT);
+    RECT device_icon_rect = {node.left + 8, node.bottom - 28, node.left + 34, node.bottom - 4};
+    DrawTextW(dc, device_icon_glyph(neighbor), 1, &device_icon_rect,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, old_icon_font);
 
     const wchar_t *icon = NULL;
     if (neighbor->connection_type == LP_CONNECTION_WIFI) {
@@ -191,9 +192,10 @@ static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF
     }
 }
 
-/* Draws the top-level Internet node shared by all map layouts. */
+/* Draws the top-level Internet node, with the ISP name when it is known. */
 static void draw_internet_cloud(HDC dc, HFONT cloud_font, HFONT label_font, COLORREF fill,
-                                COLORREF text_color, int center_x)
+                                COLORREF text_color, COLORREF muted, int center_x,
+                                const char *isp)
 {
     HFONT old_font = (HFONT)SelectObject(dc, cloud_font);
     SetTextColor(dc, fill);
@@ -202,8 +204,58 @@ static void draw_internet_cloud(HDC dc, HFONT cloud_font, HFONT label_font, COLO
     DrawTextW(dc, L"\x2601", 1, &cloud_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, old_font);
 
-    RECT label_rect = {center_x - 60, 46, center_x + 60, 78};
+    RECT label_rect = {center_x - 90, 40, center_x + 90, 68};
     draw_centered_text(dc, label_font, text_color, "Internet", label_rect);
+    if (isp != NULL && isp[0] != '\0') {
+        RECT isp_rect = {center_x - 90, 66, center_x + 90, 90};
+        draw_centered_text(dc, label_font, muted, isp, isp_rect);
+    }
+}
+
+/* Builds up to LP_ISP_DETAIL_LINES_MAX concise lines from all fetched ISP fields. */
+static size_t format_isp_detail_lines(
+    const lp_isp_info_t *isp, char lines[LP_ISP_DETAIL_LINES_MAX][LP_ISP_DETAIL_LINE_MAX])
+{
+    size_t count = 0;
+    if (isp->asn[0] != '\0' && isp->public_ip[0] != '\0') {
+        snprintf(lines[count++], LP_ISP_DETAIL_LINE_MAX, "%s \xB7 %s", isp->asn, isp->public_ip);
+    } else if (isp->public_ip[0] != '\0') {
+        snprintf(lines[count++], LP_ISP_DETAIL_LINE_MAX, "%s", isp->public_ip);
+    } else if (isp->asn[0] != '\0') {
+        snprintf(lines[count++], LP_ISP_DETAIL_LINE_MAX, "%s", isp->asn);
+    }
+
+    if (count < LP_ISP_DETAIL_LINES_MAX) {
+        char place[LP_ISP_DETAIL_LINE_MAX] = "";
+        if (isp->city[0] != '\0' && isp->region[0] != '\0' && isp->country[0] != '\0') {
+            snprintf(place, sizeof(place), "%s, %s, %s", isp->city, isp->region, isp->country);
+        } else if (isp->city[0] != '\0' && isp->country[0] != '\0') {
+            snprintf(place, sizeof(place), "%s, %s", isp->city, isp->country);
+        } else if (isp->city[0] != '\0') {
+            snprintf(place, sizeof(place), "%s", isp->city);
+        } else if (isp->country[0] != '\0') {
+            snprintf(place, sizeof(place), "%s", isp->country);
+        }
+        if (place[0] != '\0') {
+            snprintf(lines[count++], LP_ISP_DETAIL_LINE_MAX, "%s", place);
+        }
+    }
+
+    if (count < LP_ISP_DETAIL_LINES_MAX) {
+        if (isp->postal[0] != '\0' && isp->timezone[0] != '\0') {
+            snprintf(lines[count++], LP_ISP_DETAIL_LINE_MAX, "%s \xB7 %s", isp->postal,
+                     isp->timezone);
+        } else if (isp->timezone[0] != '\0') {
+            snprintf(lines[count++], LP_ISP_DETAIL_LINE_MAX, "%s", isp->timezone);
+        } else if (isp->postal[0] != '\0') {
+            snprintf(lines[count++], LP_ISP_DETAIL_LINE_MAX, "%s", isp->postal);
+        }
+    }
+
+    if (count == 0) {
+        snprintf(lines[count++], LP_ISP_DETAIL_LINE_MAX, "Fetching ISP information...");
+    }
+    return count;
 }
 
 /* Paints a snapshot of gateway and device state using the current theme. */
@@ -250,8 +302,15 @@ static void paint_map(HWND window, HDC dc)
     const size_t visible_count =
         device_count < LP_MAP_MAX_VISIBLE_DEVICES ? device_count : LP_MAP_MAX_VISIBLE_DEVICES;
     const int center_x = client.right / 2;
+    char isp_detail_lines[LP_ISP_DETAIL_LINES_MAX][LP_ISP_DETAIL_LINE_MAX];
+    size_t isp_detail_line_count = 0;
+    int isp_extra_height = 0;
+    if (state->show_isp_details) {
+        isp_detail_line_count = format_isp_detail_lines(&state->networks.isp_info, isp_detail_lines);
+        isp_extra_height = (int)isp_detail_line_count * LP_ISP_DETAIL_LINE_HEIGHT + 8;
+    }
     const int cloud_bottom_y = 104;
-    const int gateway_y = 165;
+    const int gateway_y = 165 + isp_extra_height;
     char gateway[LP_IP_STR_MAX] = "No gateway";
     char gateway_label[LP_HOSTNAME_MAX + LP_VENDOR_MAX + 32];
     gateway_label[0] = '\0';
@@ -280,7 +339,13 @@ static void paint_map(HWND window, HDC dc)
     SelectObject(dc, old_pen);
     DeleteObject(line_pen);
 
-    draw_internet_cloud(dc, state->cloud_font, state->label_font, internet_fill, text, center_x);
+    draw_internet_cloud(dc, state->cloud_font, state->label_font, internet_fill, text, muted,
+                        center_x, state->networks.isp_info.isp);
+    for (size_t i = 0; i < isp_detail_line_count; ++i) {
+        RECT detail_rect = {center_x - 120, 92 + (int)i * LP_ISP_DETAIL_LINE_HEIGHT,
+                            center_x + 120, 92 + (int)(i + 1) * LP_ISP_DETAIL_LINE_HEIGHT};
+        draw_centered_text(dc, state->label_font, muted, isp_detail_lines[i], detail_rect);
+    }
     draw_node(dc, state->label_font, gateway_fill, line, text, gateway_label, gateway, center_x,
               gateway_y, 170);
 
@@ -290,7 +355,7 @@ static void paint_map(HWND window, HDC dc)
         const int column = (int)visible_index % columns;
         const int row = (int)visible_index / columns;
         const int device_x = columns == 1 ? center_x : 100 + column * 180;
-        const int device_y = 285 + row * 112;
+        const int device_y = 285 + row * 112 + isp_extra_height;
         draw_device_node(dc, state->label_font, state->icon_font, device_fill, line, text, muted,
                          "This PC", &local_device, device_x, device_y);
         ++visible_index;
@@ -304,9 +369,11 @@ static void paint_map(HWND window, HDC dc)
         const int column = (int)visible_index % columns;
         const int row = (int)visible_index / columns;
         const int device_x = columns == 1 ? center_x : 100 + column * 180;
-        const int device_y = 285 + row * 112;
+        const int device_y = 285 + row * 112 + isp_extra_height;
         char label[LP_HOSTNAME_MAX];
-        if (neighbor->hostname[0] != '\0') {
+        if (neighbor->label[0] != '\0') {
+            snprintf(label, sizeof(label), "%s", neighbor->label);
+        } else if (neighbor->hostname[0] != '\0') {
             display_hostname(neighbor->hostname, label, sizeof(label));
             if (label[0] == '\0') {
                 snprintf(label, sizeof(label), "Device %llu",
@@ -321,7 +388,7 @@ static void paint_map(HWND window, HDC dc)
     }
 
     if (visible_count == 0) {
-        RECT empty = {40, 285, client.right - 40, 345};
+        RECT empty = {40, 285 + isp_extra_height, client.right - 40, 345 + isp_extra_height};
         draw_centered_text(dc, state->label_font, muted, "Waiting for nearby devices...", empty);
     }
 
@@ -407,6 +474,16 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
         GetClientRect(window, &client);
         if (x >= client.right - 58 && y <= 58) {
             ShowWindow(window, SW_HIDE);
+            return 0;
+        }
+        const int center_x = client.right / 2;
+        if (x >= center_x - 100 && x <= center_x + 100 && y >= 0 && y <= 100) {
+            lp_network_map_state_t *state =
+                (lp_network_map_state_t *)GetWindowLongPtrA(window, GWLP_USERDATA);
+            if (state != NULL) {
+                state->show_isp_details = !state->show_isp_details;
+                InvalidateRect(window, NULL, TRUE);
+            }
         }
         return 0;
     }

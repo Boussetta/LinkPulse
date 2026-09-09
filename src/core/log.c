@@ -22,21 +22,31 @@ static void format_timestamp(char *out, size_t out_cap)
     }
     snprintf(out, out_cap, "0000-00-00 00:00:00.000");
 
+    time_t now_seconds;
+    long milliseconds = 0;
+#if defined(__MINGW32__)
+    /* MinGW-w64's bundled <time.h> does not reliably declare C11's
+       timespec_get/TIME_UTC (confirmed on this project's mingw-cross CI
+       toolchain), so this path falls back to whole-second resolution. */
+    now_seconds = time(NULL);
+#else
     struct timespec now;
     if (timespec_get(&now, TIME_UTC) != TIME_UTC) {
         return;
     }
+    now_seconds = now.tv_sec;
+    milliseconds = now.tv_nsec / 1000000L;
+#endif
 
     struct tm local_now;
 #if defined(_WIN32)
-    if (localtime_s(&local_now, &now.tv_sec) != 0) {
+    if (localtime_s(&local_now, &now_seconds) != 0) {
 #else
-    if (localtime_r(&now.tv_sec, &local_now) == NULL) {
+    if (localtime_r(&now_seconds, &local_now) == NULL) {
 #endif
         return;
     }
 
-    const long milliseconds = now.tv_nsec / 1000000L;
     snprintf(out, out_cap, "%04d-%02d-%02d %02d:%02d:%02d.%03ld",
              local_now.tm_year + 1900, local_now.tm_mon + 1, local_now.tm_mday,
              local_now.tm_hour, local_now.tm_min, local_now.tm_sec, milliseconds);

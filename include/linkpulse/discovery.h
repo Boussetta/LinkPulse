@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "linkpulse/isp.h"
 #include "linkpulse/status.h"
 
 #define LP_MAC_STR_MAX 18
@@ -37,10 +38,14 @@ typedef struct {
     char ip[LP_IP_STR_MAX];
     char mac[LP_MAC_STR_MAX];
     char hostname[LP_HOSTNAME_MAX];
+    char label[LP_HOSTNAME_MAX];
     char vendor[LP_VENDOR_MAX];
+    char icon[LP_VENDOR_MAX];
     lp_connection_type_t connection_type;
     lp_device_type_t device_type;
     uint8_t device_confidence;
+    bool trusted;
+    bool has_device_type_override;
     bool active;
 } lp_neighbor_t;
 
@@ -66,6 +71,7 @@ typedef struct {
     char local_hostname[LP_HOSTNAME_MAX];
     char local_ip[LP_IP_STR_MAX];
     lp_connection_type_t local_connection_type;
+    lp_isp_info_t isp_info;
 } lp_local_network_list_t;
 
 typedef lp_status_t (*lp_net_neighbor_snapshot_fn)(lp_neighbor_list_t *out);

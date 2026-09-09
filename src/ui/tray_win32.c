@@ -3,8 +3,10 @@
 #include "linkpulse/autostart.h"
 #include "linkpulse/clock.h"
 #include "linkpulse/config.h"
+#include "linkpulse/device_store.h"
 #include "linkpulse/discovery.h"
 #include "linkpulse/format.h"
+#include "linkpulse/isp.h"
 #include "linkpulse/log.h"
 #include "linkpulse/net.h"
 #include "linkpulse/notification.h"
@@ -29,6 +31,7 @@
 #define LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS 1000
 #define LP_UPDATE_CHECK_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)
 #define LP_DISCOVERY_INTERVAL_MS (30UL * 1000UL)
+#define LP_ISP_LOOKUP_INTERVAL_MS (60UL * 60UL * 1000UL)
 
 #define IDM_PAUSE 2001
 #define IDM_UNITS_BITS 2002
@@ -56,13 +59,17 @@ typedef struct {
     volatile LONG use_bits;
     bool update_available;
     char update_version[LP_UPDATE_VERSION_MAX];
+    bool isp_available;
+    lp_isp_info_t isp_info;
 
     lp_sampler_t sampler;
     lp_discovery_t discovery;
+    void *device_store;
     unsigned interval_ms;
     HANDLE thread;
     HANDLE update_thread;
     HANDLE discovery_thread;
+    HANDLE isp_thread;
     HANDLE download_thread;
     HANDLE update_stop_event;
     lp_discovery_event_t discovery_events[LP_DISCOVERY_MAX_EVENTS];
@@ -263,6 +270,44 @@ static DWORD WINAPI update_thread_proc(LPVOID param)
     return 0;
 }
 
+/* Looks up the public IP/ISP on a long interval; failures are silently retried. */
+static DWORD WINAPI isp_thread_proc(LPVOID param)
+{
+    lp_tray_state_t *state = (lp_tray_state_t *)param;
+    LP_DEBUG("ISP lookup thread started");
+    for (;;) {
+        lp_isp_info_t info;
+        const lp_status_t status = lp_isp_lookup(&info);
+        if (status == LP_OK) {
+            LP_INFO("ISP lookup complete: isp=%s asn=%s public_ip=%s hostname=%s city=%s "
+                    "region=%s country=%s postal=%s timezone=%s loc=%s",
+                    info.isp[0] != '\0' ? info.isp : "(unknown)",
+                    info.asn[0] != '\0' ? info.asn : "(unknown)",
+                    info.public_ip[0] != '\0' ? info.public_ip : "(unknown)",
+                    info.hostname[0] != '\0' ? info.hostname : "(unknown)",
+                    info.city[0] != '\0' ? info.city : "(unknown)",
+                    info.region[0] != '\0' ? info.region : "(unknown)",
+                    info.country[0] != '\0' ? info.country : "(unknown)",
+                    info.postal[0] != '\0' ? info.postal : "(unknown)",
+                    info.timezone[0] != '\0' ? info.timezone : "(unknown)",
+                    info.loc[0] != '\0' ? info.loc : "(unknown)");
+            EnterCriticalSection(&state->lock);
+            state->isp_info = info;
+            state->isp_available = true;
+            LeaveCriticalSection(&state->lock);
+        } else {
+            LP_WARN("ISP lookup failed: %s", lp_status_str(status));
+        }
+
+        if (WaitForSingleObject(state->update_stop_event, LP_ISP_LOOKUP_INTERVAL_MS) ==
+            WAIT_OBJECT_0) {
+            break;
+        }
+    }
+    LP_DEBUG("ISP lookup thread stopped");
+    return 0;
+}
+
 /* Polls passive discovery and publishes map/events data to the UI thread. */
 static DWORD WINAPI discovery_thread_proc(LPVOID param)
 {
@@ -274,14 +319,21 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
         const lp_status_t status =
             lp_discovery_poll(&state->discovery, events, LP_DISCOVERY_MAX_EVENTS, &event_count);
         if (status == LP_OK) {
+            /* Applies previously learned identity to notifications/logging too,
+               not just the map, so a transient DNS miss doesn't hide a known name. */
+            for (size_t i = 0; i < event_count; ++i) {
+                lp_win32_device_store_apply(state->device_store, &events[i].neighbor);
+            }
             size_t active_count = 0;
             for (size_t i = 0; i < state->discovery.known_count; ++i) {
                 if (state->discovery.known[i].active) {
                     ++active_count;
                 }
             }
-            LP_DEBUG("discovery poll complete: active=%zu retained=%zu events=%zu", active_count,
-                     state->discovery.known_count, event_count);
+            LP_DEBUG("discovery poll complete: active=%llu retained=%llu events=%llu",
+                     (unsigned long long)active_count,
+                     (unsigned long long)state->discovery.known_count,
+                     (unsigned long long)event_count);
             for (size_t i = 0; i < event_count; ++i) {
                 LP_INFO("discovery event: type=%s ip=%s mac=%s hostname=%s",
                         events[i].type == LP_DISCOVERY_EVENT_JOINED ? "joined" : "left",
@@ -300,9 +352,14 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                                 state->map_neighbors.count < LP_DISCOVERY_MAX_NEIGHBORS;
                  ++i) {
                 if (state->discovery.known[i].active) {
-                    state->map_neighbors.items[state->map_neighbors.count++] =
-                        state->discovery.known[i];
+                    lp_neighbor_t neighbor = state->discovery.known[i];
+                    lp_win32_device_store_apply(state->device_store, &neighbor);
+                    lp_win32_device_store_observe(state->device_store, &neighbor);
+                    state->map_neighbors.items[state->map_neighbors.count++] = neighbor;
                 }
+            }
+            if (state->isp_available) {
+                networks.isp_info = state->isp_info;
             }
             state->map_networks = networks;
             if (event_count > 0) {
@@ -397,8 +454,18 @@ static void show_discovery_notifications(lp_tray_state_t *state)
 
     for (size_t i = 0; i < event_count; ++i) {
         const bool joined = events[i].type == LP_DISCOVERY_EVENT_JOINED;
-        char message[160];
-        if (events[i].neighbor.mac[0] != '\0') {
+        const char *name = events[i].neighbor.label[0] != '\0'   ? events[i].neighbor.label
+                           : events[i].neighbor.hostname[0] != '\0' ? events[i].neighbor.hostname
+                                                                    : NULL;
+        char message[512];
+        if (name != NULL && events[i].neighbor.mac[0] != '\0') {
+            snprintf(message, sizeof(message), "%s\n%s\nIP: %s\nMAC: %s",
+                     joined ? "Connected" : "Disconnected", name, events[i].neighbor.ip,
+                     events[i].neighbor.mac);
+        } else if (name != NULL) {
+            snprintf(message, sizeof(message), "%s\n%s\nIP: %s", joined ? "Connected" : "Disconnected",
+                     name, events[i].neighbor.ip);
+        } else if (events[i].neighbor.mac[0] != '\0') {
             snprintf(message, sizeof(message), "%s\nIP: %s\nMAC: %s",
                      joined ? "Connected" : "Disconnected", events[i].neighbor.ip,
                      events[i].neighbor.mac);
@@ -764,6 +831,23 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             CloseHandle(state->update_thread);
             state->update_thread = NULL;
         }
+        if (state->isp_thread != NULL) {
+            SetEvent(state->update_stop_event);
+            const DWORD wait_result =
+                WaitForSingleObject(state->isp_thread, LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
+            if (wait_result == WAIT_TIMEOUT) {
+                LP_WARN("ISP lookup thread did not exit within %u ms; continuing shutdown",
+                        (unsigned)LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
+                can_close_update_stop_event = false;
+                can_delete_lock = false;
+            } else if (wait_result != WAIT_OBJECT_0) {
+                LP_WARN("waiting for ISP lookup thread failed during shutdown");
+                can_close_update_stop_event = false;
+                can_delete_lock = false;
+            }
+            CloseHandle(state->isp_thread);
+            state->isp_thread = NULL;
+        }
         if (state->download_thread != NULL) {
             const DWORD wait_result =
                 WaitForSingleObject(state->download_thread, LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
@@ -780,6 +864,8 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             CloseHandle(state->update_stop_event);
             state->update_stop_event = NULL;
         }
+        lp_win32_device_store_close(state->device_store);
+        state->device_store = NULL;
         if (can_delete_lock) {
             DeleteCriticalSection(&state->lock);
         }
@@ -819,6 +905,9 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
     const lp_discovery_sources_t discovery_sources = {lp_net_neighbor_snapshot,
                                                       lp_net_local_networks};
     lp_discovery_set_sources(&g_tray.discovery, &discovery_sources);
+    if (lp_win32_device_store_open(&g_tray.device_store) != 0) {
+        LP_WARN("device metadata store unavailable; continuing without persistence");
+    }
 
     const HINSTANCE instance = GetModuleHandleA(NULL);
     WNDCLASSEXA wc;
@@ -884,12 +973,16 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
             g_tray.update_thread = CreateThread(NULL, 0, update_thread_proc, &g_tray, 0, NULL);
             g_tray.discovery_thread =
                 CreateThread(NULL, 0, discovery_thread_proc, &g_tray, 0, NULL);
+            g_tray.isp_thread = CreateThread(NULL, 0, isp_thread_proc, &g_tray, 0, NULL);
         }
         if (g_tray.update_stop_event != NULL && g_tray.update_thread == NULL) {
             LP_WARN("failed to start the update-check thread");
         }
         if (g_tray.update_stop_event != NULL && g_tray.discovery_thread == NULL) {
             LP_WARN("failed to start the discovery thread");
+        }
+        if (g_tray.update_stop_event != NULL && g_tray.isp_thread == NULL) {
+            LP_WARN("failed to start the ISP lookup thread");
         }
         LP_INFO("tray worker threads started");
     }
