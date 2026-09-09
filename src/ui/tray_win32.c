@@ -3,6 +3,7 @@
 #include "linkpulse/autostart.h"
 #include "linkpulse/clock.h"
 #include "linkpulse/config.h"
+#include "linkpulse/device_store.h"
 #include "linkpulse/discovery.h"
 #include "linkpulse/format.h"
 #include "linkpulse/log.h"
@@ -59,6 +60,7 @@ typedef struct {
 
     lp_sampler_t sampler;
     lp_discovery_t discovery;
+    void *device_store;
     unsigned interval_ms;
     HANDLE thread;
     HANDLE update_thread;
@@ -300,8 +302,10 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                                 state->map_neighbors.count < LP_DISCOVERY_MAX_NEIGHBORS;
                  ++i) {
                 if (state->discovery.known[i].active) {
-                    state->map_neighbors.items[state->map_neighbors.count++] =
-                        state->discovery.known[i];
+                    lp_neighbor_t neighbor = state->discovery.known[i];
+                    lp_win32_device_store_apply(state->device_store, &neighbor);
+                    lp_win32_device_store_observe(state->device_store, &neighbor);
+                    state->map_neighbors.items[state->map_neighbors.count++] = neighbor;
                 }
             }
             state->map_networks = networks;
@@ -780,6 +784,8 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             CloseHandle(state->update_stop_event);
             state->update_stop_event = NULL;
         }
+        lp_win32_device_store_close(state->device_store);
+        state->device_store = NULL;
         if (can_delete_lock) {
             DeleteCriticalSection(&state->lock);
         }
@@ -819,6 +825,9 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
     const lp_discovery_sources_t discovery_sources = {lp_net_neighbor_snapshot,
                                                       lp_net_local_networks};
     lp_discovery_set_sources(&g_tray.discovery, &discovery_sources);
+    if (lp_win32_device_store_open(&g_tray.device_store) != 0) {
+        LP_WARN("device metadata store unavailable; continuing without persistence");
+    }
 
     const HINSTANCE instance = GetModuleHandleA(NULL);
     WNDCLASSEXA wc;
