@@ -65,8 +65,8 @@ int main(int argc, char **argv)
     if (lp_win32_log_start() != 0) {
         LP_WARN("failed to start persistent file logging");
     }
-LP_INFO("tray entrypoint started: argc=%d mode=%s", argc,
-        argc > 1 ? argv[1] : "(none)");
+    LP_INFO("tray entrypoint started: argc=%d mode=%s", argc,
+            argc > 1 ? argv[1] : "(none)");
     if (!logging_args_valid) {
         LP_ERROR("invalid logging arguments; use --verbosity error|warn|info|debug");
         lp_win32_log_stop();
