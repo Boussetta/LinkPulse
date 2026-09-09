@@ -142,7 +142,7 @@ static void draw_node(HDC dc, HFONT font, COLORREF fill, COLORREF border, COLORR
     draw_centered_text(dc, font, text_color, detail, detail_rect);
 }
 
-/* Draws a device node with IP, inferred identity, confidence, and link icon. */
+/* Draws a device node with IP and paired device/connection icons. */
 static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF fill,
                              COLORREF border, COLORREF text_color, COLORREF muted,
                              const char *label, const lp_neighbor_t *neighbor, int center_x,
@@ -163,51 +163,6 @@ static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF
     draw_centered_text(dc, label_font, text_color, label, label_rect);
     RECT detail_rect = {node.left + 8, node.top + 22, node.right - 8, node.top + 41};
     draw_centered_text(dc, label_font, text_color, neighbor->ip, detail_rect);
-
-    char identity[LP_VENDOR_MAX + 32];
-    const char *type = "Unknown device";
-    switch (neighbor->device_type) {
-    case LP_DEVICE_LAPTOP:
-        type = "Laptop";
-        break;
-    case LP_DEVICE_MOBILE:
-        type = "Mobile phone";
-        break;
-    case LP_DEVICE_SMARTWATCH:
-        type = "Smartwatch";
-        break;
-    case LP_DEVICE_PRINTER:
-        type = "Printer";
-        break;
-    case LP_DEVICE_TELEVISION:
-        type = "Television";
-        break;
-    case LP_DEVICE_ROUTER:
-        type = "Router";
-        break;
-    case LP_DEVICE_DESKTOP:
-        type = "Desktop";
-        break;
-    default:
-        break;
-    }
-    if (neighbor->vendor[0] != '\0') {
-        if (neighbor->device_confidence > 0) {
-            snprintf(identity, sizeof(identity), "%s - %s - %u%%", type, neighbor->vendor,
-                     (unsigned)neighbor->device_confidence);
-        } else {
-            snprintf(identity, sizeof(identity), "%s - %s", type, neighbor->vendor);
-        }
-    } else {
-        if (neighbor->device_confidence > 0) {
-            snprintf(identity, sizeof(identity), "%s - %u%%", type,
-                     (unsigned)neighbor->device_confidence);
-        } else {
-            snprintf(identity, sizeof(identity), "%s", type);
-        }
-    }
-    RECT identity_rect = {node.left + 8, node.top + 40, node.right - 8, node.top + 59};
-    draw_centered_text(dc, label_font, muted, identity, identity_rect);
 
     HFONT old_icon_font = (HFONT)SelectObject(dc, icon_font);
     SetTextColor(dc, muted);
