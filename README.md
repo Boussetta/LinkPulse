@@ -104,8 +104,8 @@ compiles the Inno Setup installer, and attaches `LinkPulseSetup.exe` to a
 GitHub Release. To publish a version, push a tag from `main`:
 
 ```powershell
-git tag v0.1.3
-git push origin v0.1.3
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The finished installer is then available from the repository's **Releases**

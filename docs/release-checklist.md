@@ -1,4 +1,4 @@
-# LinkPulse v0.1.3 Release Checklist
+# LinkPulse v0.2.0 Release Checklist
 
 ## Maintainer Build
 
@@ -37,8 +37,8 @@ After the clean-machine check passes, publish from `main`:
 ```powershell
 git checkout main
 git pull
-git tag v0.1.3
-git push origin v0.1.3
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The GitHub Actions `Release` workflow builds the versioned MSVC installer, runs tests, and attaches `LinkPulseSetup.exe` to the GitHub Release.
