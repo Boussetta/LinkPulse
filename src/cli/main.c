@@ -119,10 +119,9 @@ static int watch_rate(const lp_sampler_config_t *config, bool use_bits, unsigned
                                           lp_clock_monotonic_ns};
     lp_sampler_set_sources(&sampler, &sources);
 
-        LP_INFO("starting watch mode: selection=%d iface=%s virtual=%s bits=%s interval_ms=%u",
+    LP_INFO("starting watch mode: selection=%d iface=%s virtual=%s bits=%s interval_ms=%u",
             config->mode, config->iface_name[0] != '\0' ? config->iface_name : "(default)",
             config->include_virtual ? "yes" : "no", use_bits ? "yes" : "no", interval_ms);
-
     if (!SetConsoleCtrlHandler(handle_console_event, TRUE)) {
         LP_WARN("failed to install console control handler; Ctrl+C may not exit cleanly");
     }
