@@ -5,7 +5,7 @@ This document is the durable handoff for moving LinkPulse between WSL and native
 ## Current baseline
 
 - Default branch: `main`
-- Latest merged feature: PR #45, device identification and network-map improvements
+- Baseline: run `git log -1 --oneline main` to confirm the current tip before editing
 - Current focus: M4 network discovery and the next gateway integration slice
 - Primary runtime: Windows 10/11
 - Native build: MSVC x64 through CMake
