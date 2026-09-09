@@ -1,4 +1,5 @@
 #include "linkpulse/discovery.h"
+#include "linkpulse/log.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -11,18 +12,21 @@
 #include <stdio.h>
 #include <string.h>
 
-/* States that mean "the OS currently believes this neighbour is present" --
-   excludes NlnsIncomplete (resolution in progress, not yet confirmed) and
-   NlnsUnreachable (resolution failed / timed out). */
-/* Filters neighbor-table states that represent a currently usable identity. */
+/* Active probing is bounded to avoid turning discovery into a large LAN scan. */
+#define LP_ACTIVE_SCAN_MAX_PREFIX 24
+#define LP_ACTIVE_SCAN_MAX_SUBNETS 8
+#define LP_ACTIVE_SCAN_MAX_PROBES 32
+
+static uint32_t g_active_probe_offset;
+
+/* Keeps neighbors with recent or active reachability evidence. Stale and
+    permanent cache entries are excluded because they can outlive a device. */
 static bool is_live_state(NL_NEIGHBOR_STATE state)
 {
     switch (state) {
     case NlnsReachable:
-    case NlnsStale:
     case NlnsDelay:
     case NlnsProbe:
-    case NlnsPermanent:
         return true;
     default:
         return false;
@@ -165,6 +169,203 @@ static long find_neighbor_mac(const lp_neighbor_list_t *list, const char *mac)
     return -1;
 }
 
+/* Matches active results against passive entries without duplicating devices. */
+static long find_neighbor_index(const lp_neighbor_list_t *list, const char *ip,
+                                const char *mac)
+{
+    if (mac != NULL && mac[0] != '\0') {
+        const long by_mac = find_neighbor_mac(list, mac);
+        if (by_mac >= 0) {
+            return by_mac;
+        }
+    }
+    if (ip == NULL || ip[0] == '\0') {
+        return -1;
+    }
+    for (size_t i = 0; i < list->count; ++i) {
+        if (strcmp(list->items[i].ip, ip) == 0) {
+            return (long)i;
+        }
+    }
+    return -1;
+}
+
+/* Adds one successful ARP response while preserving any richer passive data. */
+static void append_active_neighbor(lp_neighbor_list_t *out, const char *ip,
+                                    const char *mac, const NET_LUID *interface_luid)
+{
+    const long existing = find_neighbor_index(out, ip, mac);
+    if (existing >= 0 || out->count >= LP_DISCOVERY_MAX_NEIGHBORS) {
+        return;
+    }
+
+    lp_neighbor_t *neighbor = &out->items[out->count++];
+    memset(neighbor, 0, sizeof(*neighbor));
+    snprintf(neighbor->ip, sizeof(neighbor->ip), "%s", ip);
+    snprintf(neighbor->mac, sizeof(neighbor->mac), "%s", mac);
+    neighbor->connection_type = connection_type_for_interface(interface_luid);
+    neighbor->hostname[0] = '\0';
+    SOCKADDR_INET address;
+    memset(&address, 0, sizeof(address));
+    address.Ipv4.sin_family = AF_INET;
+    InetPtonA(AF_INET, ip, &address.Ipv4.sin_addr);
+    resolve_hostname(&address, neighbor->hostname, sizeof(neighbor->hostname));
+    classify_neighbor(neighbor);
+}
+
+typedef struct {
+    IPAddr destination;
+    IPAddr source;
+    UCHAR mac[6];
+    ULONG mac_length;
+    DWORD status;
+} lp_arp_probe_t;
+
+/* Runs one blocking ARP request away from the discovery worker's main loop. */
+static DWORD WINAPI active_probe_thread_proc(LPVOID param)
+{
+    lp_arp_probe_t *probe = (lp_arp_probe_t *)param;
+    probe->mac_length = sizeof(probe->mac);
+    probe->status = SendARP(probe->destination, probe->source, (PULONG)probe->mac,
+                            &probe->mac_length);
+    return 0;
+}
+
+/* Probes bounded on-link IPv4 networks so idle devices need not be in the ARP cache. */
+static size_t probe_active_subnets(lp_neighbor_list_t *out)
+{
+    ULONG buffer_size = 0;
+    const ULONG flags = GAA_FLAG_INCLUDE_PREFIX;
+    DWORD result = GetAdaptersAddresses(AF_INET, flags, NULL, NULL, &buffer_size);
+    if (result != ERROR_BUFFER_OVERFLOW || buffer_size == 0) {
+        return 0;
+    }
+
+    IP_ADAPTER_ADDRESSES *adapters =
+        (IP_ADAPTER_ADDRESSES *)HeapAlloc(GetProcessHeap(), 0, buffer_size);
+    if (adapters == NULL) {
+        return 0;
+    }
+    result = GetAdaptersAddresses(AF_INET, flags, NULL, adapters, &buffer_size);
+    if (result != NO_ERROR) {
+        HeapFree(GetProcessHeap(), 0, adapters);
+        return 0;
+    }
+
+    uint32_t scanned_networks[LP_ACTIVE_SCAN_MAX_SUBNETS] = {0};
+    uint8_t scanned_prefixes[LP_ACTIVE_SCAN_MAX_SUBNETS] = {0};
+    size_t scanned_count = 0;
+    size_t discovered_count = 0;
+    size_t probes_sent = 0;
+
+    for (IP_ADAPTER_ADDRESSES *adapter = adapters; adapter != NULL;
+         adapter = adapter->Next) {
+        if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+            continue;
+        }
+        for (IP_ADAPTER_UNICAST_ADDRESS *unicast = adapter->FirstUnicastAddress;
+             unicast != NULL; unicast = unicast->Next) {
+            if (unicast->Address.lpSockaddr == NULL ||
+                unicast->Address.lpSockaddr->sa_family != AF_INET ||
+                unicast->OnLinkPrefixLength < LP_ACTIVE_SCAN_MAX_PREFIX) {
+                continue;
+            }
+
+            const SOCKADDR_IN *local = (const SOCKADDR_IN *)unicast->Address.lpSockaddr;
+            const uint32_t local_host = ntohl(local->sin_addr.S_un.S_addr);
+            if ((local_host >> 24) == 169 && ((local_host >> 16) & 0xffu) == 254) {
+                continue;
+            }
+            const uint32_t mask = 0xffffffffu << (32u - unicast->OnLinkPrefixLength);
+            const uint32_t network = local_host & mask;
+            bool already_scanned = false;
+            for (size_t i = 0; i < scanned_count; ++i) {
+                if (scanned_networks[i] == network &&
+                    scanned_prefixes[i] == unicast->OnLinkPrefixLength) {
+                    already_scanned = true;
+                    break;
+                }
+            }
+            if (already_scanned || scanned_count >= LP_ACTIVE_SCAN_MAX_SUBNETS) {
+                continue;
+            }
+            scanned_networks[scanned_count] = network;
+            scanned_prefixes[scanned_count++] = unicast->OnLinkPrefixLength;
+
+            const uint32_t host_count = 1u << (32u - unicast->OnLinkPrefixLength);
+            if (host_count <= 2) {
+                continue;
+            }
+            const uint32_t usable_count = host_count - 2;
+            const uint32_t start = g_active_probe_offset % usable_count;
+            const uint32_t probes_this_subnet =
+                (usable_count < LP_ACTIVE_SCAN_MAX_PROBES) ? usable_count
+                                                           : LP_ACTIVE_SCAN_MAX_PROBES;
+            lp_arp_probe_t probes[LP_ACTIVE_SCAN_MAX_PROBES] = {0};
+            HANDLE probe_threads[LP_ACTIVE_SCAN_MAX_PROBES] = {0};
+            size_t probe_count = 0;
+            for (uint32_t probe = 0; probe < probes_this_subnet &&
+                                       probes_sent < LP_ACTIVE_SCAN_MAX_PROBES &&
+                                       probe_count < LP_ACTIVE_SCAN_MAX_PROBES;
+                 ++probe) {
+                const uint32_t host = 1 + ((start + probe) % usable_count);
+                const uint32_t candidate = network + host;
+                if (candidate == local_host) {
+                    continue;
+                }
+                ++probes_sent;
+                probes[probe_count].destination = htonl(candidate);
+                probes[probe_count].source = local->sin_addr.S_un.S_addr;
+                ++probe_count;
+            }
+
+            for (size_t i = 0; i < probe_count; ++i) {
+                probe_threads[i] = CreateThread(NULL, 0, active_probe_thread_proc, &probes[i], 0,
+                                                NULL);
+                if (probe_threads[i] == NULL) {
+                    probes[i].status = ERROR_NOT_ENOUGH_MEMORY;
+                }
+            }
+            if (probe_count > 0) {
+                (void)WaitForMultipleObjects((DWORD)probe_count, probe_threads, TRUE, 5000);
+            }
+            for (size_t i = 0; i < probe_count; ++i) {
+                if (probe_threads[i] != NULL) {
+                    CloseHandle(probe_threads[i]);
+                }
+                if (probes[i].status != NO_ERROR || probes[i].mac_length != sizeof(probes[i].mac)) {
+                    continue;
+                }
+                char ip[LP_IP_STR_MAX] = {0};
+                IN_ADDR address;
+                address.S_un.S_addr = probes[i].destination;
+                if (InetNtopA(AF_INET, &address, ip, sizeof(ip)) == NULL) {
+                    continue;
+                }
+                char mac[LP_MAC_STR_MAX];
+                format_mac(probes[i].mac, probes[i].mac_length, mac, sizeof(mac));
+                const size_t before = out->count;
+                append_active_neighbor(out, ip, mac, &adapter->Luid);
+                if (out->count > before) {
+                    ++discovered_count;
+                }
+                if (out->count >= LP_DISCOVERY_MAX_NEIGHBORS) {
+                    HeapFree(GetProcessHeap(), 0, adapters);
+                    return discovered_count;
+                }
+            }
+            g_active_probe_offset = (start + probe_count) % usable_count;
+            if (probes_sent >= LP_ACTIVE_SCAN_MAX_PROBES) {
+                HeapFree(GetProcessHeap(), 0, adapters);
+                return discovered_count;
+            }
+        }
+    }
+
+    HeapFree(GetProcessHeap(), 0, adapters);
+    return discovered_count;
+}
+
 /* Reads the passive ARP/NDP table and enriches live entries with best-effort names. */
 lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
 {
@@ -203,6 +404,7 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
         }
 
         lp_neighbor_t *neighbor = &out->items[out->count];
+        memset(neighbor, 0, sizeof(*neighbor));
         snprintf(neighbor->ip, sizeof(neighbor->ip), "%s", ip);
         format_mac(row->PhysicalAddress, row->PhysicalAddressLength, neighbor->mac,
                    sizeof(neighbor->mac));
@@ -221,6 +423,10 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
     FreeMibTable(table);
     if (winsock_ready) {
         WSACleanup();
+    }
+    const size_t active_discovered = probe_active_subnets(out);
+    if (active_discovered > 0) {
+        LP_DEBUG("active discovery added %zu neighbor(s)", active_discovered);
     }
     return LP_OK;
 }

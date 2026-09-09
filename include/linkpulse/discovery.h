@@ -37,10 +37,14 @@ typedef struct {
     char ip[LP_IP_STR_MAX];
     char mac[LP_MAC_STR_MAX];
     char hostname[LP_HOSTNAME_MAX];
+    char label[LP_HOSTNAME_MAX];
     char vendor[LP_VENDOR_MAX];
+    char icon[LP_VENDOR_MAX];
     lp_connection_type_t connection_type;
     lp_device_type_t device_type;
     uint8_t device_confidence;
+    bool trusted;
+    bool has_device_type_override;
     bool active;
 } lp_neighbor_t;
 
