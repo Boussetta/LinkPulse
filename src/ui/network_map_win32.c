@@ -4,8 +4,8 @@
 #include <string.h>
 
 #define LP_MAP_WIDTH 380
-#define LP_MAP_HEIGHT 430
-#define LP_MAP_MAX_VISIBLE_DEVICES 4
+#define LP_MAP_HEIGHT 650
+#define LP_MAP_MAX_VISIBLE_DEVICES 6
 
 typedef struct {
     lp_neighbor_list_t neighbors;
@@ -81,7 +81,7 @@ static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF
                              const char *label, const lp_neighbor_t *neighbor, int center_x,
                              int center_y)
 {
-    RECT node = {center_x - 75, center_y - 38, center_x + 75, center_y + 38};
+    RECT node = {center_x - 75, center_y - 45, center_x + 75, center_y + 45};
     HBRUSH brush = CreateSolidBrush(fill);
     HPEN pen = CreatePen(PS_SOLID, 2, border);
     HBRUSH old_brush = (HBRUSH)SelectObject(dc, brush);
@@ -92,10 +92,55 @@ static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF
     DeleteObject(pen);
     DeleteObject(brush);
 
-    RECT label_rect = {node.left + 8, node.top + 5, node.right - 8, node.top + 28};
+    RECT label_rect = {node.left + 8, node.top + 4, node.right - 8, node.top + 23};
     draw_centered_text(dc, label_font, text_color, label, label_rect);
-    RECT detail_rect = {node.left + 8, node.top + 25, node.right - 8, node.top + 49};
+    RECT detail_rect = {node.left + 8, node.top + 22, node.right - 8, node.top + 41};
     draw_centered_text(dc, label_font, text_color, neighbor->ip, detail_rect);
+
+    char identity[LP_VENDOR_MAX + 32];
+    const char *type = "Unknown device";
+    switch (neighbor->device_type) {
+    case LP_DEVICE_LAPTOP:
+        type = "Laptop";
+        break;
+    case LP_DEVICE_MOBILE:
+        type = "Mobile phone";
+        break;
+    case LP_DEVICE_SMARTWATCH:
+        type = "Smartwatch";
+        break;
+    case LP_DEVICE_PRINTER:
+        type = "Printer";
+        break;
+    case LP_DEVICE_TELEVISION:
+        type = "Television";
+        break;
+    case LP_DEVICE_ROUTER:
+        type = "Router";
+        break;
+    case LP_DEVICE_DESKTOP:
+        type = "Desktop";
+        break;
+    default:
+        break;
+    }
+    if (neighbor->vendor[0] != '\0') {
+        if (neighbor->device_confidence > 0) {
+            snprintf(identity, sizeof(identity), "%s · %s · %u%%", type, neighbor->vendor,
+                     (unsigned)neighbor->device_confidence);
+        } else {
+            snprintf(identity, sizeof(identity), "%s · %s", type, neighbor->vendor);
+        }
+    } else {
+        if (neighbor->device_confidence > 0) {
+            snprintf(identity, sizeof(identity), "%s · %u%%", type,
+                     (unsigned)neighbor->device_confidence);
+        } else {
+            snprintf(identity, sizeof(identity), "%s", type);
+        }
+    }
+    RECT identity_rect = {node.left + 8, node.top + 40, node.right - 8, node.top + 59};
+    draw_centered_text(dc, label_font, muted, identity, identity_rect);
 
     const wchar_t *icon = NULL;
     const char *connection = NULL;
@@ -110,10 +155,10 @@ static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF
         HFONT old_font = (HFONT)SelectObject(dc, icon_font);
         SetTextColor(dc, muted);
         SetBkMode(dc, TRANSPARENT);
-        RECT icon_rect = {center_x - 42, node.top + 48, center_x - 16, node.bottom - 3};
+        RECT icon_rect = {center_x - 42, node.top + 59, center_x - 16, node.bottom - 3};
         DrawTextW(dc, icon, 1, &icon_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         SelectObject(dc, old_font);
-        RECT connection_rect = {center_x - 15, node.top + 48, center_x + 66, node.bottom - 3};
+        RECT connection_rect = {center_x - 15, node.top + 59, center_x + 66, node.bottom - 3};
         draw_centered_text(dc, label_font, muted, connection, connection_rect);
     }
 }
@@ -196,7 +241,7 @@ static void paint_map(HWND window, HDC dc)
         const int column = (int)visible_index % columns;
         const int row = (int)visible_index / columns;
         const int device_x = columns == 1 ? center_x : 100 + column * 180;
-        const int device_y = 275 + row * 95;
+        const int device_y = 285 + row * 112;
         char label[LP_HOSTNAME_MAX];
         if (neighbor->hostname[0] != '\0') {
             snprintf(label, sizeof(label), "%s", neighbor->hostname);
@@ -209,7 +254,7 @@ static void paint_map(HWND window, HDC dc)
     }
 
     if (visible_count == 0) {
-        RECT empty = {40, 255, client.right - 40, 315};
+        RECT empty = {40, 285, client.right - 40, 345};
         draw_centered_text(dc, state->label_font, muted, "Waiting for nearby devices...", empty);
     }
 
