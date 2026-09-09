@@ -142,14 +142,17 @@ static void apply_record(const lp_device_record_t *record, lp_neighbor_t *neighb
 
 static void read_device_attributes(IXmlReader *reader, lp_device_record_t *record)
 {
-    if (FAILED(IXmlReader_MoveToFirstAttribute(reader))) {
+    if (IXmlReader_MoveToFirstAttribute(reader) != S_OK) {
         return;
     }
-    do {
+    /* Bounded by attribute count, but capped defensively in case a future
+       schema change or malformed file confuses the attribute cursor. */
+    for (int guard = 0; guard < 64; ++guard) {
         const WCHAR *name = NULL;
         const WCHAR *value = NULL;
         if (FAILED(IXmlReader_GetQualifiedName(reader, &name, NULL)) ||
             FAILED(IXmlReader_GetValue(reader, &value, NULL))) {
+            if (IXmlReader_MoveToNextAttribute(reader) != S_OK) break;
             continue;
         }
         char name_utf8[64];
@@ -173,7 +176,10 @@ static void read_device_attributes(IXmlReader *reader, lp_device_record_t *recor
         } else if (strcmp(name_utf8, "lastSeen") == 0) {
             record->last_seen = _strtoui64(value_utf8, NULL, 10);
         }
-    } while (SUCCEEDED(IXmlReader_MoveToNextAttribute(reader)));
+        if (IXmlReader_MoveToNextAttribute(reader) != S_OK) {
+            break;
+        }
+    }
     (void)IXmlReader_MoveToElement(reader);
 }
 
@@ -201,7 +207,18 @@ static void load_store(lp_device_store_t *store)
         return;
     }
     XmlNodeType node_type;
-    while (SUCCEEDED(IXmlReader_Read(reader, &node_type)) && node_type != XmlNodeType_None) {
+    /* Hard-capped rather than an unconditional while(Read()): guarantees
+       termination even if a reader implementation ever fails to report
+       end-of-document via node_type, which previously caused the tray to
+       hang forever (100% CPU, tray icon never created) parsing a real file. */
+    for (int guard = 0; guard < 100000; ++guard) {
+        const HRESULT read_result = IXmlReader_Read(reader, &node_type);
+        if (read_result == S_FALSE || node_type == XmlNodeType_None) {
+            break; /* end of document */
+        }
+        if (FAILED(read_result)) {
+            break;
+        }
         if (node_type != XmlNodeType_Element) continue;
         const WCHAR *name = NULL;
         if (FAILED(IXmlReader_GetQualifiedName(reader, &name, NULL)) || name == NULL) continue;
