@@ -330,8 +330,10 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                     ++active_count;
                 }
             }
-            LP_DEBUG("discovery poll complete: active=%zu retained=%zu events=%zu", active_count,
-                     state->discovery.known_count, event_count);
+            LP_DEBUG("discovery poll complete: active=%llu retained=%llu events=%llu",
+                     (unsigned long long)active_count,
+                     (unsigned long long)state->discovery.known_count,
+                     (unsigned long long)event_count);
             for (size_t i = 0; i < event_count; ++i) {
                 LP_INFO("discovery event: type=%s ip=%s mac=%s hostname=%s",
                         events[i].type == LP_DISCOVERY_EVENT_JOINED ? "joined" : "left",
@@ -455,7 +457,7 @@ static void show_discovery_notifications(lp_tray_state_t *state)
         const char *name = events[i].neighbor.label[0] != '\0'   ? events[i].neighbor.label
                            : events[i].neighbor.hostname[0] != '\0' ? events[i].neighbor.hostname
                                                                     : NULL;
-        char message[192];
+        char message[512];
         if (name != NULL && events[i].neighbor.mac[0] != '\0') {
             snprintf(message, sizeof(message), "%s\n%s\nIP: %s\nMAC: %s",
                      joined ? "Connected" : "Disconnected", name, events[i].neighbor.ip,

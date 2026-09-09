@@ -106,7 +106,7 @@ static int list_interfaces(void)
 
     const size_t interface_count = list.count;
     lp_iface_list_free(&list);
-    LP_DEBUG("listed %zu network interfaces", interface_count);
+    LP_DEBUG("listed %llu network interfaces", (unsigned long long)interface_count);
     return 0;
 }
 

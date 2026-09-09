@@ -1,4 +1,13 @@
 #define COBJMACROS
+#if defined(__MINGW32__)
+/* Must precede <windows.h>: mingw-w64's guiddef.h fixes the DEFINE_GUID
+   expansion (declare-only vs. define) the first time it is pulled in, so
+   INITGUID has to be set before windows.h, not just before xmllite.h.
+   mingw-w64's xmllite.h only defines (rather than declares) IID_IXmlReader/
+   IID_IXmlWriter when INITGUID is set, and unlike MSVC's uuid.lib, mingw's
+   libuuid.a does not provide them, which otherwise fails at link time. */
+#define INITGUID
+#endif
 
 #include "linkpulse/device_store.h"
 #include "linkpulse/log.h"
@@ -257,7 +266,7 @@ static void save_store(const lp_device_store_t *store)
 {
     const HRESULT com_result = CoInitializeEx(NULL, COINIT_MULTITHREADED);
     const bool uninitialize = SUCCEEDED(com_result);
-    char temp_path[LP_DEVICE_STORE_PATH_MAX];
+    char temp_path[LP_DEVICE_STORE_PATH_MAX + 8];
     snprintf(temp_path, sizeof(temp_path), "%s.tmp", store->path);
     WCHAR temp_wide[MAX_PATH];
     if (!utf8_to_wide(temp_path, temp_wide, ARRAYSIZE(temp_wide))) {
@@ -320,7 +329,7 @@ int lp_win32_device_store_open(void **store_out)
     }
     load_store(store);
     *store_out = store;
-    LP_DEBUG("device store opened: records=%zu", store->count);
+    LP_DEBUG("device store opened: records=%llu", (unsigned long long)store->count);
     return 0;
 }
 

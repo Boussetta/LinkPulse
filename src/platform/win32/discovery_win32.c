@@ -354,7 +354,7 @@ static size_t probe_active_subnets(lp_neighbor_list_t *out)
                     return discovered_count;
                 }
             }
-            g_active_probe_offset = (start + probe_count) % usable_count;
+            g_active_probe_offset = (uint32_t)((start + probe_count) % usable_count);
             if (probes_sent >= LP_ACTIVE_SCAN_MAX_PROBES) {
                 HeapFree(GetProcessHeap(), 0, adapters);
                 return discovered_count;
@@ -426,7 +426,7 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
     }
     const size_t active_discovered = probe_active_subnets(out);
     if (active_discovered > 0) {
-        LP_DEBUG("active discovery added %zu neighbor(s)", active_discovered);
+        LP_DEBUG("active discovery added %llu neighbor(s)", (unsigned long long)active_discovered);
     }
     return LP_OK;
 }
