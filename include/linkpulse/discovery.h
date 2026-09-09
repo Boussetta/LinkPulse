@@ -51,6 +51,10 @@ typedef struct {
     char address[LP_IP_STR_MAX];
     uint8_t prefix_length;
     char gateway[LP_IP_STR_MAX];
+    char gateway_hostname[LP_HOSTNAME_MAX];
+    char gateway_vendor[LP_VENDOR_MAX];
+    lp_device_type_t gateway_device_type;
+    uint8_t gateway_confidence;
 } lp_local_network_t;
 
 typedef struct {

@@ -82,41 +82,48 @@ static bool contains_token(const char *value, const char *token)
     return false;
 }
 
+static void classify_identity(const char *hostname, char *vendor, size_t vendor_cap,
+                              lp_device_type_t *device_type, uint8_t *confidence)
+{
+    vendor[0] = '\0';
+    *device_type = LP_DEVICE_UNKNOWN;
+    *confidence = 0;
+    if (contains_token(hostname, "epson")) {
+        snprintf(vendor, vendor_cap, "Epson");
+        *device_type = LP_DEVICE_PRINTER;
+        *confidence = 95;
+    } else if (contains_token(hostname, "printer") || contains_token(hostname, "print")) {
+        *device_type = LP_DEVICE_PRINTER;
+        *confidence = 90;
+    } else if (contains_token(hostname, "iphone") || contains_token(hostname, "android") ||
+               contains_token(hostname, "pixel") || contains_token(hostname, "galaxy")) {
+        *device_type = LP_DEVICE_MOBILE;
+        *confidence = 85;
+    } else if (contains_token(hostname, "watch") || contains_token(hostname, "fitbit")) {
+        *device_type = LP_DEVICE_SMARTWATCH;
+        *confidence = 85;
+    } else if (contains_token(hostname, "laptop") || contains_token(hostname, "macbook")) {
+        *device_type = LP_DEVICE_LAPTOP;
+        *confidence = 80;
+    } else if (contains_token(hostname, "desktop") || contains_token(hostname, "computer")) {
+        *device_type = LP_DEVICE_DESKTOP;
+        *confidence = 80;
+    } else if (contains_token(hostname, "tv") || contains_token(hostname, "roku") ||
+               contains_token(hostname, "chromecast")) {
+        *device_type = LP_DEVICE_TELEVISION;
+        *confidence = 80;
+    } else if (contains_token(hostname, "router") || contains_token(hostname, "gateway") ||
+               contains_token(hostname, "fritz")) {
+        snprintf(vendor, vendor_cap, "FRITZ!Box");
+        *device_type = LP_DEVICE_ROUTER;
+        *confidence = 90;
+    }
+}
+
 static void classify_neighbor(lp_neighbor_t *neighbor)
 {
-    neighbor->vendor[0] = '\0';
-    neighbor->device_type = LP_DEVICE_UNKNOWN;
-    neighbor->device_confidence = 0;
-    const char *name = neighbor->hostname;
-    if (contains_token(name, "epson")) {
-        snprintf(neighbor->vendor, sizeof(neighbor->vendor), "Epson");
-        neighbor->device_type = LP_DEVICE_PRINTER;
-        neighbor->device_confidence = 95;
-    } else if (contains_token(name, "printer") || contains_token(name, "print")) {
-        neighbor->device_type = LP_DEVICE_PRINTER;
-        neighbor->device_confidence = 90;
-    } else if (contains_token(name, "iphone") || contains_token(name, "android") ||
-               contains_token(name, "pixel") || contains_token(name, "galaxy")) {
-        neighbor->device_type = LP_DEVICE_MOBILE;
-        neighbor->device_confidence = 85;
-    } else if (contains_token(name, "watch") || contains_token(name, "fitbit")) {
-        neighbor->device_type = LP_DEVICE_SMARTWATCH;
-        neighbor->device_confidence = 85;
-    } else if (contains_token(name, "laptop") || contains_token(name, "macbook")) {
-        neighbor->device_type = LP_DEVICE_LAPTOP;
-        neighbor->device_confidence = 80;
-    } else if (contains_token(name, "desktop") || contains_token(name, "computer")) {
-        neighbor->device_type = LP_DEVICE_DESKTOP;
-        neighbor->device_confidence = 80;
-    } else if (contains_token(name, "tv") || contains_token(name, "roku") ||
-               contains_token(name, "chromecast")) {
-        neighbor->device_type = LP_DEVICE_TELEVISION;
-        neighbor->device_confidence = 80;
-    } else if (contains_token(name, "router") || contains_token(name, "gateway") ||
-               contains_token(name, "fritz")) {
-        neighbor->device_type = LP_DEVICE_ROUTER;
-        neighbor->device_confidence = 80;
-    }
+    classify_identity(neighbor->hostname, neighbor->vendor, sizeof(neighbor->vendor),
+                      &neighbor->device_type, &neighbor->device_confidence);
 }
 
 static lp_connection_type_t connection_type_for_interface(const NET_LUID *interface_luid)
@@ -238,6 +245,26 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
     char default_gateway[LP_IP_STR_MAX] = {0};
     const bool has_default_gateway = get_default_gateway(
         &default_interface_luid, default_gateway, sizeof(default_gateway));
+    char default_gateway_hostname[LP_HOSTNAME_MAX] = {0};
+    lp_device_type_t default_gateway_type = LP_DEVICE_UNKNOWN;
+    uint8_t default_gateway_confidence = 0;
+    if (has_default_gateway) {
+        SOCKADDR_INET gateway_address;
+        memset(&gateway_address, 0, sizeof(gateway_address));
+        gateway_address.Ipv4.sin_family = AF_INET;
+        if (InetPtonA(AF_INET, default_gateway, &gateway_address.Ipv4.sin_addr) == 1) {
+            WSADATA winsock_data;
+            if (WSAStartup(MAKEWORD(2, 2), &winsock_data) == 0) {
+                resolve_hostname(&gateway_address, default_gateway_hostname,
+                                 sizeof(default_gateway_hostname));
+                WSACleanup();
+            }
+        }
+    }
+    char default_gateway_vendor[LP_VENDOR_MAX];
+    classify_identity(default_gateway_hostname, default_gateway_vendor,
+                      sizeof(default_gateway_vendor), &default_gateway_type,
+                      &default_gateway_confidence);
 
     ULONG buffer_size = 0;
     const ULONG flags = GAA_FLAG_INCLUDE_PREFIX;
@@ -275,6 +302,14 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
             snprintf(network->address, sizeof(network->address), "%s", address);
             network->prefix_length = unicast->OnLinkPrefixLength;
             snprintf(network->gateway, sizeof(network->gateway), "%s", gateway);
+            if (gateway[0] != '\0') {
+                snprintf(network->gateway_hostname, sizeof(network->gateway_hostname), "%s",
+                         default_gateway_hostname);
+                snprintf(network->gateway_vendor, sizeof(network->gateway_vendor), "%s",
+                         default_gateway_vendor);
+                network->gateway_device_type = default_gateway_type;
+                network->gateway_confidence = default_gateway_confidence;
+            }
         }
     }
 

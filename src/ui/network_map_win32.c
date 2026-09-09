@@ -212,11 +212,23 @@ static void paint_map(HWND window, HDC dc)
     const int cloud_bottom_y = 104;
     const int gateway_y = 165;
     char gateway[LP_IP_STR_MAX] = "No gateway";
+    char gateway_label[LP_HOSTNAME_MAX + LP_VENDOR_MAX + 32];
+    gateway_label[0] = '\0';
     for (size_t i = 0; i < state->networks.count; ++i) {
         if (state->networks.items[i].gateway[0] != '\0') {
             snprintf(gateway, sizeof(gateway), "%s", state->networks.items[i].gateway);
+            if (state->networks.items[i].gateway_hostname[0] != '\0') {
+                snprintf(gateway_label, sizeof(gateway_label), "%s",
+                         state->networks.items[i].gateway_hostname);
+            } else if (state->networks.items[i].gateway_vendor[0] != '\0') {
+                snprintf(gateway_label, sizeof(gateway_label), "%s",
+                         state->networks.items[i].gateway_vendor);
+            }
             break;
         }
+    }
+    if (gateway_label[0] == '\0') {
+        snprintf(gateway_label, sizeof(gateway_label), "Gateway");
     }
 
     HPEN line_pen = CreatePen(PS_SOLID, 2, line);
@@ -228,7 +240,7 @@ static void paint_map(HWND window, HDC dc)
     DeleteObject(line_pen);
 
     draw_internet_cloud(dc, state->cloud_font, state->label_font, internet_fill, text, center_x);
-    draw_node(dc, state->label_font, gateway_fill, line, text, "Gateway", gateway, center_x,
+    draw_node(dc, state->label_font, gateway_fill, line, text, gateway_label, gateway, center_x,
               gateway_y, 170);
 
     size_t visible_index = 0;
