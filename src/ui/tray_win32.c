@@ -319,6 +319,11 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
         const lp_status_t status =
             lp_discovery_poll(&state->discovery, events, LP_DISCOVERY_MAX_EVENTS, &event_count);
         if (status == LP_OK) {
+            /* Applies previously learned identity to notifications/logging too,
+               not just the map, so a transient DNS miss doesn't hide a known name. */
+            for (size_t i = 0; i < event_count; ++i) {
+                lp_win32_device_store_apply(state->device_store, &events[i].neighbor);
+            }
             size_t active_count = 0;
             for (size_t i = 0; i < state->discovery.known_count; ++i) {
                 if (state->discovery.known[i].active) {
@@ -447,8 +452,18 @@ static void show_discovery_notifications(lp_tray_state_t *state)
 
     for (size_t i = 0; i < event_count; ++i) {
         const bool joined = events[i].type == LP_DISCOVERY_EVENT_JOINED;
-        char message[160];
-        if (events[i].neighbor.mac[0] != '\0') {
+        const char *name = events[i].neighbor.label[0] != '\0'   ? events[i].neighbor.label
+                           : events[i].neighbor.hostname[0] != '\0' ? events[i].neighbor.hostname
+                                                                    : NULL;
+        char message[192];
+        if (name != NULL && events[i].neighbor.mac[0] != '\0') {
+            snprintf(message, sizeof(message), "%s\n%s\nIP: %s\nMAC: %s",
+                     joined ? "Connected" : "Disconnected", name, events[i].neighbor.ip,
+                     events[i].neighbor.mac);
+        } else if (name != NULL) {
+            snprintf(message, sizeof(message), "%s\n%s\nIP: %s", joined ? "Connected" : "Disconnected",
+                     name, events[i].neighbor.ip);
+        } else if (events[i].neighbor.mac[0] != '\0') {
             snprintf(message, sizeof(message), "%s\nIP: %s\nMAC: %s",
                      joined ? "Connected" : "Disconnected", events[i].neighbor.ip,
                      events[i].neighbor.mac);

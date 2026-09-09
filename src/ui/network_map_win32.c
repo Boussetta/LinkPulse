@@ -371,7 +371,9 @@ static void paint_map(HWND window, HDC dc)
         const int device_x = columns == 1 ? center_x : 100 + column * 180;
         const int device_y = 285 + row * 112 + isp_extra_height;
         char label[LP_HOSTNAME_MAX];
-        if (neighbor->hostname[0] != '\0') {
+        if (neighbor->label[0] != '\0') {
+            snprintf(label, sizeof(label), "%s", neighbor->label);
+        } else if (neighbor->hostname[0] != '\0') {
             display_hostname(neighbor->hostname, label, sizeof(label));
             if (label[0] == '\0') {
                 snprintf(label, sizeof(label), "Device %llu",
