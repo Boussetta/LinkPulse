@@ -90,6 +90,7 @@ add_library(lp_platform STATIC
   src/platform/win32/config_win32.c
   src/platform/win32/discovery_win32.c
   src/platform/win32/device_store_win32.c
+  src/platform/win32/isp_win32.c
   src/platform/win32/log_win32.c
   src/platform/win32/net_win32.c
   src/platform/win32/notification_win32.c
