@@ -200,6 +200,7 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
             continue;
         }
         neighbor->connection_type = connection_type_for_interface(&row->InterfaceLuid);
+        neighbor->hostname[0] = '\0';
         if (winsock_ready) {
             resolve_hostname(&row->Address, neighbor->hostname, sizeof(neighbor->hostname));
         }
