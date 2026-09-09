@@ -188,9 +188,10 @@ static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF
     }
 }
 
-/* Draws the top-level Internet node shared by all map layouts. */
+/* Draws the top-level Internet node, with the ISP name when it is known. */
 static void draw_internet_cloud(HDC dc, HFONT cloud_font, HFONT label_font, COLORREF fill,
-                                COLORREF text_color, int center_x)
+                                COLORREF text_color, COLORREF muted, int center_x,
+                                const char *isp)
 {
     HFONT old_font = (HFONT)SelectObject(dc, cloud_font);
     SetTextColor(dc, fill);
@@ -199,9 +200,14 @@ static void draw_internet_cloud(HDC dc, HFONT cloud_font, HFONT label_font, COLO
     DrawTextW(dc, L"\x2601", 1, &cloud_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, old_font);
 
-    RECT label_rect = {center_x - 60, 46, center_x + 60, 78};
+    RECT label_rect = {center_x - 90, 40, center_x + 90, 68};
     draw_centered_text(dc, label_font, text_color, "Internet", label_rect);
+    if (isp != NULL && isp[0] != '\0') {
+        RECT isp_rect = {center_x - 90, 66, center_x + 90, 90};
+        draw_centered_text(dc, label_font, muted, isp, isp_rect);
+    }
 }
+
 
 /* Paints a snapshot of gateway and device state using the current theme. */
 static void paint_map(HWND window, HDC dc)
@@ -277,7 +283,8 @@ static void paint_map(HWND window, HDC dc)
     SelectObject(dc, old_pen);
     DeleteObject(line_pen);
 
-    draw_internet_cloud(dc, state->cloud_font, state->label_font, internet_fill, text, center_x);
+    draw_internet_cloud(dc, state->cloud_font, state->label_font, internet_fill, text, muted,
+                        center_x, state->networks.isp);
     draw_node(dc, state->label_font, gateway_fill, line, text, gateway_label, gateway, center_x,
               gateway_y, 170);
 
