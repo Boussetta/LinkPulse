@@ -6,6 +6,9 @@
 #define LP_MAP_WIDTH 380
 #define LP_MAP_HEIGHT 650
 #define LP_MAP_MAX_VISIBLE_DEVICES 6
+#define LP_MAP_ANIMATION_TIMER 2
+#define LP_MAP_ANIMATION_STEP_MS 10
+#define LP_MAP_ANIMATION_DURATION_MS 180
 
 typedef struct {
     lp_neighbor_list_t neighbors;
@@ -14,6 +17,9 @@ typedef struct {
     HFONT icon_font;
     HFONT label_font;
     HBRUSH background_brush;
+    int target_x;
+    int target_y;
+    DWORD animation_started_at;
 } lp_network_map_state_t;
 
 static bool is_taskbar_light_theme(void)
@@ -173,7 +179,7 @@ static void draw_device_node(HDC dc, HFONT label_font, HFONT icon_font, COLORREF
         HFONT old_font = (HFONT)SelectObject(dc, icon_font);
         SetTextColor(dc, muted);
         SetBkMode(dc, TRANSPARENT);
-        RECT icon_rect = {center_x - 16, node.top + 59, center_x + 16, node.bottom - 3};
+        RECT icon_rect = {node.right - 34, node.bottom - 28, node.right - 8, node.bottom - 4};
         DrawTextW(dc, icon, 1, &icon_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         SelectObject(dc, old_font);
     }
@@ -354,7 +360,30 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
     }
     case WM_ACTIVATE:
         if (LOWORD(wparam) == WA_INACTIVE) {
+            KillTimer(window, LP_MAP_ANIMATION_TIMER);
             ShowWindow(window, SW_HIDE);
+        }
+        return 0;
+    case WM_TIMER:
+        if (wparam == LP_MAP_ANIMATION_TIMER) {
+            lp_network_map_state_t *state =
+                (lp_network_map_state_t *)GetWindowLongPtrA(window, GWLP_USERDATA);
+            if (state == NULL) {
+                KillTimer(window, LP_MAP_ANIMATION_TIMER);
+                return 0;
+            }
+            const DWORD elapsed = GetTickCount() - state->animation_started_at;
+            if (elapsed >= LP_MAP_ANIMATION_DURATION_MS) {
+                SetWindowPos(window, HWND_TOPMOST, state->target_x, state->target_y, 0, 0,
+                             SWP_NOSIZE | SWP_NOACTIVATE);
+                KillTimer(window, LP_MAP_ANIMATION_TIMER);
+                return 0;
+            }
+            const int distance = LP_MAP_WIDTH + 12;
+            const int remaining = (int)(LP_MAP_ANIMATION_DURATION_MS - elapsed);
+            const int x = state->target_x + distance * remaining / LP_MAP_ANIMATION_DURATION_MS;
+            SetWindowPos(window, HWND_TOPMOST, x, state->target_y, 0, 0,
+                         SWP_NOSIZE | SWP_NOACTIVATE);
         }
         return 0;
     case WM_KEYDOWN:
@@ -454,8 +483,12 @@ void lp_network_map_show(HWND window, const lp_neighbor_list_t *neighbors,
     const int x = monitor_info.rcWork.right - LP_MAP_WIDTH - 12;
     const int y = monitor_info.rcWork.bottom - LP_MAP_HEIGHT - 8;
 
-    SetWindowPos(window, HWND_TOPMOST, x, y, LP_MAP_WIDTH, LP_MAP_HEIGHT,
+    state->target_x = x;
+    state->target_y = y;
+    state->animation_started_at = GetTickCount();
+    SetWindowPos(window, HWND_TOPMOST, x + LP_MAP_WIDTH + 12, y, LP_MAP_WIDTH, LP_MAP_HEIGHT,
                  SWP_SHOWWINDOW | SWP_NOACTIVATE);
     InvalidateRect(window, NULL, TRUE);
     SetForegroundWindow(window);
+    SetTimer(window, LP_MAP_ANIMATION_TIMER, LP_MAP_ANIMATION_STEP_MS, NULL);
 }
