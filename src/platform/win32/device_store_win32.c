@@ -132,6 +132,14 @@ static long find_record(const lp_device_store_t *store, const char *mac)
 static void apply_record(const lp_device_record_t *record, lp_neighbor_t *neighbor)
 {
     if (record->label[0] != '\0') copy_text(neighbor->label, sizeof(neighbor->label), record->label);
+    /* Falls back to a previously learned name/vendor when this poll's live
+       resolution came back empty (e.g. a transient reverse-DNS failure). */
+    if (neighbor->hostname[0] == '\0' && record->hostname[0] != '\0') {
+        copy_text(neighbor->hostname, sizeof(neighbor->hostname), record->hostname);
+    }
+    if (neighbor->vendor[0] == '\0' && record->vendor[0] != '\0') {
+        copy_text(neighbor->vendor, sizeof(neighbor->vendor), record->vendor);
+    }
     if (record->icon[0] != '\0') copy_text(neighbor->icon, sizeof(neighbor->icon), record->icon);
     if (record->trusted) neighbor->trusted = true;
     if (record->has_device_type) {
