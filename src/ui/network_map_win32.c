@@ -4,7 +4,7 @@
 #include <string.h>
 
 #define LP_MAP_WIDTH 380
-#define LP_MAP_HEIGHT 650
+#define LP_MAP_HEIGHT 740
 #define LP_MAP_MAX_VISIBLE_DEVICES 6
 #define LP_MAP_ANIMATION_TIMER 2
 #define LP_MAP_ANIMATION_STEP_MS 10
@@ -12,6 +12,7 @@
 #define LP_ISP_DETAIL_LINE_MAX 300
 #define LP_ISP_DETAIL_LINES_MAX 3
 #define LP_ISP_DETAIL_LINE_HEIGHT 20
+#define LP_DEVICE_DETAIL_LINES_MAX 3
 
 typedef struct {
     lp_neighbor_list_t neighbors;
@@ -24,6 +25,8 @@ typedef struct {
     int target_y;
     DWORD animation_started_at;
     bool show_isp_details;
+    bool has_selected_device;
+    char selected_device_ip[LP_IP_STR_MAX];
 } lp_network_map_state_t;
 
 /* Reads the taskbar theme setting used to keep the map consistent with the tray. */
@@ -120,7 +123,7 @@ static const wchar_t *device_icon_glyph(const lp_neighbor_t *neighbor)
     case LP_DEVICE_ROUTER:
         return L"\xE968";
     default:
-        return L"\xE7B3";
+        return L"\xE897"; /* "Help" glyph: reads as an unknown-device marker rather than an eye. */
     }
 }
 
@@ -258,6 +261,82 @@ static size_t format_isp_detail_lines(
     return count;
 }
 
+/* Orders "This PC" (when known) ahead of discovered neighbors, capped for the grid. */
+static size_t collect_visible_devices(const lp_network_map_state_t *state,
+                                      lp_neighbor_t *out_items, bool *out_is_local,
+                                      size_t max_count)
+{
+    size_t count = 0;
+    if (count < max_count &&
+        (state->networks.local_hostname[0] != '\0' || state->networks.local_ip[0] != '\0')) {
+        lp_neighbor_t local_device = {0};
+        snprintf(local_device.hostname, sizeof(local_device.hostname), "%s",
+                state->networks.local_hostname);
+        snprintf(local_device.ip, sizeof(local_device.ip), "%s", state->networks.local_ip);
+        local_device.device_type = LP_DEVICE_DESKTOP;
+        local_device.device_confidence = 100;
+        local_device.connection_type = state->networks.local_connection_type;
+        out_items[count] = local_device;
+        out_is_local[count] = true;
+        ++count;
+    }
+    for (size_t i = 0; i < state->neighbors.count && count < max_count; ++i) {
+        if (is_device_neighbor(state, &state->neighbors.items[i])) {
+            out_items[count] = state->neighbors.items[i];
+            out_is_local[count] = false;
+            ++count;
+        }
+    }
+    return count;
+}
+
+/* Computes the same grid position paint_map and click hit-testing must agree on. */
+static void device_node_center(size_t visible_index, size_t visible_count, int center_x,
+                               int isp_extra_height, int *out_x, int *out_y)
+{
+    const int columns = visible_count > 1 ? 2 : 1;
+    const int column = (int)visible_index % columns;
+    const int row = (int)visible_index / columns;
+    *out_x = columns == 1 ? center_x : 100 + column * 180;
+    *out_y = 285 + row * 112 + isp_extra_height;
+}
+
+/* Builds up to LP_DEVICE_DETAIL_LINES_MAX lines describing everything known about a device. */
+static size_t format_device_detail_lines(
+    const lp_neighbor_t *neighbor, bool is_local,
+    char lines[LP_DEVICE_DETAIL_LINES_MAX][LP_ISP_DETAIL_LINE_MAX])
+{
+    size_t count = 0;
+    if (!is_local && neighbor->vendor[0] != '\0') {
+        snprintf(lines[count++], LP_ISP_DETAIL_LINE_MAX, "%s", neighbor->vendor);
+    }
+    if (!is_local && count < LP_DEVICE_DETAIL_LINES_MAX) {
+        if (neighbor->mac[0] != '\0') {
+            snprintf(lines[count++], LP_ISP_DETAIL_LINE_MAX, "%s", neighbor->mac);
+        } else {
+            /* Public/isolated Wi-Fi often proxy-ARPs, so the real MAC is never visible. */
+            snprintf(lines[count++], LP_ISP_DETAIL_LINE_MAX,
+                    "MAC hidden by this network");
+        }
+    }
+    if (count < LP_DEVICE_DETAIL_LINES_MAX) {
+        const char *connection = neighbor->connection_type == LP_CONNECTION_WIFI ? "Wi-Fi"
+                                 : neighbor->connection_type == LP_CONNECTION_ETHERNET
+                                       ? "Ethernet"
+                                       : "Unknown connection";
+        if (neighbor->ip[0] != '\0') {
+            snprintf(lines[count++], LP_ISP_DETAIL_LINE_MAX, "%s \xB7 %s", neighbor->ip,
+                    connection);
+        } else {
+            snprintf(lines[count++], LP_ISP_DETAIL_LINE_MAX, "%s", connection);
+        }
+    }
+    if (count == 0) {
+        snprintf(lines[count++], LP_ISP_DETAIL_LINE_MAX, "No additional details yet");
+    }
+    return count;
+}
+
 /* Paints a snapshot of gateway and device state using the current theme. */
 static void paint_map(HWND window, HDC dc)
 {
@@ -282,18 +361,12 @@ static void paint_map(HWND window, HDC dc)
     RECT close_rect = {client.right - 42, 8, client.right - 8, 42};
     draw_centered_text(dc, state->label_font, muted, "x", close_rect);
 
-    lp_neighbor_t local_device = {0};
-    bool has_local_device = false;
-    if (state->networks.local_hostname[0] != '\0' || state->networks.local_ip[0] != '\0') {
-        snprintf(local_device.hostname, sizeof(local_device.hostname), "%s",
-                 state->networks.local_hostname);
-        snprintf(local_device.ip, sizeof(local_device.ip), "%s", state->networks.local_ip);
-            local_device.device_type = LP_DEVICE_DESKTOP;
-            local_device.device_confidence = 100;
-            local_device.connection_type = state->networks.local_connection_type;
-            has_local_device = true;
-    }
-    size_t device_count = has_local_device ? 1 : 0;
+    lp_neighbor_t visible_items[LP_MAP_MAX_VISIBLE_DEVICES];
+    bool visible_is_local[LP_MAP_MAX_VISIBLE_DEVICES] = {0};
+    size_t device_count = state->networks.local_hostname[0] != '\0' ||
+                                          state->networks.local_ip[0] != '\0'
+                                      ? 1
+                                      : 0;
     for (size_t i = 0; i < state->neighbors.count; ++i) {
         if (is_device_neighbor(state, &state->neighbors.items[i])) {
             ++device_count;
@@ -301,6 +374,8 @@ static void paint_map(HWND window, HDC dc)
     }
     const size_t visible_count =
         device_count < LP_MAP_MAX_VISIBLE_DEVICES ? device_count : LP_MAP_MAX_VISIBLE_DEVICES;
+    const size_t visible_actual =
+        collect_visible_devices(state, visible_items, visible_is_local, visible_count);
     const int center_x = client.right / 2;
     char isp_detail_lines[LP_ISP_DETAIL_LINES_MAX][LP_ISP_DETAIL_LINE_MAX];
     size_t isp_detail_line_count = 0;
@@ -350,46 +425,60 @@ static void paint_map(HWND window, HDC dc)
               gateway_y, 170);
 
     size_t visible_index = 0;
-    if (has_local_device && visible_index < visible_count) {
-        const int columns = visible_count > 1 ? 2 : 1;
-        const int column = (int)visible_index % columns;
-        const int row = (int)visible_index / columns;
-        const int device_x = columns == 1 ? center_x : 100 + column * 180;
-        const int device_y = 285 + row * 112 + isp_extra_height;
-        draw_device_node(dc, state->label_font, state->icon_font, device_fill, line, text, muted,
-                         "This PC", &local_device, device_x, device_y);
-        ++visible_index;
-    }
-    for (size_t i = 0; i < state->neighbors.count && visible_index < visible_count; ++i) {
-        const lp_neighbor_t *neighbor = &state->neighbors.items[i];
-        if (!is_device_neighbor(state, neighbor)) {
-            continue;
-        }
-        const int columns = visible_count > 1 ? 2 : 1;
-        const int column = (int)visible_index % columns;
-        const int row = (int)visible_index / columns;
-        const int device_x = columns == 1 ? center_x : 100 + column * 180;
-        const int device_y = 285 + row * 112 + isp_extra_height;
+    lp_neighbor_t selected_device = {0};
+    bool selected_is_local = false;
+    bool has_selected_match = false;
+    for (; visible_index < visible_actual; ++visible_index) {
+        int device_x, device_y;
+        device_node_center(visible_index, visible_actual, center_x, isp_extra_height, &device_x,
+                           &device_y);
+        const lp_neighbor_t *neighbor = &visible_items[visible_index];
         char label[LP_HOSTNAME_MAX];
-        if (neighbor->label[0] != '\0') {
+        if (visible_is_local[visible_index]) {
+            snprintf(label, sizeof(label), "This PC");
+        } else if (neighbor->label[0] != '\0') {
             snprintf(label, sizeof(label), "%s", neighbor->label);
         } else if (neighbor->hostname[0] != '\0') {
             display_hostname(neighbor->hostname, label, sizeof(label));
             if (label[0] == '\0') {
-                snprintf(label, sizeof(label), "Device %llu",
-                         (unsigned long long)visible_index + 1);
+                snprintf(label, sizeof(label), "Device %llu", (unsigned long long)visible_index + 1);
             }
         } else {
             snprintf(label, sizeof(label), "Device %llu", (unsigned long long)visible_index + 1);
         }
         draw_device_node(dc, state->label_font, state->icon_font, device_fill, line, text, muted,
-                 label, neighbor, device_x, device_y);
-        ++visible_index;
+                         label, neighbor, device_x, device_y);
+        if (state->has_selected_device && neighbor->ip[0] != '\0' &&
+            strcmp(neighbor->ip, state->selected_device_ip) == 0) {
+            selected_device = *neighbor;
+            selected_is_local = visible_is_local[visible_index];
+            has_selected_match = true;
+        }
     }
 
-    if (visible_count == 0) {
+    if (visible_actual == 0) {
         RECT empty = {40, 285 + isp_extra_height, client.right - 40, 345 + isp_extra_height};
         draw_centered_text(dc, state->label_font, muted, "Waiting for nearby devices...", empty);
+    }
+
+    if (has_selected_match) {
+        char detail_lines[LP_DEVICE_DETAIL_LINES_MAX][LP_ISP_DETAIL_LINE_MAX];
+        const size_t detail_line_count =
+            format_device_detail_lines(&selected_device, selected_is_local, detail_lines);
+        const int panel_top = client.bottom - 130;
+        RECT divider = {30, panel_top, client.right - 30, panel_top};
+        HPEN divider_pen = CreatePen(PS_SOLID, 1, line);
+        HPEN old_divider_pen = (HPEN)SelectObject(dc, divider_pen);
+        MoveToEx(dc, divider.left, divider.top, NULL);
+        LineTo(dc, divider.right, divider.top);
+        SelectObject(dc, old_divider_pen);
+        DeleteObject(divider_pen);
+        for (size_t i = 0; i < detail_line_count; ++i) {
+            RECT detail_rect = {30, panel_top + 12 + (int)i * LP_ISP_DETAIL_LINE_HEIGHT,
+                                client.right - 30,
+                                panel_top + 12 + (int)(i + 1) * LP_ISP_DETAIL_LINE_HEIGHT};
+            draw_centered_text(dc, state->label_font, muted, detail_lines[i], detail_rect);
+        }
     }
 
     HBRUSH old_brush = (HBRUSH)SelectObject(dc, GetStockObject(NULL_BRUSH));
@@ -483,6 +572,54 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
             if (state != NULL) {
                 state->show_isp_details = !state->show_isp_details;
                 InvalidateRect(window, NULL, TRUE);
+            }
+            return 0;
+        }
+        {
+            lp_network_map_state_t *state =
+                (lp_network_map_state_t *)GetWindowLongPtrA(window, GWLP_USERDATA);
+            if (state == NULL) {
+                return 0;
+            }
+            int isp_extra_height = 0;
+            if (state->show_isp_details) {
+                char isp_detail_lines[LP_ISP_DETAIL_LINES_MAX][LP_ISP_DETAIL_LINE_MAX];
+                const size_t isp_detail_line_count =
+                    format_isp_detail_lines(&state->networks.isp_info, isp_detail_lines);
+                isp_extra_height = (int)isp_detail_line_count * LP_ISP_DETAIL_LINE_HEIGHT + 8;
+            }
+            size_t device_count = state->networks.local_hostname[0] != '\0' ||
+                                          state->networks.local_ip[0] != '\0'
+                                      ? 1
+                                      : 0;
+            for (size_t i = 0; i < state->neighbors.count; ++i) {
+                if (is_device_neighbor(state, &state->neighbors.items[i])) {
+                    ++device_count;
+                }
+            }
+            const size_t visible_count =
+                device_count < LP_MAP_MAX_VISIBLE_DEVICES ? device_count : LP_MAP_MAX_VISIBLE_DEVICES;
+            lp_neighbor_t visible_items[LP_MAP_MAX_VISIBLE_DEVICES];
+            bool visible_is_local[LP_MAP_MAX_VISIBLE_DEVICES] = {0};
+            const size_t visible_actual =
+                collect_visible_devices(state, visible_items, visible_is_local, visible_count);
+            for (size_t i = 0; i < visible_actual; ++i) {
+                int device_x, device_y;
+                device_node_center(i, visible_actual, center_x, isp_extra_height, &device_x,
+                                   &device_y);
+                if (x >= device_x - 75 && x <= device_x + 75 && y >= device_y - 45 &&
+                    y <= device_y + 45) {
+                    if (state->has_selected_device &&
+                        strcmp(state->selected_device_ip, visible_items[i].ip) == 0) {
+                        state->has_selected_device = false;
+                    } else {
+                        snprintf(state->selected_device_ip, sizeof(state->selected_device_ip), "%s",
+                                visible_items[i].ip);
+                        state->has_selected_device = true;
+                    }
+                    InvalidateRect(window, NULL, TRUE);
+                    break;
+                }
             }
         }
         return 0;

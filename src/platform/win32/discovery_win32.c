@@ -169,6 +169,53 @@ static long find_neighbor_mac(const lp_neighbor_list_t *list, const char *mac)
     return -1;
 }
 
+/* Avoids re-adding the same address twice within one snapshot pass. */
+static long find_neighbor_ip(const lp_neighbor_list_t *list, const char *ip)
+{
+    if (ip == NULL || ip[0] == '\0') {
+        return -1;
+    }
+    for (size_t i = 0; i < list->count; ++i) {
+        if (strcmp(list->items[i].ip, ip) == 0) {
+            return (long)i;
+        }
+    }
+    return -1;
+}
+
+/* Some public/isolated Wi-Fi networks proxy-ARP: the access point answers for
+   every client with its own MAC, so distinct devices end up sharing one MAC
+   in our neighbor table. Treating that shared MAC as a stable identity would
+   merge those devices into one entry (or hide all but one), so any MAC seen
+   on more than one IP is blanked out and those neighbors fall back to
+   IP-based identity instead. */
+static void clear_ambiguous_macs(lp_neighbor_list_t *list)
+{
+    for (size_t i = 0; i < list->count; ++i) {
+        if (list->items[i].mac[0] == '\0') {
+            continue;
+        }
+        size_t sharing_count = 1;
+        for (size_t j = i + 1; j < list->count; ++j) {
+            if (strcmp(list->items[j].mac, list->items[i].mac) == 0) {
+                ++sharing_count;
+            }
+        }
+        if (sharing_count <= 1) {
+            continue;
+        }
+        LP_DEBUG("clearing ambiguous MAC %s shared by %llu addresses (likely proxy ARP)",
+                list->items[i].mac, (unsigned long long)sharing_count);
+        char ambiguous_mac[LP_MAC_STR_MAX];
+        snprintf(ambiguous_mac, sizeof(ambiguous_mac), "%s", list->items[i].mac);
+        for (size_t j = i; j < list->count; ++j) {
+            if (strcmp(list->items[j].mac, ambiguous_mac) == 0) {
+                list->items[j].mac[0] = '\0';
+            }
+        }
+    }
+}
+
 /* Matches active results against passive entries without duplicating devices. */
 static long find_neighbor_index(const lp_neighbor_list_t *list, const char *ip,
                                 const char *mac)
@@ -403,14 +450,14 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
             continue;
         }
 
+        if (find_neighbor_ip(out, ip) >= 0) {
+            continue;
+        }
         lp_neighbor_t *neighbor = &out->items[out->count];
         memset(neighbor, 0, sizeof(*neighbor));
         snprintf(neighbor->ip, sizeof(neighbor->ip), "%s", ip);
         format_mac(row->PhysicalAddress, row->PhysicalAddressLength, neighbor->mac,
                    sizeof(neighbor->mac));
-        if (find_neighbor_mac(out, neighbor->mac) >= 0) {
-            continue;
-        }
         neighbor->connection_type = connection_type_for_interface(&row->InterfaceLuid);
         neighbor->hostname[0] = '\0';
         if (winsock_ready) {
@@ -428,6 +475,7 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
     if (active_discovered > 0) {
         LP_DEBUG("active discovery added %llu neighbor(s)", (unsigned long long)active_discovered);
     }
+    clear_ambiguous_macs(out);
     return LP_OK;
 }
 
