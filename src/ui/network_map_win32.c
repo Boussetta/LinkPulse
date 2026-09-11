@@ -443,6 +443,8 @@ static void paint_map(HWND window, HDC dc)
             if (label[0] == '\0') {
                 snprintf(label, sizeof(label), "Device %llu", (unsigned long long)visible_index + 1);
             }
+        } else if (neighbor->vendor[0] != '\0') {
+            snprintf(label, sizeof(label), "%s", neighbor->vendor);
         } else {
             snprintf(label, sizeof(label), "Device %llu", (unsigned long long)visible_index + 1);
         }
