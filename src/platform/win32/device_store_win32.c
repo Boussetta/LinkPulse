@@ -601,7 +601,8 @@ void lp_win32_device_store_observe(void *opaque, const lp_network_context_t *net
     if (device->first_seen == 0) device->first_seen = now_seconds();
     copy_text(device->hostname, sizeof(device->hostname), neighbor->hostname);
     copy_text(device->vendor, sizeof(device->vendor), neighbor->vendor);
-    if (!device->has_device_type && neighbor->device_type != LP_DEVICE_UNKNOWN) {
+    if (!device->has_device_type && neighbor->device_type != LP_DEVICE_UNKNOWN &&
+        neighbor->device_confidence >= 80) {
         device->device_type = neighbor->device_type;
         device->has_device_type = true;
     }

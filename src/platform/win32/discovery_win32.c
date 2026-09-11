@@ -44,6 +44,15 @@ static void format_mac(const UCHAR *address, ULONG length, char *out, size_t out
              address[3], address[4], address[5]);
 }
 
+static bool is_locally_administered_mac(const char *mac)
+{
+    unsigned first_octet = 0;
+    if (mac == NULL || sscanf(mac, "%2x", &first_octet) != 1) {
+        return false;
+    }
+    return (first_octet & 0x02u) != 0 && (first_octet & 0x01u) == 0;
+}
+
 /* Excludes broadcast, multicast, and unspecified addresses from inventory. */
 static bool is_unicast_address(const SOCKADDR_INET *address)
 {
@@ -135,6 +144,12 @@ static void classify_neighbor(lp_neighbor_t *neighbor)
 {
     classify_identity(neighbor->hostname, neighbor->vendor, sizeof(neighbor->vendor),
                       &neighbor->device_type, &neighbor->device_confidence);
+    if (neighbor->device_type == LP_DEVICE_UNKNOWN &&
+        is_locally_administered_mac(neighbor->mac)) {
+        snprintf(neighbor->vendor, sizeof(neighbor->vendor), "Private Wi-Fi MAC");
+        neighbor->device_type = LP_DEVICE_MOBILE;
+        neighbor->device_confidence = 35;
+    }
 }
 
 /* Maps the Windows adapter media type to the portable connection enum. */
