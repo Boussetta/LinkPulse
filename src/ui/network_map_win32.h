@@ -5,6 +5,8 @@
 
 #include <windows.h>
 
+#define LP_NETWORK_MAP_COPYDATA_DEVICE_SELECTED 1
+
 /* Creates the hidden-until-shown network map popup. */
 HWND lp_network_map_create(HINSTANCE instance, HWND owner);
 

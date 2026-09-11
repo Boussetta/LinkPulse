@@ -159,7 +159,8 @@ static bool dns_write_qname(unsigned char *packet, size_t packet_cap, size_t *of
     return true;
 }
 
-static bool resolve_mdns_hostname_ipv4(const SOCKADDR_INET *address, char *out, size_t out_cap)
+static bool resolve_mdns_hostname_ipv4(const SOCKADDR_INET *address, bool targeted, char *out,
+                                       size_t out_cap)
 {
     unsigned char query[512] = {0};
     char reverse_name[64];
@@ -192,7 +193,9 @@ static bool resolve_mdns_hostname_ipv4(const SOCKADDR_INET *address, char *out, 
     memset(&destination, 0, sizeof(destination));
     destination.sin_family = AF_INET;
     destination.sin_port = htons(LP_MDNS_PORT);
-    if (InetPtonA(AF_INET, "224.0.0.251", &destination.sin_addr) != 1) {
+    if (targeted) {
+        destination.sin_addr = address->Ipv4.sin_addr;
+    } else if (InetPtonA(AF_INET, "224.0.0.251", &destination.sin_addr) != 1) {
         closesocket(sock);
         return false;
     }
@@ -255,9 +258,6 @@ static void resolve_hostname(const SOCKADDR_INET *address, char *out, size_t out
     if (GetNameInfoA((const SOCKADDR *)address, address_length, out, (DWORD)out_cap, NULL, 0,
                      NI_NAMEREQD) != 0) {
         out[0] = '\0';
-    }
-    if (out[0] == '\0' && address->si_family == AF_INET) {
-        (void)resolve_mdns_hostname_ipv4(address, out, out_cap);
     }
 }
 
@@ -332,6 +332,32 @@ static void classify_neighbor(lp_neighbor_t *neighbor)
         neighbor->device_type = LP_DEVICE_MOBILE;
         neighbor->device_confidence = 35;
     }
+}
+
+lp_status_t lp_net_refresh_neighbor_identity(lp_neighbor_t *neighbor)
+{
+    if (neighbor == NULL || neighbor->ip[0] == '\0') {
+        return LP_ERR_INVALID_ARG;
+    }
+    SOCKADDR_INET address;
+    memset(&address, 0, sizeof(address));
+    address.Ipv4.sin_family = AF_INET;
+    if (InetPtonA(AF_INET, neighbor->ip, &address.Ipv4.sin_addr) != 1) {
+        return LP_ERR_UNSUPPORTED;
+    }
+
+    WSADATA winsock_data;
+    if (WSAStartup(MAKEWORD(2, 2), &winsock_data) != 0) {
+        return LP_ERR_IO;
+    }
+    resolve_hostname(&address, neighbor->hostname, sizeof(neighbor->hostname));
+    if (neighbor->hostname[0] == '\0') {
+        (void)resolve_mdns_hostname_ipv4(&address, true, neighbor->hostname,
+                                         sizeof(neighbor->hostname));
+    }
+    classify_neighbor(neighbor);
+    WSACleanup();
+    return LP_OK;
 }
 
 /* Maps the Windows adapter media type to the portable connection enum. */
@@ -454,6 +480,10 @@ static void append_active_neighbor(lp_neighbor_list_t *out, const char *ip,
     address.Ipv4.sin_family = AF_INET;
     InetPtonA(AF_INET, ip, &address.Ipv4.sin_addr);
     resolve_hostname(&address, neighbor->hostname, sizeof(neighbor->hostname));
+    if (neighbor->hostname[0] == '\0') {
+        (void)resolve_mdns_hostname_ipv4(&address, false, neighbor->hostname,
+                                         sizeof(neighbor->hostname));
+    }
     classify_neighbor(neighbor);
 }
 
@@ -659,18 +689,22 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
         neighbor->hostname[0] = '\0';
         if (winsock_ready) {
             resolve_hostname(&row->Address, neighbor->hostname, sizeof(neighbor->hostname));
+            if (neighbor->hostname[0] == '\0' && row->Address.si_family == AF_INET) {
+                (void)resolve_mdns_hostname_ipv4(&row->Address, false, neighbor->hostname,
+                                                 sizeof(neighbor->hostname));
+            }
         }
         classify_neighbor(neighbor);
         ++out->count;
     }
 
     FreeMibTable(table);
-    if (winsock_ready) {
-        WSACleanup();
-    }
     const size_t active_discovered = probe_active_subnets(out);
     if (active_discovered > 0) {
         LP_DEBUG("active discovery added %llu neighbor(s)", (unsigned long long)active_discovered);
+    }
+    if (winsock_ready) {
+        WSACleanup();
     }
     clear_ambiguous_macs(out);
     return LP_OK;

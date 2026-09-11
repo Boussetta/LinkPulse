@@ -17,6 +17,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <windows.h>
@@ -72,6 +73,7 @@ typedef struct {
     HANDLE update_thread;
     HANDLE discovery_thread;
     HANDLE isp_thread;
+    HANDLE device_refresh_thread;
     HANDLE download_thread;
     HANDLE update_stop_event;
     HANDLE isp_refresh_event;
@@ -545,6 +547,110 @@ static void toggle_network_map(lp_tray_state_t *state)
     lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
 }
 
+typedef struct {
+    lp_tray_state_t *state;
+    char ip[LP_IP_STR_MAX];
+} lp_device_refresh_request_t;
+
+static void network_context_from_snapshot(const lp_local_network_list_t *networks,
+                                          const lp_isp_info_t *isp,
+                                          lp_network_context_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->gateway_mac = "";
+    out->gateway_hostname = "";
+    out->gateway_vendor = "";
+    out->isp = isp;
+    for (size_t i = 0; i < networks->count; ++i) {
+        if (networks->items[i].gateway_mac[0] != '\0') {
+            out->gateway_mac = networks->items[i].gateway_mac;
+            out->gateway_hostname = networks->items[i].gateway_hostname;
+            out->gateway_vendor = networks->items[i].gateway_vendor;
+            return;
+        }
+    }
+}
+
+static DWORD WINAPI device_refresh_thread_proc(LPVOID param)
+{
+    lp_device_refresh_request_t *request = (lp_device_refresh_request_t *)param;
+    lp_tray_state_t *state = request->state;
+    lp_neighbor_t neighbor = {0};
+    lp_local_network_list_t networks = {0};
+    lp_isp_info_t isp = {0};
+    bool found = false;
+    bool isp_available = false;
+    EnterCriticalSection(&state->lock);
+    for (size_t i = 0; i < state->map_neighbors.count; ++i) {
+        if (strcmp(state->map_neighbors.items[i].ip, request->ip) == 0) {
+            neighbor = state->map_neighbors.items[i];
+            found = true;
+            break;
+        }
+    }
+    networks = state->map_networks;
+    if (state->isp_available) {
+        isp = state->isp_info;
+        isp_available = true;
+    }
+    LeaveCriticalSection(&state->lock);
+    if (!found) {
+        free(request);
+        return 0;
+    }
+
+    LP_DEBUG("refreshing selected device identity: ip=%s mac=%s", neighbor.ip,
+             neighbor.mac[0] != '\0' ? neighbor.mac : "(unknown)");
+    const lp_status_t status = lp_net_refresh_neighbor_identity(&neighbor);
+    if (status != LP_OK) {
+        LP_DEBUG("selected device identity refresh failed: ip=%s status=%s", neighbor.ip,
+                 lp_status_str(status));
+        free(request);
+        return 0;
+    }
+
+    EnterCriticalSection(&state->lock);
+    for (size_t i = 0; i < state->map_neighbors.count; ++i) {
+        if (strcmp(state->map_neighbors.items[i].ip, neighbor.ip) == 0) {
+            state->map_neighbors.items[i] = neighbor;
+            break;
+        }
+    }
+    lp_network_context_t network_context;
+    network_context_from_snapshot(&networks, isp_available ? &isp : NULL, &network_context);
+    lp_win32_device_store_observe(state->device_store, &network_context, &neighbor);
+    LeaveCriticalSection(&state->lock);
+    PostMessageA(state->hwnd, WM_LP_DISCOVERY_RESULT, 0, 0);
+    free(request);
+    return 0;
+}
+
+static void refresh_selected_device_identity(lp_tray_state_t *state, const char *ip)
+{
+    if (ip == NULL || ip[0] == '\0') {
+        return;
+    }
+    if (state->device_refresh_thread != NULL) {
+        if (WaitForSingleObject(state->device_refresh_thread, 0) == WAIT_TIMEOUT) {
+            LP_DEBUG("selected device refresh already running");
+            return;
+        }
+        CloseHandle(state->device_refresh_thread);
+        state->device_refresh_thread = NULL;
+    }
+    lp_device_refresh_request_t *request = calloc(1, sizeof(*request));
+    if (request == NULL) {
+        return;
+    }
+    request->state = state;
+    snprintf(request->ip, sizeof(request->ip), "%s", ip);
+    state->device_refresh_thread = CreateThread(NULL, 0, device_refresh_thread_proc, request, 0, NULL);
+    if (state->device_refresh_thread == NULL) {
+        free(request);
+        return;
+    }
+}
+
 /* Builds the dynamic tray menu and dispatches the selected user command. */
 static void show_context_menu(lp_tray_state_t *state)
 {
@@ -812,6 +918,15 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
         }
         return 0;
+    case WM_COPYDATA: {
+        const COPYDATASTRUCT *copy_data = (const COPYDATASTRUCT *)lparam;
+        if (copy_data != NULL && copy_data->dwData == LP_NETWORK_MAP_COPYDATA_DEVICE_SELECTED &&
+            copy_data->lpData != NULL && copy_data->cbData > 0) {
+            refresh_selected_device_identity(state, (const char *)copy_data->lpData);
+            return TRUE;
+        }
+        return FALSE;
+    }
     case WM_DESTROY: {
         bool can_delete_lock = true;
         lp_config_t config_to_save;
@@ -904,6 +1019,17 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             }
             CloseHandle(state->download_thread);
             state->download_thread = NULL;
+        }
+        if (state->device_refresh_thread != NULL) {
+            const DWORD wait_result = WaitForSingleObject(state->device_refresh_thread,
+                                                          LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
+            if (wait_result == WAIT_TIMEOUT) {
+                LP_WARN("device-refresh thread did not exit within %u ms; continuing shutdown",
+                        (unsigned)LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
+                can_delete_lock = false;
+            }
+            CloseHandle(state->device_refresh_thread);
+            state->device_refresh_thread = NULL;
         }
         if (state->update_stop_event != NULL && can_close_update_stop_event) {
             CloseHandle(state->update_stop_event);

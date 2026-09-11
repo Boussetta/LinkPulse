@@ -618,6 +618,16 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
                         snprintf(state->selected_device_ip, sizeof(state->selected_device_ip), "%s",
                                 visible_items[i].ip);
                         state->has_selected_device = true;
+                        HWND owner = GetWindow(window, GW_OWNER);
+                        if (owner != NULL && visible_items[i].ip[0] != '\0') {
+                            COPYDATASTRUCT copy_data;
+                            memset(&copy_data, 0, sizeof(copy_data));
+                            copy_data.dwData = LP_NETWORK_MAP_COPYDATA_DEVICE_SELECTED;
+                            copy_data.cbData = (DWORD)strlen(visible_items[i].ip) + 1;
+                            copy_data.lpData = (PVOID)visible_items[i].ip;
+                            (void)SendMessageA(owner, WM_COPYDATA, (WPARAM)window,
+                                               (LPARAM)&copy_data);
+                        }
                     }
                     InvalidateRect(window, NULL, TRUE);
                     break;
