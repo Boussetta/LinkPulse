@@ -14,6 +14,7 @@
 #include "linkpulse/update.h"
 
 #include "network_map_win32.h"
+#include "speed_meter_win32.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -26,6 +27,8 @@
 #define WM_LP_TRAYICON (WM_APP + 1)
 #define WM_LP_UPDATE_RESULT (WM_APP + 2)
 #define WM_LP_DISCOVERY_RESULT (WM_APP + 3)
+#define WM_LP_SPEED_METER_OPEN (WM_APP + 4)
+#define WM_LP_NETWORK_MAP_OPEN (WM_APP + 5)
 #define LP_TRAY_TIMER_ID 1
 #define LP_TRAY_ICON_UID 1
 #define LP_UPDATE_VERSION_MAX 32
@@ -84,6 +87,8 @@ typedef struct {
 
     HWND hwnd;
     HWND network_map_hwnd;
+    HWND speed_meter_hwnd;
+    char pending_speed_meter_ip[LP_IP_STR_MAX];
     NOTIFYICONDATAA nid;
     HICON current_icon;
     UINT wm_taskbar_created;
@@ -528,6 +533,20 @@ static void show_discovery_notifications(lp_tray_state_t *state)
 }
 
 /* Toggles the map popup using a consistent locked snapshot of discovery state. */
+static void show_network_map(lp_tray_state_t *state)
+{
+    if (state->network_map_hwnd == NULL) {
+        return;
+    }
+    lp_neighbor_list_t neighbors;
+    lp_local_network_list_t networks;
+    EnterCriticalSection(&state->lock);
+    neighbors = state->map_neighbors;
+    networks = state->map_networks;
+    LeaveCriticalSection(&state->lock);
+    lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
+}
+
 static void toggle_network_map(lp_tray_state_t *state)
 {
     if (state->network_map_hwnd == NULL) {
@@ -537,14 +556,42 @@ static void toggle_network_map(lp_tray_state_t *state)
         ShowWindow(state->network_map_hwnd, SW_HIDE);
         return;
     }
+    show_network_map(state);
+}
 
-    lp_neighbor_list_t neighbors;
-    lp_local_network_list_t networks;
+/* Opens the speed meter layer for the gateway the map reported as clicked. */
+static void show_speed_meter(lp_tray_state_t *state, const char *gateway_ip)
+{
+    if (state->speed_meter_hwnd == NULL || gateway_ip == NULL || gateway_ip[0] == '\0') {
+        LP_WARN("speed meter unavailable: window=%p gateway=%s", (void *)state->speed_meter_hwnd,
+                gateway_ip != NULL && gateway_ip[0] != '\0' ? gateway_ip : "(none)");
+        return;
+    }
+
+    char label[LP_HOSTNAME_MAX];
+    char isp[LP_ISP_NAME_MAX];
+    label[0] = '\0';
+    isp[0] = '\0';
     EnterCriticalSection(&state->lock);
-    neighbors = state->map_neighbors;
-    networks = state->map_networks;
+    for (size_t i = 0; i < state->map_networks.count; ++i) {
+        if (strcmp(state->map_networks.items[i].gateway, gateway_ip) != 0) {
+            continue;
+        }
+        if (state->map_networks.items[i].gateway_hostname[0] != '\0') {
+            snprintf(label, sizeof(label), "%s", state->map_networks.items[i].gateway_hostname);
+        } else if (state->map_networks.items[i].gateway_vendor[0] != '\0') {
+            snprintf(label, sizeof(label), "%s", state->map_networks.items[i].gateway_vendor);
+        }
+        break;
+    }
+    if (state->isp_available) {
+        snprintf(isp, sizeof(isp), "%s", state->isp_info.isp);
+    }
     LeaveCriticalSection(&state->lock);
-    lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
+
+    const bool use_bits = InterlockedCompareExchange(&state->use_bits, 0, 0) != 0;
+    lp_speed_meter_show(state->speed_meter_hwnd, label[0] != '\0' ? label : "Router", gateway_ip,
+                        isp, use_bits);
 }
 
 typedef struct {
@@ -920,13 +967,47 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         return 0;
     case WM_COPYDATA: {
         const COPYDATASTRUCT *copy_data = (const COPYDATASTRUCT *)lparam;
-        if (copy_data != NULL && copy_data->dwData == LP_NETWORK_MAP_COPYDATA_DEVICE_SELECTED &&
-            copy_data->lpData != NULL && copy_data->cbData > 0) {
+        if (copy_data == NULL || copy_data->lpData == NULL || copy_data->cbData == 0) {
+            return FALSE;
+        }
+        if (copy_data->dwData == LP_NETWORK_MAP_COPYDATA_DEVICE_SELECTED) {
             refresh_selected_device_identity(state, (const char *)copy_data->lpData);
+            return TRUE;
+        }
+        if (copy_data->dwData == LP_NETWORK_MAP_COPYDATA_ROUTER_SELECTED) {
+            /* Posted rather than handled inline: this arrives inside the map's
+               SendMessage, and activating a window from there re-enters the
+               map's own deactivate handling. */
+            const size_t data_size = copy_data->cbData < sizeof(state->pending_speed_meter_ip)
+                                          ? copy_data->cbData
+                                          : sizeof(state->pending_speed_meter_ip);
+            const char *terminator =
+                (const char *)memchr(copy_data->lpData, '\0', data_size);
+            if (terminator == NULL) {
+                return FALSE;
+            }
+            const size_t ip_size = (size_t)(terminator - (const char *)copy_data->lpData);
+            memcpy(state->pending_speed_meter_ip, copy_data->lpData, ip_size + 1);
+            LP_DEBUG("router selected on map: gateway=%s", state->pending_speed_meter_ip);
+            PostMessageA(hwnd, WM_LP_SPEED_METER_OPEN, 0, 0);
+            return TRUE;
+        }
+        if (copy_data->dwData == LP_SPEED_METER_COPYDATA_BACK) {
+            PostMessageA(hwnd, WM_LP_NETWORK_MAP_OPEN, 0, 0);
             return TRUE;
         }
         return FALSE;
     }
+    case WM_LP_SPEED_METER_OPEN:
+        show_speed_meter(state, state->pending_speed_meter_ip);
+        return 0;
+    case WM_LP_NETWORK_MAP_OPEN:
+        /* Map first: it inherits the foreground from the still-visible meter. */
+        show_network_map(state);
+        if (state->speed_meter_hwnd != NULL) {
+            ShowWindow(state->speed_meter_hwnd, SW_HIDE);
+        }
+        return 0;
     case WM_DESTROY: {
         bool can_delete_lock = true;
         lp_config_t config_to_save;
@@ -946,6 +1027,10 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         if (state->network_map_hwnd != NULL) {
             DestroyWindow(state->network_map_hwnd);
             state->network_map_hwnd = NULL;
+        }
+        if (state->speed_meter_hwnd != NULL) {
+            DestroyWindow(state->speed_meter_hwnd);
+            state->speed_meter_hwnd = NULL;
         }
         if (state->current_icon != NULL) {
             DestroyIcon(state->current_icon);
@@ -1110,6 +1195,10 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
     g_tray.network_map_hwnd = lp_network_map_create(instance, g_tray.hwnd);
     if (g_tray.network_map_hwnd == NULL) {
         LP_WARN("failed to create network map window");
+    }
+    g_tray.speed_meter_hwnd = lp_speed_meter_create(instance, g_tray.hwnd);
+    if (g_tray.speed_meter_hwnd == NULL) {
+        LP_WARN("failed to create speed meter window");
     }
 
     g_tray.nid.cbSize = sizeof(g_tray.nid);

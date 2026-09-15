@@ -2,6 +2,7 @@
 
 #include "linkpulse/log.h"
 #include "linkpulse/net.h"
+#include "linkpulse/speedtest.h"
 #include "linkpulse/status.h"
 
 #include <stdatomic.h>
@@ -200,6 +201,75 @@ static void test_log_level_and_filtering(void)
     fclose(file_capture);
 }
 
+static uint64_t mbps_to_bytes_per_sec(uint64_t mbps)
+{
+    return (mbps * 1000000u) / 8u;
+}
+
+/* Verifies quality classification for unknown and partial measurements. */
+static void test_speedtest_quality_unknown_and_partial(void)
+{
+    LP_CHECK(lp_speedtest_quality(NULL) == LP_SPEEDTEST_QUALITY_UNKNOWN);
+
+    lp_speedtest_progress_t progress = {0};
+    LP_CHECK(lp_speedtest_quality(&progress) == LP_SPEEDTEST_QUALITY_UNKNOWN);
+
+    progress.has_download = true;
+    progress.download_bytes_per_sec = mbps_to_bytes_per_sec(25);
+    LP_CHECK(lp_speedtest_quality(&progress) == LP_SPEEDTEST_QUALITY_GOOD);
+}
+
+/* Verifies inclusive threshold boundaries for each measured dimension. */
+static void test_speedtest_quality_threshold_boundaries(void)
+{
+    lp_speedtest_progress_t progress = {0};
+
+    progress.has_download = true;
+    progress.download_bytes_per_sec = mbps_to_bytes_per_sec(5);
+    LP_CHECK(lp_speedtest_quality(&progress) == LP_SPEEDTEST_QUALITY_FAIR);
+    progress.download_bytes_per_sec = mbps_to_bytes_per_sec(25);
+    LP_CHECK(lp_speedtest_quality(&progress) == LP_SPEEDTEST_QUALITY_GOOD);
+    progress.download_bytes_per_sec = mbps_to_bytes_per_sec(100);
+    LP_CHECK(lp_speedtest_quality(&progress) == LP_SPEEDTEST_QUALITY_EXCELLENT);
+
+    progress = (lp_speedtest_progress_t){0};
+    progress.has_upload = true;
+    progress.upload_bytes_per_sec = mbps_to_bytes_per_sec(1);
+    LP_CHECK(lp_speedtest_quality(&progress) == LP_SPEEDTEST_QUALITY_FAIR);
+    progress.upload_bytes_per_sec = mbps_to_bytes_per_sec(5);
+    LP_CHECK(lp_speedtest_quality(&progress) == LP_SPEEDTEST_QUALITY_GOOD);
+    progress.upload_bytes_per_sec = mbps_to_bytes_per_sec(20);
+    LP_CHECK(lp_speedtest_quality(&progress) == LP_SPEEDTEST_QUALITY_EXCELLENT);
+
+    progress = (lp_speedtest_progress_t){0};
+    progress.has_latency = true;
+    progress.latency_us = 150000;
+    progress.jitter_us = 60000;
+    LP_CHECK(lp_speedtest_quality(&progress) == LP_SPEEDTEST_QUALITY_FAIR);
+    progress.latency_us = 60000;
+    progress.jitter_us = 30000;
+    LP_CHECK(lp_speedtest_quality(&progress) == LP_SPEEDTEST_QUALITY_GOOD);
+    progress.latency_us = 30000;
+    progress.jitter_us = 10000;
+    LP_CHECK(lp_speedtest_quality(&progress) == LP_SPEEDTEST_QUALITY_EXCELLENT);
+}
+
+/* Verifies the overall grade uses the weakest measured dimension. */
+static void test_speedtest_quality_uses_weakest_dimension(void)
+{
+    lp_speedtest_progress_t progress = {0};
+
+    progress.has_download = true;
+    progress.download_bytes_per_sec = mbps_to_bytes_per_sec(100);
+    progress.has_upload = true;
+    progress.upload_bytes_per_sec = mbps_to_bytes_per_sec(1);
+    progress.has_latency = true;
+    progress.latency_us = 30000;
+    progress.jitter_us = 10000;
+
+    LP_CHECK(lp_speedtest_quality(&progress) == LP_SPEEDTEST_QUALITY_FAIR);
+}
+
 /* Runs status, network-container, and logger contract scenarios. */
 int main(void)
 {
@@ -207,5 +277,8 @@ int main(void)
     test_iface_list_find();
     test_iface_list_free_is_idempotent();
     test_log_level_and_filtering();
+    test_speedtest_quality_unknown_and_partial();
+    test_speedtest_quality_threshold_boundaries();
+    test_speedtest_quality_uses_weakest_dimension();
     LP_TEST_RETURN();
 }
