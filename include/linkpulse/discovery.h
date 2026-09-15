@@ -77,6 +77,9 @@ typedef struct {
 typedef lp_status_t (*lp_net_neighbor_snapshot_fn)(lp_neighbor_list_t *out);
 typedef lp_status_t (*lp_net_local_networks_fn)(lp_local_network_list_t *out);
 
+/* Refreshes best-effort name/type metadata for one already-known neighbor. */
+lp_status_t lp_net_refresh_neighbor_identity(lp_neighbor_t *neighbor);
+
 typedef struct {
     lp_net_neighbor_snapshot_fn snapshot_fn;
     lp_net_local_networks_fn local_networks_fn;

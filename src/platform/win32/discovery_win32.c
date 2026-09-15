@@ -16,6 +16,9 @@
 #define LP_ACTIVE_SCAN_MAX_PREFIX 24
 #define LP_ACTIVE_SCAN_MAX_SUBNETS 8
 #define LP_ACTIVE_SCAN_MAX_PROBES 32
+#define LP_MDNS_PORT 5353
+#define LP_MDNS_TIMEOUT_MS 250
+#define LP_DNS_PACKET_MAX 1500
 
 static uint32_t g_active_probe_offset;
 
@@ -44,6 +47,15 @@ static void format_mac(const UCHAR *address, ULONG length, char *out, size_t out
              address[3], address[4], address[5]);
 }
 
+static bool is_locally_administered_mac(const char *mac)
+{
+    unsigned first_octet = 0;
+    if (mac == NULL || sscanf(mac, "%2x", &first_octet) != 1) {
+        return false;
+    }
+    return (first_octet & 0x02u) != 0 && (first_octet & 0x01u) == 0;
+}
+
 /* Excludes broadcast, multicast, and unspecified addresses from inventory. */
 static bool is_unicast_address(const SOCKADDR_INET *address)
 {
@@ -54,6 +66,185 @@ static bool is_unicast_address(const SOCKADDR_INET *address)
     }
     if (address->si_family == AF_INET6) {
         return !IN6_IS_ADDR_MULTICAST(&address->Ipv6.sin6_addr);
+    }
+    return false;
+}
+
+static uint16_t dns_read_u16(const unsigned char *packet, size_t offset)
+{
+    return (uint16_t)((packet[offset] << 8) | packet[offset + 1]);
+}
+
+static uint32_t dns_read_u32(const unsigned char *packet, size_t offset)
+{
+    return ((uint32_t)packet[offset] << 24) | ((uint32_t)packet[offset + 1] << 16) |
+           ((uint32_t)packet[offset + 2] << 8) | (uint32_t)packet[offset + 3];
+}
+
+static bool dns_skip_name(const unsigned char *packet, size_t packet_len, size_t *offset)
+{
+    for (int guard = 0; guard < 128 && *offset < packet_len; ++guard) {
+        const unsigned char label_len = packet[*offset];
+        if (label_len == 0) {
+            ++(*offset);
+            return true;
+        }
+        if ((label_len & 0xC0u) == 0xC0u) {
+            if (*offset + 1 >= packet_len) return false;
+            *offset += 2;
+            return true;
+        }
+        if ((label_len & 0xC0u) != 0 || *offset + 1 + label_len > packet_len) {
+            return false;
+        }
+        *offset += 1 + label_len;
+    }
+    return false;
+}
+
+static bool dns_read_name(const unsigned char *packet, size_t packet_len, size_t *offset,
+                          char *out, size_t out_cap)
+{
+    size_t cursor = *offset;
+    size_t out_len = 0;
+    bool jumped = false;
+    out[0] = '\0';
+    for (int guard = 0; guard < 128 && cursor < packet_len; ++guard) {
+        const unsigned char label_len = packet[cursor];
+        if (label_len == 0) {
+            if (!jumped) *offset = cursor + 1;
+            return out_len > 0;
+        }
+        if ((label_len & 0xC0u) == 0xC0u) {
+            if (cursor + 1 >= packet_len) return false;
+            const size_t target = (size_t)(((label_len & 0x3Fu) << 8) | packet[cursor + 1]);
+            if (!jumped) *offset = cursor + 2;
+            cursor = target;
+            jumped = true;
+            continue;
+        }
+        if ((label_len & 0xC0u) != 0 || cursor + 1 + label_len > packet_len) {
+            return false;
+        }
+        if (out_len > 0 && out_len + 1 < out_cap) {
+            out[out_len++] = '.';
+        }
+        for (size_t i = 0; i < label_len && out_len + 1 < out_cap; ++i) {
+            out[out_len++] = (char)packet[cursor + 1 + i];
+        }
+        out[out_len] = '\0';
+        cursor += 1 + label_len;
+    }
+    return false;
+}
+
+static bool dns_write_qname(unsigned char *packet, size_t packet_cap, size_t *offset,
+                            const char *name)
+{
+    const char *label = name;
+    while (*label != '\0') {
+        const char *dot = strchr(label, '.');
+        const size_t label_len = dot != NULL ? (size_t)(dot - label) : strlen(label);
+        if (label_len == 0 || label_len > 63 || *offset + 1 + label_len >= packet_cap) {
+            return false;
+        }
+        packet[(*offset)++] = (unsigned char)label_len;
+        memcpy(packet + *offset, label, label_len);
+        *offset += label_len;
+        if (dot == NULL) break;
+        label = dot + 1;
+    }
+    if (*offset >= packet_cap) return false;
+    packet[(*offset)++] = 0;
+    return true;
+}
+
+static bool resolve_mdns_hostname_ipv4(const SOCKADDR_INET *address, bool targeted, char *out,
+                                       size_t out_cap)
+{
+    unsigned char query[512] = {0};
+    char reverse_name[64];
+    const uint32_t host_address = ntohl(address->Ipv4.sin_addr.S_un.S_addr);
+    snprintf(reverse_name, sizeof(reverse_name), "%u.%u.%u.%u.in-addr.arpa",
+             (unsigned)(host_address & 0xffu), (unsigned)((host_address >> 8) & 0xffu),
+             (unsigned)((host_address >> 16) & 0xffu), (unsigned)((host_address >> 24) & 0xffu));
+
+    query[5] = 1; /* QDCOUNT */
+    size_t query_len = 12;
+    if (!dns_write_qname(query, sizeof(query), &query_len, reverse_name) ||
+        query_len + 4 > sizeof(query)) {
+        return false;
+    }
+    query[query_len++] = 0;
+    query[query_len++] = 12; /* PTR */
+    query[query_len++] = 0;
+    query[query_len++] = 1; /* IN */
+
+    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET) {
+        return false;
+    }
+    DWORD timeout = LP_MDNS_TIMEOUT_MS;
+    (void)setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout));
+    unsigned char ttl = 255;
+    (void)setsockopt(sock, IPPROTO_IP, IP_MULTICAST_TTL, (const char *)&ttl, sizeof(ttl));
+
+    SOCKADDR_IN destination;
+    memset(&destination, 0, sizeof(destination));
+    destination.sin_family = AF_INET;
+    destination.sin_port = htons(LP_MDNS_PORT);
+    if (targeted) {
+        destination.sin_addr = address->Ipv4.sin_addr;
+    } else if (InetPtonA(AF_INET, "224.0.0.251", &destination.sin_addr) != 1) {
+        closesocket(sock);
+        return false;
+    }
+    const int sent = sendto(sock, (const char *)query, (int)query_len, 0,
+                            (const SOCKADDR *)&destination, sizeof(destination));
+    if (sent == SOCKET_ERROR) {
+        closesocket(sock);
+        return false;
+    }
+
+    unsigned char response[LP_DNS_PACKET_MAX];
+    const int received = recvfrom(sock, (char *)response, sizeof(response), 0, NULL, NULL);
+    closesocket(sock);
+    if (received < 12) {
+        return false;
+    }
+
+    const size_t response_len = (size_t)received;
+    const uint16_t qdcount = dns_read_u16(response, 4);
+    const uint16_t ancount = dns_read_u16(response, 6);
+    const uint16_t nscount = dns_read_u16(response, 8);
+    const uint16_t arcount = dns_read_u16(response, 10);
+    size_t offset = 12;
+    for (uint16_t i = 0; i < qdcount; ++i) {
+        if (!dns_skip_name(response, response_len, &offset) || offset + 4 > response_len) {
+            return false;
+        }
+        offset += 4;
+    }
+    const uint32_t record_count = (uint32_t)ancount + (uint32_t)nscount + (uint32_t)arcount;
+    for (uint32_t i = 0; i < record_count; ++i) {
+        if (!dns_skip_name(response, response_len, &offset) || offset + 10 > response_len) {
+            return false;
+        }
+        const uint16_t type = dns_read_u16(response, offset);
+        (void)dns_read_u16(response, offset + 2);
+        (void)dns_read_u32(response, offset + 4);
+        const uint16_t rdlength = dns_read_u16(response, offset + 8);
+        offset += 10;
+        if (offset + rdlength > response_len) {
+            return false;
+        }
+        if (type == 12) {
+            size_t rdata_offset = offset;
+            if (dns_read_name(response, response_len, &rdata_offset, out, out_cap)) {
+                return true;
+            }
+        }
+        offset += rdlength;
     }
     return false;
 }
@@ -135,6 +326,38 @@ static void classify_neighbor(lp_neighbor_t *neighbor)
 {
     classify_identity(neighbor->hostname, neighbor->vendor, sizeof(neighbor->vendor),
                       &neighbor->device_type, &neighbor->device_confidence);
+    if (neighbor->device_type == LP_DEVICE_UNKNOWN &&
+        is_locally_administered_mac(neighbor->mac)) {
+        snprintf(neighbor->vendor, sizeof(neighbor->vendor), "Private Wi-Fi MAC");
+        neighbor->device_type = LP_DEVICE_MOBILE;
+        neighbor->device_confidence = 35;
+    }
+}
+
+lp_status_t lp_net_refresh_neighbor_identity(lp_neighbor_t *neighbor)
+{
+    if (neighbor == NULL || neighbor->ip[0] == '\0') {
+        return LP_ERR_INVALID_ARG;
+    }
+    SOCKADDR_INET address;
+    memset(&address, 0, sizeof(address));
+    address.Ipv4.sin_family = AF_INET;
+    if (InetPtonA(AF_INET, neighbor->ip, &address.Ipv4.sin_addr) != 1) {
+        return LP_ERR_UNSUPPORTED;
+    }
+
+    WSADATA winsock_data;
+    if (WSAStartup(MAKEWORD(2, 2), &winsock_data) != 0) {
+        return LP_ERR_IO;
+    }
+    resolve_hostname(&address, neighbor->hostname, sizeof(neighbor->hostname));
+    if (neighbor->hostname[0] == '\0') {
+        (void)resolve_mdns_hostname_ipv4(&address, true, neighbor->hostname,
+                                         sizeof(neighbor->hostname));
+    }
+    classify_neighbor(neighbor);
+    WSACleanup();
+    return LP_OK;
 }
 
 /* Maps the Windows adapter media type to the portable connection enum. */
@@ -167,6 +390,53 @@ static long find_neighbor_mac(const lp_neighbor_list_t *list, const char *mac)
         }
     }
     return -1;
+}
+
+/* Avoids re-adding the same address twice within one snapshot pass. */
+static long find_neighbor_ip(const lp_neighbor_list_t *list, const char *ip)
+{
+    if (ip == NULL || ip[0] == '\0') {
+        return -1;
+    }
+    for (size_t i = 0; i < list->count; ++i) {
+        if (strcmp(list->items[i].ip, ip) == 0) {
+            return (long)i;
+        }
+    }
+    return -1;
+}
+
+/* Some public/isolated Wi-Fi networks proxy-ARP: the access point answers for
+   every client with its own MAC, so distinct devices end up sharing one MAC
+   in our neighbor table. Treating that shared MAC as a stable identity would
+   merge those devices into one entry (or hide all but one), so any MAC seen
+   on more than one IP is blanked out and those neighbors fall back to
+   IP-based identity instead. */
+static void clear_ambiguous_macs(lp_neighbor_list_t *list)
+{
+    for (size_t i = 0; i < list->count; ++i) {
+        if (list->items[i].mac[0] == '\0') {
+            continue;
+        }
+        size_t sharing_count = 1;
+        for (size_t j = i + 1; j < list->count; ++j) {
+            if (strcmp(list->items[j].mac, list->items[i].mac) == 0) {
+                ++sharing_count;
+            }
+        }
+        if (sharing_count <= 1) {
+            continue;
+        }
+        LP_DEBUG("clearing ambiguous MAC %s shared by %llu addresses (likely proxy ARP)",
+                list->items[i].mac, (unsigned long long)sharing_count);
+        char ambiguous_mac[LP_MAC_STR_MAX];
+        snprintf(ambiguous_mac, sizeof(ambiguous_mac), "%s", list->items[i].mac);
+        for (size_t j = i; j < list->count; ++j) {
+            if (strcmp(list->items[j].mac, ambiguous_mac) == 0) {
+                list->items[j].mac[0] = '\0';
+            }
+        }
+    }
 }
 
 /* Matches active results against passive entries without duplicating devices. */
@@ -210,6 +480,10 @@ static void append_active_neighbor(lp_neighbor_list_t *out, const char *ip,
     address.Ipv4.sin_family = AF_INET;
     InetPtonA(AF_INET, ip, &address.Ipv4.sin_addr);
     resolve_hostname(&address, neighbor->hostname, sizeof(neighbor->hostname));
+    if (neighbor->hostname[0] == '\0') {
+        (void)resolve_mdns_hostname_ipv4(&address, false, neighbor->hostname,
+                                         sizeof(neighbor->hostname));
+    }
     classify_neighbor(neighbor);
 }
 
@@ -403,31 +677,36 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
             continue;
         }
 
+        if (find_neighbor_ip(out, ip) >= 0) {
+            continue;
+        }
         lp_neighbor_t *neighbor = &out->items[out->count];
         memset(neighbor, 0, sizeof(*neighbor));
         snprintf(neighbor->ip, sizeof(neighbor->ip), "%s", ip);
         format_mac(row->PhysicalAddress, row->PhysicalAddressLength, neighbor->mac,
                    sizeof(neighbor->mac));
-        if (find_neighbor_mac(out, neighbor->mac) >= 0) {
-            continue;
-        }
         neighbor->connection_type = connection_type_for_interface(&row->InterfaceLuid);
         neighbor->hostname[0] = '\0';
         if (winsock_ready) {
             resolve_hostname(&row->Address, neighbor->hostname, sizeof(neighbor->hostname));
+            if (neighbor->hostname[0] == '\0' && row->Address.si_family == AF_INET) {
+                (void)resolve_mdns_hostname_ipv4(&row->Address, false, neighbor->hostname,
+                                                 sizeof(neighbor->hostname));
+            }
         }
         classify_neighbor(neighbor);
         ++out->count;
     }
 
     FreeMibTable(table);
-    if (winsock_ready) {
-        WSACleanup();
-    }
     const size_t active_discovered = probe_active_subnets(out);
     if (active_discovered > 0) {
         LP_DEBUG("active discovery added %llu neighbor(s)", (unsigned long long)active_discovered);
     }
+    if (winsock_ready) {
+        WSACleanup();
+    }
+    clear_ambiguous_macs(out);
     return LP_OK;
 }
 

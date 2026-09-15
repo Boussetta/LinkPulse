@@ -17,6 +17,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <windows.h>
@@ -61,6 +62,8 @@ typedef struct {
     char update_version[LP_UPDATE_VERSION_MAX];
     bool isp_available;
     lp_isp_info_t isp_info;
+    char last_gateway_mac[LP_MAC_STR_MAX];
+    bool last_gateway_mac_set;
 
     lp_sampler_t sampler;
     lp_discovery_t discovery;
@@ -70,8 +73,10 @@ typedef struct {
     HANDLE update_thread;
     HANDLE discovery_thread;
     HANDLE isp_thread;
+    HANDLE device_refresh_thread;
     HANDLE download_thread;
     HANDLE update_stop_event;
+    HANDLE isp_refresh_event;
     lp_discovery_event_t discovery_events[LP_DISCOVERY_MAX_EVENTS];
     size_t discovery_event_count;
     lp_neighbor_list_t map_neighbors;
@@ -270,7 +275,9 @@ static DWORD WINAPI update_thread_proc(LPVOID param)
     return 0;
 }
 
-/* Looks up the public IP/ISP on a long interval; failures are silently retried. */
+/* Looks up the public IP/ISP on a long interval, or immediately when the
+   discovery thread signals isp_refresh_event after seeing the gateway MAC
+   change (e.g. switching Wi-Fi networks); failures are silently retried. */
 static DWORD WINAPI isp_thread_proc(LPVOID param)
 {
     lp_tray_state_t *state = (lp_tray_state_t *)param;
@@ -299,10 +306,13 @@ static DWORD WINAPI isp_thread_proc(LPVOID param)
             LP_WARN("ISP lookup failed: %s", lp_status_str(status));
         }
 
-        if (WaitForSingleObject(state->update_stop_event, LP_ISP_LOOKUP_INTERVAL_MS) ==
-            WAIT_OBJECT_0) {
-            break;
+        const HANDLE wait_handles[2] = {state->update_stop_event, state->isp_refresh_event};
+        const DWORD wait_result = WaitForMultipleObjects(2, wait_handles, FALSE,
+                                                          LP_ISP_LOOKUP_INTERVAL_MS);
+        if (wait_result == WAIT_OBJECT_0) {
+            break; /* stop event */
         }
+        /* WAIT_OBJECT_0 + 1 (refresh) or WAIT_TIMEOUT both fall through to loop and re-lookup. */
     }
     LP_DEBUG("ISP lookup thread stopped");
     return 0;
@@ -319,10 +329,48 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
         const lp_status_t status =
             lp_discovery_poll(&state->discovery, events, LP_DISCOVERY_MAX_EVENTS, &event_count);
         if (status == LP_OK) {
+            lp_local_network_list_t networks = {0};
+            if (state->discovery.sources.local_networks_fn != NULL) {
+                (void)state->discovery.sources.local_networks_fn(&networks);
+            }
+            /* Scopes the device store to whichever router is currently the
+               default gateway, so switching networks (home, work, a
+               relative's house) keeps separate device lists and ISP identity. */
+            const char *gateway_mac = "";
+            const char *gateway_hostname = "";
+            const char *gateway_vendor = "";
+            for (size_t i = 0; i < networks.count; ++i) {
+                if (networks.items[i].gateway_mac[0] != '\0') {
+                    gateway_mac = networks.items[i].gateway_mac;
+                    gateway_hostname = networks.items[i].gateway_hostname;
+                    gateway_vendor = networks.items[i].gateway_vendor;
+                    break;
+                }
+            }
+            /* last_gateway_mac is only ever read/written on this thread, so no
+               lock is needed here. A momentary gap in gateway resolution
+               (e.g. the adapter briefly reporting no default gateway) should
+               not scatter this poll's devices into the "unknown network"
+               bucket; keep attributing them to the last confirmed network
+               instead. A genuine change refreshes the ISP lookup immediately
+               rather than waiting for the hourly timer. */
+            if (gateway_mac[0] == '\0' && state->last_gateway_mac_set) {
+                gateway_mac = state->last_gateway_mac;
+            } else if (gateway_mac[0] != '\0' &&
+                       (!state->last_gateway_mac_set ||
+                        strcmp(state->last_gateway_mac, gateway_mac) != 0)) {
+                LP_INFO("gateway changed to %s; refreshing ISP lookup", gateway_mac);
+                snprintf(state->last_gateway_mac, sizeof(state->last_gateway_mac), "%s",
+                        gateway_mac);
+                state->last_gateway_mac_set = true;
+                if (state->isp_refresh_event != NULL) {
+                    SetEvent(state->isp_refresh_event);
+                }
+            }
             /* Applies previously learned identity to notifications/logging too,
                not just the map, so a transient DNS miss doesn't hide a known name. */
             for (size_t i = 0; i < event_count; ++i) {
-                lp_win32_device_store_apply(state->device_store, &events[i].neighbor);
+                lp_win32_device_store_apply(state->device_store, gateway_mac, &events[i].neighbor);
             }
             size_t active_count = 0;
             for (size_t i = 0; i < state->discovery.known_count; ++i) {
@@ -342,19 +390,18 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                         events[i].neighbor.hostname[0] != '\0' ? events[i].neighbor.hostname
                                                                  : "(unknown)");
             }
-            lp_local_network_list_t networks = {0};
-            if (state->discovery.sources.local_networks_fn != NULL) {
-                (void)state->discovery.sources.local_networks_fn(&networks);
-            }
             EnterCriticalSection(&state->lock);
+            const lp_network_context_t network_context = {
+                gateway_mac, gateway_hostname, gateway_vendor,
+                state->isp_available ? &state->isp_info : NULL};
             state->map_neighbors.count = 0;
             for (size_t i = 0; i < state->discovery.known_count &&
                                 state->map_neighbors.count < LP_DISCOVERY_MAX_NEIGHBORS;
                  ++i) {
                 if (state->discovery.known[i].active) {
                     lp_neighbor_t neighbor = state->discovery.known[i];
-                    lp_win32_device_store_apply(state->device_store, &neighbor);
-                    lp_win32_device_store_observe(state->device_store, &neighbor);
+                    lp_win32_device_store_apply(state->device_store, gateway_mac, &neighbor);
+                    lp_win32_device_store_observe(state->device_store, &network_context, &neighbor);
                     state->map_neighbors.items[state->map_neighbors.count++] = neighbor;
                 }
             }
@@ -498,6 +545,110 @@ static void toggle_network_map(lp_tray_state_t *state)
     networks = state->map_networks;
     LeaveCriticalSection(&state->lock);
     lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
+}
+
+typedef struct {
+    lp_tray_state_t *state;
+    char ip[LP_IP_STR_MAX];
+} lp_device_refresh_request_t;
+
+static void network_context_from_snapshot(const lp_local_network_list_t *networks,
+                                          const lp_isp_info_t *isp,
+                                          lp_network_context_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->gateway_mac = "";
+    out->gateway_hostname = "";
+    out->gateway_vendor = "";
+    out->isp = isp;
+    for (size_t i = 0; i < networks->count; ++i) {
+        if (networks->items[i].gateway_mac[0] != '\0') {
+            out->gateway_mac = networks->items[i].gateway_mac;
+            out->gateway_hostname = networks->items[i].gateway_hostname;
+            out->gateway_vendor = networks->items[i].gateway_vendor;
+            return;
+        }
+    }
+}
+
+static DWORD WINAPI device_refresh_thread_proc(LPVOID param)
+{
+    lp_device_refresh_request_t *request = (lp_device_refresh_request_t *)param;
+    lp_tray_state_t *state = request->state;
+    lp_neighbor_t neighbor = {0};
+    lp_local_network_list_t networks = {0};
+    lp_isp_info_t isp = {0};
+    bool found = false;
+    bool isp_available = false;
+    EnterCriticalSection(&state->lock);
+    for (size_t i = 0; i < state->map_neighbors.count; ++i) {
+        if (strcmp(state->map_neighbors.items[i].ip, request->ip) == 0) {
+            neighbor = state->map_neighbors.items[i];
+            found = true;
+            break;
+        }
+    }
+    networks = state->map_networks;
+    if (state->isp_available) {
+        isp = state->isp_info;
+        isp_available = true;
+    }
+    LeaveCriticalSection(&state->lock);
+    if (!found) {
+        free(request);
+        return 0;
+    }
+
+    LP_DEBUG("refreshing selected device identity: ip=%s mac=%s", neighbor.ip,
+             neighbor.mac[0] != '\0' ? neighbor.mac : "(unknown)");
+    const lp_status_t status = lp_net_refresh_neighbor_identity(&neighbor);
+    if (status != LP_OK) {
+        LP_DEBUG("selected device identity refresh failed: ip=%s status=%s", neighbor.ip,
+                 lp_status_str(status));
+        free(request);
+        return 0;
+    }
+
+    EnterCriticalSection(&state->lock);
+    for (size_t i = 0; i < state->map_neighbors.count; ++i) {
+        if (strcmp(state->map_neighbors.items[i].ip, neighbor.ip) == 0) {
+            state->map_neighbors.items[i] = neighbor;
+            break;
+        }
+    }
+    lp_network_context_t network_context;
+    network_context_from_snapshot(&networks, isp_available ? &isp : NULL, &network_context);
+    lp_win32_device_store_observe(state->device_store, &network_context, &neighbor);
+    LeaveCriticalSection(&state->lock);
+    PostMessageA(state->hwnd, WM_LP_DISCOVERY_RESULT, 0, 0);
+    free(request);
+    return 0;
+}
+
+static void refresh_selected_device_identity(lp_tray_state_t *state, const char *ip)
+{
+    if (ip == NULL || ip[0] == '\0') {
+        return;
+    }
+    if (state->device_refresh_thread != NULL) {
+        if (WaitForSingleObject(state->device_refresh_thread, 0) == WAIT_TIMEOUT) {
+            LP_DEBUG("selected device refresh already running");
+            return;
+        }
+        CloseHandle(state->device_refresh_thread);
+        state->device_refresh_thread = NULL;
+    }
+    lp_device_refresh_request_t *request = calloc(1, sizeof(*request));
+    if (request == NULL) {
+        return;
+    }
+    request->state = state;
+    snprintf(request->ip, sizeof(request->ip), "%s", ip);
+    state->device_refresh_thread = CreateThread(NULL, 0, device_refresh_thread_proc, request, 0, NULL);
+    if (state->device_refresh_thread == NULL) {
+        free(request);
+        return;
+    }
 }
 
 /* Builds the dynamic tray menu and dispatches the selected user command. */
@@ -767,6 +918,15 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
         }
         return 0;
+    case WM_COPYDATA: {
+        const COPYDATASTRUCT *copy_data = (const COPYDATASTRUCT *)lparam;
+        if (copy_data != NULL && copy_data->dwData == LP_NETWORK_MAP_COPYDATA_DEVICE_SELECTED &&
+            copy_data->lpData != NULL && copy_data->cbData > 0) {
+            refresh_selected_device_identity(state, (const char *)copy_data->lpData);
+            return TRUE;
+        }
+        return FALSE;
+    }
     case WM_DESTROY: {
         bool can_delete_lock = true;
         lp_config_t config_to_save;
@@ -860,9 +1020,24 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             CloseHandle(state->download_thread);
             state->download_thread = NULL;
         }
+        if (state->device_refresh_thread != NULL) {
+            const DWORD wait_result = WaitForSingleObject(state->device_refresh_thread,
+                                                          LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
+            if (wait_result == WAIT_TIMEOUT) {
+                LP_WARN("device-refresh thread did not exit within %u ms; continuing shutdown",
+                        (unsigned)LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
+                can_delete_lock = false;
+            }
+            CloseHandle(state->device_refresh_thread);
+            state->device_refresh_thread = NULL;
+        }
         if (state->update_stop_event != NULL && can_close_update_stop_event) {
             CloseHandle(state->update_stop_event);
             state->update_stop_event = NULL;
+        }
+        if (state->isp_refresh_event != NULL) {
+            CloseHandle(state->isp_refresh_event);
+            state->isp_refresh_event = NULL;
         }
         lp_win32_device_store_close(state->device_store);
         state->device_store = NULL;
@@ -962,6 +1137,10 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
     g_tray.update_stop_event = CreateEventA(NULL, TRUE, FALSE, NULL);
     if (g_tray.update_stop_event == NULL) {
         LP_WARN("failed to create update-check stop event");
+    }
+    g_tray.isp_refresh_event = CreateEventA(NULL, FALSE, FALSE, NULL);
+    if (g_tray.isp_refresh_event == NULL) {
+        LP_WARN("failed to create ISP refresh event");
     }
 
     g_tray.thread = CreateThread(NULL, 0, sampler_thread_proc, &g_tray, 0, NULL);
