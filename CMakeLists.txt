@@ -71,6 +71,7 @@ add_library(lp_core STATIC
   src/core/log.c
   src/core/net.c
   src/core/sampler.c
+  src/core/speedtest.c
   src/core/status.c
 )
 target_include_directories(lp_core PUBLIC include)
@@ -95,6 +96,7 @@ add_library(lp_platform STATIC
   src/platform/win32/net_win32.c
   src/platform/win32/notification_win32.c
   src/platform/win32/shortcut_win32.c
+  src/platform/win32/speedtest_win32.c
   src/platform/win32/update_win32.c
 )
 target_link_libraries(lp_platform PUBLIC lp_core PRIVATE lp_warnings)
@@ -103,7 +105,7 @@ target_link_libraries(lp_platform PUBLIC iphlpapi ole32 runtimeobject winhttp ws
 target_compile_definitions(lp_platform PUBLIC _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN NOMINMAX)
 
 # --- executable ----------------------------------------------------------------
-add_executable(linkpulse src/cli/main.c src/ui/network_map_win32.c src/ui/tray_win32.c)
+add_executable(linkpulse src/cli/main.c src/ui/network_map_win32.c src/ui/speed_meter_win32.c src/ui/tray_win32.c)
 target_link_libraries(linkpulse PRIVATE lp_platform lp_warnings)
 target_link_libraries(linkpulse PRIVATE shell32 gdi32 user32 advapi32)
 # Single source of truth for the version string, consumed by --version.
@@ -122,7 +124,7 @@ target_compile_definitions(linkpulse PRIVATE
 # so it never needs a console in the first place; linkpulse.exe (this target,
 # console subsystem, unchanged) remains the CLI/debug tool, including its own
 # --tray for debugging with visible log output.
-add_executable(linkpulse-tray src/cli/tray_main.c src/ui/network_map_win32.c src/ui/tray_win32.c)
+add_executable(linkpulse-tray src/cli/tray_main.c src/ui/network_map_win32.c src/ui/speed_meter_win32.c src/ui/tray_win32.c)
 target_link_libraries(linkpulse-tray PRIVATE lp_platform lp_warnings)
 target_link_libraries(linkpulse-tray PRIVATE shell32 gdi32 user32 advapi32)
 target_compile_definitions(linkpulse-tray PRIVATE

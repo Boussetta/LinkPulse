@@ -1,5 +1,7 @@
 #include "network_map_win32.h"
 
+#include "linkpulse/log.h"
+
 #include <stdio.h>
 #include <string.h>
 
@@ -13,6 +15,10 @@
 #define LP_ISP_DETAIL_LINES_MAX 3
 #define LP_ISP_DETAIL_LINE_HEIGHT 20
 #define LP_DEVICE_DETAIL_LINES_MAX 3
+#define LP_GATEWAY_LABEL_MAX (LP_HOSTNAME_MAX + LP_VENDOR_MAX + 32)
+#define LP_GATEWAY_NODE_WIDTH 170
+#define LP_GATEWAY_NODE_HALF_HEIGHT 31
+#define LP_GATEWAY_BASE_Y 165
 
 typedef struct {
     lp_neighbor_list_t neighbors;
@@ -301,6 +307,39 @@ static void device_node_center(size_t visible_index, size_t visible_count, int c
     *out_y = 285 + row * 112 + isp_extra_height;
 }
 
+/* Resolves the gateway identity shown on the map; paint and clicks share it. */
+static bool find_gateway(const lp_network_map_state_t *state, char *ip_out, size_t ip_cap,
+                         char *label_out, size_t label_cap)
+{
+    snprintf(ip_out, ip_cap, "No gateway");
+    snprintf(label_out, label_cap, "Gateway");
+    for (size_t i = 0; i < state->networks.count; ++i) {
+        if (state->networks.items[i].gateway[0] == '\0') {
+            continue;
+        }
+        snprintf(ip_out, ip_cap, "%s", state->networks.items[i].gateway);
+        if (state->networks.items[i].gateway_hostname[0] != '\0') {
+            snprintf(label_out, label_cap, "%s", state->networks.items[i].gateway_hostname);
+        } else if (state->networks.items[i].gateway_vendor[0] != '\0') {
+            snprintf(label_out, label_cap, "%s", state->networks.items[i].gateway_vendor);
+        }
+        return true;
+    }
+    return false;
+}
+
+/* Recomputes the vertical offset the expanded ISP panel pushes everything down by. */
+static int isp_detail_offset(const lp_network_map_state_t *state)
+{
+    if (!state->show_isp_details) {
+        return 0;
+    }
+    char lines[LP_ISP_DETAIL_LINES_MAX][LP_ISP_DETAIL_LINE_MAX];
+    return (int)format_isp_detail_lines(&state->networks.isp_info, lines) *
+               LP_ISP_DETAIL_LINE_HEIGHT +
+           8;
+}
+
 /* Builds up to LP_DEVICE_DETAIL_LINES_MAX lines describing everything known about a device. */
 static size_t format_device_detail_lines(
     const lp_neighbor_t *neighbor, bool is_local,
@@ -385,26 +424,10 @@ static void paint_map(HWND window, HDC dc)
         isp_extra_height = (int)isp_detail_line_count * LP_ISP_DETAIL_LINE_HEIGHT + 8;
     }
     const int cloud_bottom_y = 104;
-    const int gateway_y = 165 + isp_extra_height;
-    char gateway[LP_IP_STR_MAX] = "No gateway";
-    char gateway_label[LP_HOSTNAME_MAX + LP_VENDOR_MAX + 32];
-    gateway_label[0] = '\0';
-    for (size_t i = 0; i < state->networks.count; ++i) {
-        if (state->networks.items[i].gateway[0] != '\0') {
-            snprintf(gateway, sizeof(gateway), "%s", state->networks.items[i].gateway);
-            if (state->networks.items[i].gateway_hostname[0] != '\0') {
-                snprintf(gateway_label, sizeof(gateway_label), "%s",
-                         state->networks.items[i].gateway_hostname);
-            } else if (state->networks.items[i].gateway_vendor[0] != '\0') {
-                snprintf(gateway_label, sizeof(gateway_label), "%s",
-                         state->networks.items[i].gateway_vendor);
-            }
-            break;
-        }
-    }
-    if (gateway_label[0] == '\0') {
-        snprintf(gateway_label, sizeof(gateway_label), "Gateway");
-    }
+    const int gateway_y = LP_GATEWAY_BASE_Y + isp_extra_height;
+    char gateway[LP_IP_STR_MAX];
+    char gateway_label[LP_GATEWAY_LABEL_MAX];
+    (void)find_gateway(state, gateway, sizeof(gateway), gateway_label, sizeof(gateway_label));
 
     HPEN line_pen = CreatePen(PS_SOLID, 2, line);
     HPEN old_pen = (HPEN)SelectObject(dc, line_pen);
@@ -422,7 +445,7 @@ static void paint_map(HWND window, HDC dc)
         draw_centered_text(dc, state->label_font, muted, isp_detail_lines[i], detail_rect);
     }
     draw_node(dc, state->label_font, gateway_fill, line, text, gateway_label, gateway, center_x,
-              gateway_y, 170);
+              gateway_y, LP_GATEWAY_NODE_WIDTH);
 
     size_t visible_index = 0;
     lp_neighbor_t selected_device = {0};
@@ -583,12 +606,28 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
             if (state == NULL) {
                 return 0;
             }
-            int isp_extra_height = 0;
-            if (state->show_isp_details) {
-                char isp_detail_lines[LP_ISP_DETAIL_LINES_MAX][LP_ISP_DETAIL_LINE_MAX];
-                const size_t isp_detail_line_count =
-                    format_isp_detail_lines(&state->networks.isp_info, isp_detail_lines);
-                isp_extra_height = (int)isp_detail_line_count * LP_ISP_DETAIL_LINE_HEIGHT + 8;
+            int isp_extra_height = isp_detail_offset(state);
+            const int gateway_y = LP_GATEWAY_BASE_Y + isp_extra_height;
+            if (x >= center_x - LP_GATEWAY_NODE_WIDTH / 2 &&
+                x <= center_x + LP_GATEWAY_NODE_WIDTH / 2 &&
+                y >= gateway_y - LP_GATEWAY_NODE_HALF_HEIGHT &&
+                y <= gateway_y + LP_GATEWAY_NODE_HALF_HEIGHT) {
+                char gateway[LP_IP_STR_MAX];
+                char gateway_label[LP_GATEWAY_LABEL_MAX];
+                HWND owner = GetWindow(window, GW_OWNER);
+                const bool has_gateway = find_gateway(state, gateway, sizeof(gateway),
+                                                      gateway_label, sizeof(gateway_label));
+                LP_DEBUG("gateway node clicked: has_gateway=%d owner=%p gateway=%s",
+                         has_gateway ? 1 : 0, (void *)owner, gateway);
+                if (has_gateway && owner != NULL) {
+                    COPYDATASTRUCT copy_data;
+                    memset(&copy_data, 0, sizeof(copy_data));
+                    copy_data.dwData = LP_NETWORK_MAP_COPYDATA_ROUTER_SELECTED;
+                    copy_data.cbData = (DWORD)strlen(gateway) + 1;
+                    copy_data.lpData = (PVOID)gateway;
+                    (void)SendMessageA(owner, WM_COPYDATA, (WPARAM)window, (LPARAM)&copy_data);
+                }
+                return 0;
             }
             size_t device_count = state->networks.local_hostname[0] != '\0' ||
                                           state->networks.local_ip[0] != '\0'
