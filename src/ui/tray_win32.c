@@ -978,8 +978,16 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             /* Posted rather than handled inline: this arrives inside the map's
                SendMessage, and activating a window from there re-enters the
                map's own deactivate handling. */
-            snprintf(state->pending_speed_meter_ip, sizeof(state->pending_speed_meter_ip), "%s",
-                     (const char *)copy_data->lpData);
+            const size_t data_size = copy_data->cbData < sizeof(state->pending_speed_meter_ip)
+                                          ? copy_data->cbData
+                                          : sizeof(state->pending_speed_meter_ip);
+            const char *terminator =
+                (const char *)memchr(copy_data->lpData, '\0', data_size);
+            if (terminator == NULL) {
+                return FALSE;
+            }
+            const size_t ip_size = (size_t)(terminator - (const char *)copy_data->lpData);
+            memcpy(state->pending_speed_meter_ip, copy_data->lpData, ip_size + 1);
             LP_DEBUG("router selected on map: gateway=%s", state->pending_speed_meter_ip);
             PostMessageA(hwnd, WM_LP_SPEED_METER_OPEN, 0, 0);
             return TRUE;
