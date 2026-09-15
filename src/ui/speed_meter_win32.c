@@ -627,6 +627,10 @@ void lp_speed_meter_show(HWND window, const char *router_label, const char *rout
     if (state == NULL) {
         return;
     }
+    stop_test(state);
+    EnterCriticalSection(&state->lock);
+    memset(&state->progress, 0, sizeof(state->progress));
+    LeaveCriticalSection(&state->lock);
     snprintf(state->router_label, sizeof(state->router_label), "%s",
              router_label != NULL && router_label[0] != '\0' ? router_label : "Gateway");
     snprintf(state->router_ip, sizeof(state->router_ip), "%s", router_ip != NULL ? router_ip : "");
