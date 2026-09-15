@@ -33,6 +33,7 @@ typedef struct {
     volatile long cancel;
     volatile LONG running;
     HANDLE thread;
+    HANDLE destroy_wait;
 
     HFONT title_font;
     HFONT value_font;
@@ -52,6 +53,30 @@ static lp_speed_meter_state_t *state_of(HWND window)
 }
 
 static void stop_test(lp_speed_meter_state_t *state);
+
+static void free_state(lp_speed_meter_state_t *state)
+{
+    DeleteObject(state->title_font);
+    DeleteObject(state->value_font);
+    DeleteObject(state->label_font);
+    DeleteObject(state->small_font);
+    DeleteObject(state->background_brush);
+    DeleteCriticalSection(&state->lock);
+    HeapFree(GetProcessHeap(), 0, state);
+}
+
+static VOID CALLBACK on_destroy_wait_complete(PVOID context, BOOLEAN timed_out)
+{
+    (void)timed_out;
+    lp_speed_meter_state_t *state = (lp_speed_meter_state_t *)context;
+    InterlockedExchange(&state->running, 0);
+    if (state->thread != NULL) {
+        CloseHandle(state->thread);
+        state->thread = NULL;
+    }
+    state->destroy_wait = NULL;
+    free_state(state);
+}
 
 /* Asks the worker to abort; it may take until the current chunk to notice. */
 static void cancel_test(lp_speed_meter_state_t *state)
@@ -575,15 +600,22 @@ static LRESULT CALLBACK speed_meter_wndproc(HWND window, UINT message, WPARAM wp
     case WM_DESTROY: {
         lp_speed_meter_state_t *state = state_of(window);
         if (state != NULL) {
-            stop_test(state);
-            DeleteObject(state->title_font);
-            DeleteObject(state->value_font);
-            DeleteObject(state->label_font);
-            DeleteObject(state->small_font);
-            DeleteObject(state->background_brush);
-            DeleteCriticalSection(&state->lock);
-            HeapFree(GetProcessHeap(), 0, state);
             SetWindowLongPtrA(window, GWLP_USERDATA, 0);
+            state->cancel = 1;
+            if (state->thread != NULL) {
+                if (WaitForSingleObject(state->thread, 0) == WAIT_OBJECT_0) {
+                    CloseHandle(state->thread);
+                    state->thread = NULL;
+                    InterlockedExchange(&state->running, 0);
+                    free_state(state);
+                } else if (RegisterWaitForSingleObject(&state->destroy_wait, state->thread,
+                                                       on_destroy_wait_complete, state, INFINITE,
+                                                       WT_EXECUTEONLYONCE) == 0) {
+                    LP_WARN("speed meter destroy wait registration failed; deferring worker cleanup");
+                }
+            } else {
+                free_state(state);
+            }
         }
         return 0;
     }
