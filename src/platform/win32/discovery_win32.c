@@ -384,9 +384,12 @@ static void classify_identity(const char *hostname, char *vendor, size_t vendor_
                contains_token(hostname, "chromecast")) {
         *device_type = LP_DEVICE_TELEVISION;
         *confidence = 80;
-    } else if (contains_token(hostname, "router") || contains_token(hostname, "gateway") ||
-               contains_token(hostname, "fritz")) {
+    } else if (contains_token(hostname, "fritz")) {
         snprintf(vendor, vendor_cap, "FRITZ!Box");
+        *device_type = LP_DEVICE_ROUTER;
+        *confidence = 90;
+    } else if (contains_token(hostname, "router") || contains_token(hostname, "gateway")) {
+        /* A generic name says nothing about the manufacturer. */
         *device_type = LP_DEVICE_ROUTER;
         *confidence = 90;
     }
