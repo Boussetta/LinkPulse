@@ -293,8 +293,41 @@ lp_status_t lp_update_download_latest(char *installer_path, size_t path_cap)
     return LP_OK;
 }
 
+/* Optional publisher pin, set at configure time with -DLINKPULSE_UPDATE_SIGNER="...". When
+   empty, any signature that chains to a trusted root is accepted. */
+#ifndef LP_UPDATE_SIGNER
+#define LP_UPDATE_SIGNER ""
+#endif
+static const wchar_t k_expected_signer[] = L"" LP_UPDATE_SIGNER;
+
+/* Compares the leaf signing certificate's display name against the configured pin. Must run
+   while the WinVerifyTrust state is still open. */
+static bool signer_matches_pin(HANDLE state_data)
+{
+    if (k_expected_signer[0] == L'\0') {
+        return true;
+    }
+    CRYPT_PROVIDER_DATA *provider = WTHelperProvDataFromStateData(state_data);
+    CRYPT_PROVIDER_SGNR *signer =
+        provider != NULL ? WTHelperGetProvSignerFromChain(provider, 0, FALSE, 0) : NULL;
+    CRYPT_PROVIDER_CERT *certificate =
+        signer != NULL ? WTHelperGetProvCertFromChain(signer, 0) : NULL;
+    if (certificate == NULL || certificate->pCert == NULL) {
+        LP_ERROR("update installer signer could not be read");
+        return false;
+    }
+    wchar_t name[256] = L"";
+    (void)CertGetNameStringW(certificate->pCert, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL, name,
+                             (DWORD)(sizeof(name) / sizeof(name[0])));
+    if (wcscmp(name, k_expected_signer) != 0) {
+        LP_ERROR("update installer signed by unexpected publisher: %ls", name);
+        return false;
+    }
+    return true;
+}
+
 /* Checks the file's embedded Authenticode signature against the machine's trusted roots,
-   including revocation of every certificate in the chain. */
+   including revocation of every certificate in the chain, and the optional publisher pin. */
 static bool installer_signature_is_trusted(const wchar_t *path)
 {
     WINTRUST_FILE_INFO file_info;
@@ -313,6 +346,7 @@ static bool installer_signature_is_trusted(const wchar_t *path)
 
     GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
     const LONG result = WinVerifyTrust((HWND)INVALID_HANDLE_VALUE, &action, &trust_data);
+    const bool signer_ok = result == ERROR_SUCCESS && signer_matches_pin(trust_data.hWVTStateData);
     trust_data.dwStateAction = WTD_STATEACTION_CLOSE;
     (void)WinVerifyTrust((HWND)INVALID_HANDLE_VALUE, &action, &trust_data);
 
@@ -321,7 +355,7 @@ static bool installer_signature_is_trusted(const wchar_t *path)
                  (unsigned long)result);
         return false;
     }
-    return true;
+    return signer_ok;
 }
 
 /* Verifies, then starts, a downloaded installer; unverified files are never executed. */
