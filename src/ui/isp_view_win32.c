@@ -1,5 +1,7 @@
 #include "isp_view_win32.h"
 
+#include "dpi_win32.h"
+
 #include <stdio.h>
 #include <string.h>
 
@@ -100,10 +102,12 @@ static void paint_isp_view(HWND window, HDC target_dc)
         return;
     }
 
-    RECT client;
-    GetClientRect(window, &client);
+    const UINT dpi = lp_ui_window_dpi(window);
+    RECT physical;
+    GetClientRect(window, &physical);
+    const RECT client = lp_ui_layout_client_rect(window, dpi);
     HDC dc = CreateCompatibleDC(target_dc);
-    HBITMAP bitmap = CreateCompatibleBitmap(target_dc, client.right, client.bottom);
+    HBITMAP bitmap = CreateCompatibleBitmap(target_dc, physical.right, physical.bottom);
     if (dc == NULL || bitmap == NULL) {
         if (bitmap != NULL) {
             DeleteObject(bitmap);
@@ -114,6 +118,7 @@ static void paint_isp_view(HWND window, HDC target_dc)
         return;
     }
     HBITMAP old_bitmap = (HBITMAP)SelectObject(dc, bitmap);
+    lp_ui_begin_scaled_paint(dc, dpi);
     FillRect(dc, &client, state->background_brush);
 
     const bool light = is_taskbar_light_theme();
@@ -187,7 +192,8 @@ static void paint_isp_view(HWND window, HDC target_dc)
     SelectObject(dc, old_brush);
     DeleteObject(frame_pen);
 
-    BitBlt(target_dc, 0, 0, client.right, client.bottom, dc, 0, 0, SRCCOPY);
+    lp_ui_end_scaled_paint(dc, dpi);
+    BitBlt(target_dc, 0, 0, physical.right, physical.bottom, dc, 0, 0, SRCCOPY);
     SelectObject(dc, old_bitmap);
     DeleteObject(bitmap);
     DeleteDC(dc);
@@ -235,11 +241,15 @@ static LRESULT CALLBACK isp_view_wndproc(HWND window, UINT message, WPARAM wpara
             go_back(window);
         }
         return 0;
+    case WM_DPICHANGED:
+        lp_ui_handle_dpi_changed(window, wparam, LP_ISP_VIEW_WIDTH, LP_ISP_VIEW_HEIGHT);
+        return 0;
     case WM_LBUTTONUP: {
-        const int x = (short)LOWORD(lparam);
-        const int y = (short)HIWORD(lparam);
-        RECT client;
-        GetClientRect(window, &client);
+        const UINT dpi = lp_ui_window_dpi(window);
+        const POINT point = lp_ui_layout_point(lparam, dpi);
+        const int x = point.x;
+        const int y = point.y;
+        const RECT client = lp_ui_layout_client_rect(window, dpi);
         if (x >= client.right - 58 && y <= 58) {
             ShowWindow(window, SW_HIDE);
             return 0;
@@ -337,13 +347,13 @@ void lp_isp_view_show(HWND window, const lp_isp_info_t *info, bool lookup_failed
     POINT cursor;
     GetCursorPos(&cursor);
     HMONITOR monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO monitor_info = {0};
-    monitor_info.cbSize = sizeof(monitor_info);
-    GetMonitorInfoA(monitor, &monitor_info);
-    const int x = monitor_info.rcWork.right - LP_ISP_VIEW_WIDTH - 12;
-    const int y = monitor_info.rcWork.bottom - LP_ISP_VIEW_HEIGHT - 8;
-    SetWindowPos(window, HWND_TOPMOST, x, y, LP_ISP_VIEW_WIDTH, LP_ISP_VIEW_HEIGHT,
+    UINT dpi = LP_UI_DEFAULT_DPI;
+    const RECT rect = lp_ui_popup_rect(monitor, LP_ISP_VIEW_WIDTH, LP_ISP_VIEW_HEIGHT, &dpi);
+    const int width = rect.right - rect.left;
+    const int height = rect.bottom - rect.top;
+    SetWindowPos(window, HWND_TOPMOST, rect.left, rect.top, width, height,
                  SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    lp_ui_apply_popup_region(window, width, height, dpi);
     SetForegroundWindow(window);
     InvalidateRect(window, NULL, FALSE);
 }

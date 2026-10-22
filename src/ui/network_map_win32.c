@@ -1,5 +1,7 @@
 #include "network_map_win32.h"
 
+#include "dpi_win32.h"
+
 #include "linkpulse/log.h"
 
 #include <stdio.h>
@@ -28,6 +30,8 @@ typedef struct {
     HBRUSH background_brush;
     int target_x;
     int target_y;
+    int slide_distance; /* physical pixels the slide-in animation travels */
+    bool animating;
     DWORD animation_started_at;
     bool has_selected_device;
     char selected_device_ip[LP_IP_STR_MAX];
@@ -321,8 +325,9 @@ static void paint_map(HWND window, HDC dc)
         return;
     }
 
-    RECT client;
-    GetClientRect(window, &client);
+    const UINT dpi = lp_ui_window_dpi(window);
+    const RECT client = lp_ui_layout_client_rect(window, dpi);
+    lp_ui_begin_scaled_paint(dc, dpi);
     FillRect(dc, &client, state->background_brush);
 
     const bool light = is_taskbar_light_theme();
@@ -435,6 +440,7 @@ static void paint_map(HWND window, HDC dc)
     SelectObject(dc, old_pen);
     SelectObject(dc, old_brush);
     DeleteObject(frame_pen);
+    lp_ui_end_scaled_paint(dc, dpi);
 }
 
 /* Owns map window resources, animation, repaint, theme, and close handling. */
@@ -473,6 +479,11 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
     case WM_ACTIVATE:
         if (LOWORD(wparam) == WA_INACTIVE) {
             KillTimer(window, LP_MAP_ANIMATION_TIMER);
+            lp_network_map_state_t *state =
+                (lp_network_map_state_t *)GetWindowLongPtrA(window, GWLP_USERDATA);
+            if (state != NULL) {
+                state->animating = false;
+            }
             ShowWindow(window, SW_HIDE);
         }
         return 0;
@@ -486,12 +497,14 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
             }
             const DWORD elapsed = GetTickCount() - state->animation_started_at;
             if (elapsed >= LP_MAP_ANIMATION_DURATION_MS) {
+                /* Cleared first: landing on the destination may deliver its WM_DPICHANGED. */
+                state->animating = false;
                 SetWindowPos(window, HWND_TOPMOST, state->target_x, state->target_y, 0, 0,
                              SWP_NOSIZE | SWP_NOACTIVATE);
                 KillTimer(window, LP_MAP_ANIMATION_TIMER);
                 return 0;
             }
-            const int distance = LP_MAP_WIDTH + 12;
+            const int distance = state->slide_distance;
             const int remaining = (int)(LP_MAP_ANIMATION_DURATION_MS - elapsed);
             const int x = state->target_x + distance * remaining / LP_MAP_ANIMATION_DURATION_MS;
             SetWindowPos(window, HWND_TOPMOST, x, state->target_y, 0, 0,
@@ -503,11 +516,26 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
             ShowWindow(window, SW_HIDE);
         }
         return 0;
+    case WM_DPICHANGED: {
+        lp_network_map_state_t *state =
+            (lp_network_map_state_t *)GetWindowLongPtrA(window, GWLP_USERDATA);
+        /* Sliding in from beyond the work area can briefly cross another monitor; the map keeps
+           the size it was given for its destination until the slide ends. */
+        if (state != NULL && state->animating) {
+            return 0;
+        }
+        if (state != NULL) {
+            state->slide_distance = lp_ui_scale(LP_MAP_WIDTH + 12, HIWORD(wparam));
+        }
+        lp_ui_handle_dpi_changed(window, wparam, LP_MAP_WIDTH, LP_MAP_HEIGHT);
+        return 0;
+    }
     case WM_LBUTTONUP: {
-        const int x = (short)LOWORD(lparam);
-        const int y = (short)HIWORD(lparam);
-        RECT client;
-        GetClientRect(window, &client);
+        const UINT dpi = lp_ui_window_dpi(window);
+        const POINT point = lp_ui_layout_point(lparam, dpi);
+        const int x = point.x;
+        const int y = point.y;
+        const RECT client = lp_ui_layout_client_rect(window, dpi);
         if (x >= client.right - 58 && y <= 58) {
             ShowWindow(window, SW_HIDE);
             return 0;
@@ -679,18 +707,19 @@ void lp_network_map_show(HWND window, const lp_neighbor_list_t *neighbors,
     POINT cursor;
     GetCursorPos(&cursor);
     HMONITOR monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO monitor_info;
-    memset(&monitor_info, 0, sizeof(monitor_info));
-    monitor_info.cbSize = sizeof(monitor_info);
-    GetMonitorInfoA(monitor, &monitor_info);
-    const int x = monitor_info.rcWork.right - LP_MAP_WIDTH - 12;
-    const int y = monitor_info.rcWork.bottom - LP_MAP_HEIGHT - 8;
+    UINT dpi = LP_UI_DEFAULT_DPI;
+    const RECT rect = lp_ui_popup_rect(monitor, LP_MAP_WIDTH, LP_MAP_HEIGHT, &dpi);
+    const int width = rect.right - rect.left;
+    const int height = rect.bottom - rect.top;
 
-    state->target_x = x;
-    state->target_y = y;
+    state->target_x = rect.left;
+    state->target_y = rect.top;
+    state->slide_distance = lp_ui_scale(LP_MAP_WIDTH + 12, dpi);
     state->animation_started_at = GetTickCount();
-    SetWindowPos(window, HWND_TOPMOST, x + LP_MAP_WIDTH + 12, y, LP_MAP_WIDTH, LP_MAP_HEIGHT,
+    state->animating = true;
+    SetWindowPos(window, HWND_TOPMOST, rect.left + state->slide_distance, rect.top, width, height,
                  SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    lp_ui_apply_popup_region(window, width, height, dpi);
     InvalidateRect(window, NULL, TRUE);
     SetForegroundWindow(window);
     SetTimer(window, LP_MAP_ANIMATION_TIMER, LP_MAP_ANIMATION_STEP_MS, NULL);
