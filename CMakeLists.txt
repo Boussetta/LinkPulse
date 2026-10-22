@@ -109,7 +109,7 @@ set(LINKPULSE_UPDATE_SIGNER "" CACHE STRING "Required signer name for downloaded
 target_compile_definitions(lp_platform PRIVATE LP_UPDATE_SIGNER="${LINKPULSE_UPDATE_SIGNER}")
 
 # --- executable ----------------------------------------------------------------
-add_executable(linkpulse src/cli/main.c src/ui/network_map_win32.c src/ui/speed_meter_win32.c src/ui/tray_win32.c)
+add_executable(linkpulse src/cli/main.c src/ui/isp_view_win32.c src/ui/network_map_win32.c src/ui/speed_meter_win32.c src/ui/tray_win32.c)
 target_link_libraries(linkpulse PRIVATE lp_platform lp_warnings)
 target_link_libraries(linkpulse PRIVATE shell32 gdi32 user32 advapi32)
 # Single source of truth for the version string, consumed by --version.
@@ -128,7 +128,7 @@ target_compile_definitions(linkpulse PRIVATE
 # so it never needs a console in the first place; linkpulse.exe (this target,
 # console subsystem, unchanged) remains the CLI/debug tool, including its own
 # --tray for debugging with visible log output.
-add_executable(linkpulse-tray src/cli/tray_main.c src/ui/network_map_win32.c src/ui/speed_meter_win32.c src/ui/tray_win32.c)
+add_executable(linkpulse-tray src/cli/tray_main.c src/ui/isp_view_win32.c src/ui/network_map_win32.c src/ui/speed_meter_win32.c src/ui/tray_win32.c)
 target_link_libraries(linkpulse-tray PRIVATE lp_platform lp_warnings)
 target_link_libraries(linkpulse-tray PRIVATE shell32 gdi32 user32 advapi32)
 target_compile_definitions(linkpulse-tray PRIVATE
