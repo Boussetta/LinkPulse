@@ -214,8 +214,13 @@ static pcap_t *open_default_route_interface(const lp_pcap_api_t *api, char *deta
     return handle;
 }
 
+static bool is_cancelled(volatile long *cancel)
+{
+    return cancel != NULL && InterlockedCompareExchange(cancel, 0, 0) != 0;
+}
+
 lp_status_t lp_win32_capture_device_activity(const char *device_ip, unsigned duration_ms,
-                                             lp_capture_activity_t *out)
+                                             volatile long *cancel, lp_capture_activity_t *out)
 {
     if (device_ip == NULL || device_ip[0] == '\0' || out == NULL || duration_ms == 0) {
         return LP_ERR_INVALID_ARG;
@@ -273,6 +278,11 @@ lp_status_t lp_win32_capture_device_activity(const char *device_ip, unsigned dur
 
     const DWORD until = GetTickCount() + duration_ms;
     while ((LONG)(GetTickCount() - until) < 0) {
+        if (is_cancelled(cancel)) {
+            snprintf(out->detail, sizeof(out->detail), "Capture cancelled");
+            status = LP_ERR_IO;
+            break;
+        }
         pcap_pkthdr_t *header = NULL;
         const unsigned char *packet = NULL;
         const int result = api.next_packet(handle, &header, &packet);

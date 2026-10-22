@@ -36,6 +36,7 @@
 #define WM_LP_NETWORK_MAP_OPEN (WM_APP + 5)
 #define WM_LP_THIS_PC_OPEN (WM_APP + 6)
 #define WM_LP_DEVICE_DETAILS_OPEN (WM_APP + 7)
+#define WM_LP_DEVICE_REFRESH_DONE (WM_APP + 8)
 #define WM_LP_ISP_VIEW_OPEN (WM_APP + 9)
 #define WM_LP_ISP_RESULT (WM_APP + 10)
 #define LP_TRAY_TIMER_ID 1
@@ -103,7 +104,9 @@ typedef struct {
     lp_neighbor_list_t map_neighbors;
     lp_local_network_list_t map_networks;
     lp_capture_activity_t selected_device_capture;
+    char selected_device_capture_ip[LP_IP_STR_MAX]; /* device the capture above belongs to */
     bool has_selected_device_capture;
+    volatile LONG device_refresh_cancel; /* asks the running device refresh to stop capturing */
 
     HWND hwnd;
     HWND network_map_hwnd;
@@ -113,6 +116,8 @@ typedef struct {
     HWND isp_view_hwnd;
     char pending_speed_meter_ip[LP_IP_STR_MAX];
     char pending_device_ip[LP_IP_STR_MAX];
+    char device_refresh_running_ip[LP_IP_STR_MAX]; /* "" when no refresh thread is running */
+    char device_refresh_queued_ip[LP_IP_STR_MAX];  /* latest request made while one was running */
     NOTIFYICONDATAA nid;
     HICON current_icon;
     UINT wm_taskbar_created;
@@ -742,12 +747,25 @@ static void show_device_details(lp_tray_state_t *state, const char *device_ip)
         lp_capture_activity_t capture = {0};
         bool has_capture;
         EnterCriticalSection(&state->lock);
-        capture = state->selected_device_capture;
-        has_capture = state->has_selected_device_capture;
+        /* A capture finished for a previously selected device must never be shown for this one. */
+        has_capture = state->has_selected_device_capture &&
+                      strcmp(state->selected_device_capture_ip, device_ip) == 0;
+        if (has_capture) {
+            capture = state->selected_device_capture;
+        }
         LeaveCriticalSection(&state->lock);
         lp_device_capture_state_t capture_state = LP_DEVICE_CAPTURE_OFF;
         if (InterlockedCompareExchange(&state->packet_capture, 0, 0) != 0) {
-            capture_state = has_capture ? LP_DEVICE_CAPTURE_DONE : LP_DEVICE_CAPTURE_RUNNING;
+            const bool refresh_pending = strcmp(state->device_refresh_running_ip, device_ip) == 0 ||
+                                         strcmp(state->device_refresh_queued_ip, device_ip) == 0;
+            if (has_capture) {
+                capture_state = LP_DEVICE_CAPTURE_DONE;
+            } else if (refresh_pending) {
+                capture_state = LP_DEVICE_CAPTURE_RUNNING;
+            } else {
+                capture_state = LP_DEVICE_CAPTURE_DONE;
+                snprintf(capture.detail, sizeof(capture.detail), "Capture did not start");
+            }
         }
         lp_device_details_show(state->device_details_hwnd, &neighbor, capture_state, &capture);
     }
@@ -799,86 +817,149 @@ static DWORD WINAPI device_refresh_thread_proc(LPVOID param)
         isp_available = true;
     }
     LeaveCriticalSection(&state->lock);
-    if (!found) {
-        free(request);
-        return 0;
-    }
 
-    LP_DEBUG("refreshing selected device identity: ip=%s mac=%s", neighbor.ip,
-             neighbor.mac[0] != '\0' ? neighbor.mac : "(unknown)");
-    const lp_status_t status = lp_net_refresh_neighbor_identity(&neighbor);
-    if (status != LP_OK) {
-        LP_DEBUG("selected device identity refresh failed: ip=%s status=%s", neighbor.ip,
-                 lp_status_str(status));
-        free(request);
-        return 0;
+    /* A failed identity refresh must not skip the capture: the IP alone is enough to sample. */
+    bool identity_refreshed = false;
+    if (found) {
+        LP_DEBUG("refreshing selected device identity: ip=%s mac=%s", neighbor.ip,
+                 neighbor.mac[0] != '\0' ? neighbor.mac : "(unknown)");
+        const lp_status_t status = lp_net_refresh_neighbor_identity(&neighbor);
+        identity_refreshed = status == LP_OK;
+        if (!identity_refreshed) {
+            LP_DEBUG("selected device identity refresh failed: ip=%s status=%s", neighbor.ip,
+                     lp_status_str(status));
+        }
+    } else {
+        LP_DEBUG("selected device is no longer on the map: ip=%s", request->ip);
     }
 
     lp_capture_activity_t capture = {0};
     const bool capture_enabled = InterlockedCompareExchange(&state->packet_capture, 0, 0) != 0;
-    if (capture_enabled) {
-        const lp_status_t capture_status =
-            lp_win32_capture_device_activity(neighbor.ip, 5000, &capture);
+    if (capture_enabled && InterlockedCompareExchange(&state->device_refresh_cancel, 0, 0) == 0) {
+        const lp_status_t capture_status = lp_win32_capture_device_activity(
+            request->ip, 5000, &state->device_refresh_cancel, &capture);
         LP_INFO("device capture: ip=%s status=%s visible=%d packets=%u rx_bytes=%llu "
                 "tx_bytes=%llu detail=%s",
-                neighbor.ip, lp_status_str(capture_status), capture.device_visible ? 1 : 0,
+                request->ip, lp_status_str(capture_status), capture.device_visible ? 1 : 0,
                 capture.packet_count, (unsigned long long)capture.rx_bytes,
                 (unsigned long long)capture.tx_bytes,
                 capture.detail[0] != '\0' ? capture.detail : "(none)");
     }
+    const bool cancelled = InterlockedCompareExchange(&state->device_refresh_cancel, 0, 0) != 0;
 
-    /* Shutdown may have given up waiting for this thread; the device store and window must
-       then not be touched again. */
+    /* Shutdown may have given up waiting for this thread; the lock is then deliberately never
+       deleted, but the device store and window must not be touched again. */
     EnterCriticalSection(&state->lock);
     const bool stopping = InterlockedCompareExchange(&state->stop_requested, 0, 0) != 0;
     if (!stopping) {
-        if (capture_enabled) {
+        if (capture_enabled && !cancelled) {
             state->selected_device_capture = capture;
+            snprintf(state->selected_device_capture_ip, sizeof(state->selected_device_capture_ip),
+                     "%s", request->ip);
             state->has_selected_device_capture = true;
         }
-        for (size_t i = 0; i < state->map_neighbors.count; ++i) {
-            if (strcmp(state->map_neighbors.items[i].ip, neighbor.ip) == 0) {
-                state->map_neighbors.items[i] = neighbor;
-                break;
+        if (identity_refreshed) {
+            for (size_t i = 0; i < state->map_neighbors.count; ++i) {
+                if (strcmp(state->map_neighbors.items[i].ip, neighbor.ip) == 0) {
+                    state->map_neighbors.items[i] = neighbor;
+                    break;
+                }
             }
+            lp_network_context_t network_context;
+            network_context_from_snapshot(&networks, isp_available ? &isp : NULL,
+                                          &network_context);
+            lp_win32_device_store_observe(state->device_store, &network_context, &neighbor);
         }
-        lp_network_context_t network_context;
-        network_context_from_snapshot(&networks, isp_available ? &isp : NULL, &network_context);
-        lp_win32_device_store_observe(state->device_store, &network_context, &neighbor);
     }
     LeaveCriticalSection(&state->lock);
     if (!stopping) {
         lp_win32_device_store_flush(state->device_store);
-        PostMessageA(state->hwnd, WM_LP_DISCOVERY_RESULT, 0, 0);
+        PostMessageA(state->hwnd, WM_LP_DEVICE_REFRESH_DONE, 0, 0);
     }
     free(request);
     return 0;
 }
 
-static void refresh_selected_device_identity(lp_tray_state_t *state, const char *ip)
+/* Starts a refresh thread for `ip`; the caller guarantees none is running. */
+static void start_device_refresh(lp_tray_state_t *state, const char *ip)
 {
-    if (ip == NULL || ip[0] == '\0') {
-        return;
-    }
-    if (state->device_refresh_thread != NULL) {
-        if (WaitForSingleObject(state->device_refresh_thread, 0) == WAIT_TIMEOUT) {
-            LP_DEBUG("selected device refresh already running");
-            return;
-        }
-        CloseHandle(state->device_refresh_thread);
-        state->device_refresh_thread = NULL;
-    }
     lp_device_refresh_request_t *request = calloc(1, sizeof(*request));
     if (request == NULL) {
         return;
     }
     request->state = state;
     snprintf(request->ip, sizeof(request->ip), "%s", ip);
+    InterlockedExchange(&state->device_refresh_cancel, 0);
     state->device_refresh_thread =
         CreateThread(NULL, 0, device_refresh_thread_proc, request, 0, NULL);
     if (state->device_refresh_thread == NULL) {
+        LP_WARN("could not start the selected device refresh: ip=%s", ip);
         free(request);
         return;
+    }
+    snprintf(state->device_refresh_running_ip, sizeof(state->device_refresh_running_ip), "%s",
+             ip);
+}
+
+/* Refreshes identity and (when opted in) captures traffic for the selected device. If a refresh
+   for another device is running, it is cancelled and this request runs as soon as it exits. */
+static void refresh_selected_device_identity(lp_tray_state_t *state, const char *ip)
+{
+    if (ip == NULL || ip[0] == '\0') {
+        return;
+    }
+    if (state->device_refresh_thread != NULL) {
+        if (strcmp(state->device_refresh_running_ip, ip) == 0) {
+            state->device_refresh_queued_ip[0] = '\0';
+            LP_DEBUG("selected device refresh already running: ip=%s", ip);
+            return;
+        }
+        snprintf(state->device_refresh_queued_ip, sizeof(state->device_refresh_queued_ip), "%s",
+                 ip);
+        InterlockedExchange(&state->device_refresh_cancel, 1);
+        LP_DEBUG("queued selected device refresh: ip=%s (cancelling %s)", ip,
+                 state->device_refresh_running_ip);
+        return;
+    }
+    start_device_refresh(state, ip);
+}
+
+/* Joins the finished refresh thread and starts the most recent queued request, if any. */
+static void finish_device_refresh(lp_tray_state_t *state)
+{
+    if (state->device_refresh_thread != NULL) {
+        /* The worker posts completion just before returning, so this wait is brief. */
+        WaitForSingleObject(state->device_refresh_thread, INFINITE);
+        CloseHandle(state->device_refresh_thread);
+        state->device_refresh_thread = NULL;
+    }
+    state->device_refresh_running_ip[0] = '\0';
+    if (state->device_refresh_queued_ip[0] != '\0') {
+        char next_ip[LP_IP_STR_MAX];
+        snprintf(next_ip, sizeof(next_ip), "%s", state->device_refresh_queued_ip);
+        state->device_refresh_queued_ip[0] = '\0';
+        start_device_refresh(state, next_ip);
+    }
+}
+
+/* Redraws the network map and device details with the latest shared state, if open. */
+static void refresh_open_device_views(lp_tray_state_t *state)
+{
+    if (state->network_map_hwnd != NULL && IsWindowVisible(state->network_map_hwnd)) {
+        /* UI thread only; static because a full neighbor list is ~180 KB. */
+        static lp_neighbor_list_t neighbors;
+        static lp_local_network_list_t networks;
+        EnterCriticalSection(&state->lock);
+        neighbors = state->map_neighbors;
+        networks = state->map_networks;
+        LeaveCriticalSection(&state->lock);
+        lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
+    }
+    if (state->device_details_hwnd != NULL && IsWindowVisible(state->device_details_hwnd)) {
+        show_device_details(state, state->pending_device_ip);
+    }
+    if (state->isp_view_hwnd != NULL && IsWindowVisible(state->isp_view_hwnd)) {
+        show_isp_view(state, false);
     }
 }
 
@@ -947,12 +1028,22 @@ static void show_context_menu(lp_tray_state_t *state)
     case IDM_PACKET_CAPTURE:
         InterlockedExchange(&state->packet_capture, packet_capture ? 0 : 1);
         LP_INFO("packet capture %s by user", packet_capture ? "disabled" : "enabled");
+        if (packet_capture && state->device_refresh_thread != NULL) {
+            InterlockedExchange(&state->device_refresh_cancel, 1);
+        }
         if (state->device_details_hwnd != NULL && IsWindowVisible(state->device_details_hwnd)) {
             if (!packet_capture) {
                 EnterCriticalSection(&state->lock);
                 state->has_selected_device_capture = false;
                 LeaveCriticalSection(&state->lock);
-                refresh_selected_device_identity(state, state->pending_device_ip);
+                if (state->device_refresh_thread != NULL) {
+                    /* The running refresh may already be past its capture step; rerun it. */
+                    snprintf(state->device_refresh_queued_ip,
+                             sizeof(state->device_refresh_queued_ip), "%s",
+                             state->pending_device_ip);
+                } else {
+                    refresh_selected_device_identity(state, state->pending_device_ip);
+                }
             }
             show_device_details(state, state->pending_device_ip);
         }
@@ -1157,19 +1248,11 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         return 0;
     case WM_LP_DISCOVERY_RESULT:
         show_discovery_notifications(state);
-        if (state->network_map_hwnd != NULL && IsWindowVisible(state->network_map_hwnd)) {
-            /* UI thread only; static because a full neighbor list is ~180 KB. */
-            static lp_neighbor_list_t neighbors;
-            static lp_local_network_list_t networks;
-            EnterCriticalSection(&state->lock);
-            neighbors = state->map_neighbors;
-            networks = state->map_networks;
-            LeaveCriticalSection(&state->lock);
-            lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
-        }
-        if (state->device_details_hwnd != NULL && IsWindowVisible(state->device_details_hwnd)) {
-            show_device_details(state, state->pending_device_ip);
-        }
+        refresh_open_device_views(state);
+        return 0;
+    case WM_LP_DEVICE_REFRESH_DONE:
+        finish_device_refresh(state);
+        refresh_open_device_views(state);
         return 0;
     case WM_LP_ISP_RESULT:
         if (state->isp_view_hwnd != NULL && IsWindowVisible(state->isp_view_hwnd)) {
@@ -1313,6 +1396,7 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             state->current_icon = NULL;
         }
         InterlockedExchange(&state->stop_requested, 1);
+        InterlockedExchange(&state->device_refresh_cancel, 1);
         lp_net_cancel_name_lookups();
         /* The device store is only closed once every thread that uses it has been joined;
            otherwise it is leaked, like the lock, rather than freed under a running worker. */
