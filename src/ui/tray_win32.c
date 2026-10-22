@@ -722,19 +722,26 @@ static DWORD WINAPI device_refresh_thread_proc(LPVOID param)
         return 0;
     }
 
+    /* Shutdown may have given up waiting for this thread; the device store and window must
+       then not be touched again. */
     EnterCriticalSection(&state->lock);
-    for (size_t i = 0; i < state->map_neighbors.count; ++i) {
-        if (strcmp(state->map_neighbors.items[i].ip, neighbor.ip) == 0) {
-            state->map_neighbors.items[i] = neighbor;
-            break;
+    const bool stopping = InterlockedCompareExchange(&state->stop_requested, 0, 0) != 0;
+    if (!stopping) {
+        for (size_t i = 0; i < state->map_neighbors.count; ++i) {
+            if (strcmp(state->map_neighbors.items[i].ip, neighbor.ip) == 0) {
+                state->map_neighbors.items[i] = neighbor;
+                break;
+            }
         }
+        lp_network_context_t network_context;
+        network_context_from_snapshot(&networks, isp_available ? &isp : NULL, &network_context);
+        lp_win32_device_store_observe(state->device_store, &network_context, &neighbor);
     }
-    lp_network_context_t network_context;
-    network_context_from_snapshot(&networks, isp_available ? &isp : NULL, &network_context);
-    lp_win32_device_store_observe(state->device_store, &network_context, &neighbor);
     LeaveCriticalSection(&state->lock);
-    lp_win32_device_store_flush(state->device_store);
-    PostMessageA(state->hwnd, WM_LP_DISCOVERY_RESULT, 0, 0);
+    if (!stopping) {
+        lp_win32_device_store_flush(state->device_store);
+        PostMessageA(state->hwnd, WM_LP_DISCOVERY_RESULT, 0, 0);
+    }
     free(request);
     return 0;
 }
@@ -1129,6 +1136,9 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         }
         InterlockedExchange(&state->stop_requested, 1);
         lp_net_cancel_name_lookups();
+        /* The device store is only closed once every thread that uses it has been joined;
+           otherwise it is leaked, like the lock, rather than freed under a running worker. */
+        bool can_close_device_store = true;
         if (state->thread != NULL) {
             WaitForSingleObject(state->thread, INFINITE);
             CloseHandle(state->thread);
@@ -1144,10 +1154,12 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
                         (unsigned)LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
                 can_close_update_stop_event = false;
                 can_delete_lock = false;
+                can_close_device_store = false;
             } else if (wait_result != WAIT_OBJECT_0) {
                 LP_WARN("waiting for discovery thread failed during shutdown");
                 can_close_update_stop_event = false;
                 can_delete_lock = false;
+                can_close_device_store = false;
             }
             CloseHandle(state->discovery_thread);
             state->discovery_thread = NULL;
@@ -1204,6 +1216,11 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
                 LP_WARN("device-refresh thread did not exit within %u ms; continuing shutdown",
                         (unsigned)LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
                 can_delete_lock = false;
+                can_close_device_store = false;
+            } else if (wait_result != WAIT_OBJECT_0) {
+                LP_WARN("waiting for device-refresh thread failed during shutdown");
+                can_delete_lock = false;
+                can_close_device_store = false;
             }
             CloseHandle(state->device_refresh_thread);
             state->device_refresh_thread = NULL;
@@ -1216,8 +1233,12 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             CloseHandle(state->isp_refresh_event);
             state->isp_refresh_event = NULL;
         }
-        lp_win32_device_store_close(state->device_store);
-        state->device_store = NULL;
+        if (can_close_device_store) {
+            lp_win32_device_store_close(state->device_store);
+            state->device_store = NULL;
+        } else {
+            LP_WARN("leaving the device store open: a worker thread may still be using it");
+        }
         if (can_delete_lock) {
             DeleteCriticalSection(&state->lock);
         }
