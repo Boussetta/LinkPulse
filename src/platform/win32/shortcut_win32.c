@@ -12,8 +12,7 @@
 
 #ifndef PKEY_AppUserModel_ToastActivatorCLSID
 static const PROPERTYKEY LP_PKEY_AppUserModel_ToastActivatorCLSID = {
-    {0x9f4c2855, 0x9f79, 0x4b39, {0xa8, 0xd0, 0xe1, 0xd4, 0x2d, 0xe1, 0xd5, 0xf3}},
-    26};
+    {0x9f4c2855, 0x9f79, 0x4b39, {0xa8, 0xd0, 0xe1, 0xd4, 0x2d, 0xe1, 0xd5, 0xf3}}, 26};
 #define PKEY_AppUserModel_ToastActivatorCLSID LP_PKEY_AppUserModel_ToastActivatorCLSID
 #endif
 
@@ -35,8 +34,7 @@ int lp_win32_register_toast_shortcut(void)
 
     wchar_t shortcut_path[MAX_PATH];
     const int written = swprintf(shortcut_path, sizeof(shortcut_path) / sizeof(shortcut_path[0]),
-                                 L"%ls\\LinkPulse\\LinkPulse.lnk",
-                                 programs_path);
+                                 L"%ls\\LinkPulse\\LinkPulse.lnk", programs_path);
     if (written < 0 || (size_t)written >= sizeof(shortcut_path) / sizeof(shortcut_path[0])) {
         LP_ERROR("failed to build toast shortcut path (buffer too small)");
         return 1;
@@ -76,8 +74,8 @@ int lp_win32_register_toast_shortcut(void)
                 result = E_OUTOFMEMORY;
             } else {
                 *value.puuid = activator_clsid;
-                result = properties->lpVtbl->SetValue(properties, &PKEY_AppUserModel_ToastActivatorCLSID,
-                                                       &value);
+                result = properties->lpVtbl->SetValue(
+                    properties, &PKEY_AppUserModel_ToastActivatorCLSID, &value);
                 if (SUCCEEDED(result)) {
                     result = properties->lpVtbl->Commit(properties);
                 }

@@ -65,8 +65,7 @@ int main(int argc, char **argv)
     if (lp_win32_log_start() != 0) {
         LP_WARN("failed to start persistent file logging");
     }
-    LP_INFO("tray entrypoint started: argc=%d mode=%s", argc,
-            argc > 1 ? argv[1] : "(none)");
+    LP_INFO("tray entrypoint started: argc=%d mode=%s", argc, argc > 1 ? argv[1] : "(none)");
     if (!logging_args_valid) {
         LP_ERROR("invalid logging arguments; use --verbosity error|warn|info|debug");
         lp_win32_log_stop();
@@ -84,9 +83,8 @@ int main(int argc, char **argv)
         lp_win32_log_stop();
         return result;
     }
-    if (argc > 1 &&
-        (strcmp(argv[1], "linkpulse://download-update") == 0 ||
-         strcmp(argv[1], "linkpulse://download-update/") == 0)) {
+    if (argc > 1 && (strcmp(argv[1], "linkpulse://download-update") == 0 ||
+                     strcmp(argv[1], "linkpulse://download-update/") == 0)) {
         LP_INFO("protocol update activation received");
         /* Any web page can open a linkpulse:// link, so never download or run anything
            without the user's explicit consent. */
@@ -131,7 +129,7 @@ int main(int argc, char **argv)
     sampler_config.include_virtual = config.include_virtual;
     snprintf(sampler_config.iface_name, sizeof(sampler_config.iface_name), "%s", config.iface_name);
 
-        LP_INFO("starting tray: selection=%d iface=%s virtual=%s bits=%s interval_ms=%u",
+    LP_INFO("starting tray: selection=%d iface=%s virtual=%s bits=%s interval_ms=%u",
             sampler_config.mode,
             sampler_config.iface_name[0] != '\0' ? sampler_config.iface_name : "(default)",
             sampler_config.include_virtual ? "yes" : "no", config.use_bits ? "yes" : "no",

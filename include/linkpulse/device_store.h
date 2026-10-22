@@ -27,7 +27,7 @@ void lp_win32_device_store_apply(void *store, const char *gateway_mac, lp_neighb
 /* Records observed device and ISP metadata under the given network in memory.
    Call lp_win32_device_store_flush() once after a batch of observations. */
 void lp_win32_device_store_observe(void *store, const lp_network_context_t *network_context,
-                                    const lp_neighbor_t *neighbor);
+                                   const lp_neighbor_t *neighbor);
 
 /* Atomically persists pending observations, if any. A failed write keeps the
    previous file and retries on the next flush. */

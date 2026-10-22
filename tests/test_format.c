@@ -24,7 +24,9 @@ static void test_xml_escape(void)
     lp_format_xml_escape("x</text><actions>", buffer, sizeof(buffer));
     LP_CHECK_STR_EQ(buffer, "x&lt;/text&gt;&lt;actions&gt;");
 
-    lp_format_xml_escape("ta\tb\x01\x7f" "c\n", buffer, sizeof(buffer));
+    lp_format_xml_escape("ta\tb\x01\x7f"
+                         "c\n",
+                         buffer, sizeof(buffer));
     LP_CHECK_STR_EQ(buffer, "tabc");
 
     lp_format_xml_escape("Jos\xc3\xa9", buffer, sizeof(buffer));

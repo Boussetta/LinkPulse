@@ -23,8 +23,7 @@ int lp_win32_log_start(void)
     }
 
     wchar_t directory[MAX_PATH];
-    const int directory_length =
-        swprintf(directory, MAX_PATH, L"%ls\\LinkPulse", local_app_data);
+    const int directory_length = swprintf(directory, MAX_PATH, L"%ls\\LinkPulse", local_app_data);
     if (directory_length < 0 || directory_length >= MAX_PATH ||
         (CreateDirectoryW(directory, NULL) == 0 && GetLastError() != ERROR_ALREADY_EXISTS)) {
         return 1;

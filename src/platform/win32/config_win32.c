@@ -46,8 +46,8 @@ lp_status_t lp_config_load(lp_config_t *config)
     FILE *file = _wfopen(path, L"rb");
     if (file == NULL) {
         const DWORD attrs = GetFileAttributesW(path);
-        if (attrs == INVALID_FILE_ATTRIBUTES && (GetLastError() == ERROR_FILE_NOT_FOUND ||
-                                                 GetLastError() == ERROR_PATH_NOT_FOUND)) {
+        if (attrs == INVALID_FILE_ATTRIBUTES &&
+            (GetLastError() == ERROR_FILE_NOT_FOUND || GetLastError() == ERROR_PATH_NOT_FOUND)) {
             LP_DEBUG("configuration file not found; using defaults");
             return LP_OK; /* first run: no config file yet */
         }
@@ -74,8 +74,8 @@ lp_status_t lp_config_load(lp_config_t *config)
 /* Writes `len` bytes to a new file at `path` and forces them to disk. */
 static bool write_file_durably(const wchar_t *path, const char *data, size_t len)
 {
-    HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
-                              FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE file =
+        CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) {
         return false;
     }

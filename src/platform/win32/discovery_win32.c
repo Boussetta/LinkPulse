@@ -154,7 +154,8 @@ static bool dns_skip_name(const unsigned char *packet, size_t packet_len, size_t
             return true;
         }
         if ((label_len & 0xC0u) == 0xC0u) {
-            if (*offset + 1 >= packet_len) return false;
+            if (*offset + 1 >= packet_len)
+                return false;
             *offset += 2;
             return true;
         }
@@ -166,8 +167,8 @@ static bool dns_skip_name(const unsigned char *packet, size_t packet_len, size_t
     return false;
 }
 
-static bool dns_read_name(const unsigned char *packet, size_t packet_len, size_t *offset,
-                          char *out, size_t out_cap)
+static bool dns_read_name(const unsigned char *packet, size_t packet_len, size_t *offset, char *out,
+                          size_t out_cap)
 {
     size_t cursor = *offset;
     size_t out_len = 0;
@@ -176,16 +177,20 @@ static bool dns_read_name(const unsigned char *packet, size_t packet_len, size_t
     for (int guard = 0; guard < 128 && cursor < packet_len; ++guard) {
         const unsigned char label_len = packet[cursor];
         if (label_len == 0) {
-            if (!jumped) *offset = cursor + 1;
+            if (!jumped)
+                *offset = cursor + 1;
             return out_len > 0;
         }
         if ((label_len & 0xC0u) == 0xC0u) {
-            if (cursor + 1 >= packet_len) return false;
+            if (cursor + 1 >= packet_len)
+                return false;
             const size_t target = (size_t)(((label_len & 0x3Fu) << 8) | packet[cursor + 1]);
             /* Compression pointers must point strictly backward; this also rules
                out pointer loops. */
-            if (target >= cursor) return false;
-            if (!jumped) *offset = cursor + 2;
+            if (target >= cursor)
+                return false;
+            if (!jumped)
+                *offset = cursor + 2;
             cursor = target;
             jumped = true;
             continue;
@@ -218,10 +223,12 @@ static bool dns_write_qname(unsigned char *packet, size_t packet_cap, size_t *of
         packet[(*offset)++] = (unsigned char)label_len;
         memcpy(packet + *offset, label, label_len);
         *offset += label_len;
-        if (dot == NULL) break;
+        if (dot == NULL)
+            break;
         label = dot + 1;
     }
-    if (*offset >= packet_cap) return false;
+    if (*offset >= packet_cap)
+        return false;
     packet[(*offset)++] = 0;
     return true;
 }
@@ -332,8 +339,8 @@ static bool resolve_mdns_hostname_ipv4(const SOCKADDR_INET *address, bool target
 static void resolve_hostname(const SOCKADDR_INET *address, char *out, size_t out_cap)
 {
     out[0] = '\0';
-    const int address_length = address->si_family == AF_INET ? sizeof(SOCKADDR_IN)
-                                                             : sizeof(SOCKADDR_IN6);
+    const int address_length =
+        address->si_family == AF_INET ? sizeof(SOCKADDR_IN) : sizeof(SOCKADDR_IN6);
     if (GetNameInfoA((const SOCKADDR *)address, address_length, out, (DWORD)out_cap, NULL, 0,
                      NI_NAMEREQD) != 0) {
         out[0] = '\0';
@@ -409,8 +416,7 @@ static void classify_neighbor(lp_neighbor_t *neighbor)
 {
     classify_identity(neighbor->hostname, neighbor->vendor, sizeof(neighbor->vendor),
                       &neighbor->device_type, &neighbor->device_confidence);
-    if (neighbor->device_type == LP_DEVICE_UNKNOWN &&
-        is_locally_administered_mac(neighbor->mac)) {
+    if (neighbor->device_type == LP_DEVICE_UNKNOWN && is_locally_administered_mac(neighbor->mac)) {
         snprintf(neighbor->vendor, sizeof(neighbor->vendor), "Private Wi-Fi MAC");
         neighbor->device_type = LP_DEVICE_MOBILE;
         neighbor->device_confidence = 35;
@@ -443,7 +449,11 @@ static lp_name_cache_entry_t g_name_cache[LP_NAME_CACHE_SIZE];
 static SRWLOCK g_name_cache_lock = SRWLOCK_INIT;
 static volatile LONG g_name_lookups_cancelled;
 
-typedef enum { LP_NAME_MISS = 0, LP_NAME_PENDING, LP_NAME_HIT } lp_name_lookup_t;
+typedef enum {
+    LP_NAME_MISS = 0,
+    LP_NAME_PENDING,
+    LP_NAME_HIT
+} lp_name_lookup_t;
 
 /* Finds the entry for one identity; the caller holds g_name_cache_lock. */
 static lp_name_cache_entry_t *name_cache_find(const char *ip, const char *mac)
@@ -521,7 +531,8 @@ static void name_cache_store(const char *ip, const char *mac, const char *hostna
     lp_name_cache_entry_t *entry = name_cache_slot(ip, mac);
     entry->pending = false;
     snprintf(entry->hostname, sizeof(entry->hostname), "%s", hostname);
-    const ULONGLONG ttl = hostname[0] != '\0' ? LP_NAME_CACHE_HIT_TTL_MS : LP_NAME_CACHE_MISS_TTL_MS;
+    const ULONGLONG ttl =
+        hostname[0] != '\0' ? LP_NAME_CACHE_HIT_TTL_MS : LP_NAME_CACHE_MISS_TTL_MS;
     entry->expires_at = GetTickCount64() + ttl;
     ReleaseSRWLockExclusive(&g_name_cache_lock);
 }
@@ -747,8 +758,7 @@ static long find_neighbor_ip(const lp_neighbor_list_t *list, const char *ip)
 }
 
 /* Matches active results against passive entries without duplicating devices. */
-static long find_neighbor_index(const lp_neighbor_list_t *list, const char *ip,
-                                const char *mac)
+static long find_neighbor_index(const lp_neighbor_list_t *list, const char *ip, const char *mac)
 {
     if (mac != NULL && mac[0] != '\0') {
         const long by_mac = find_neighbor_mac(list, mac);
@@ -768,8 +778,8 @@ static long find_neighbor_index(const lp_neighbor_list_t *list, const char *ip,
 }
 
 /* Adds one successful ARP response while preserving any richer passive data. */
-static void append_active_neighbor(lp_neighbor_list_t *out, const char *ip,
-                                    const char *mac, const NET_LUID *interface_luid)
+static void append_active_neighbor(lp_neighbor_list_t *out, const char *ip, const char *mac,
+                                   const NET_LUID *interface_luid)
 {
     const long existing = find_neighbor_index(out, ip, mac);
     if (existing >= 0 || out->count >= LP_DISCOVERY_MAX_NEIGHBORS) {
@@ -850,13 +860,12 @@ static size_t probe_active_subnets(lp_neighbor_list_t *out)
     size_t discovered_count = 0;
     size_t probes_sent = 0;
 
-    for (IP_ADAPTER_ADDRESSES *adapter = adapters; adapter != NULL;
-         adapter = adapter->Next) {
+    for (IP_ADAPTER_ADDRESSES *adapter = adapters; adapter != NULL; adapter = adapter->Next) {
         if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
             continue;
         }
-        for (IP_ADAPTER_UNICAST_ADDRESS *unicast = adapter->FirstUnicastAddress;
-             unicast != NULL; unicast = unicast->Next) {
+        for (IP_ADAPTER_UNICAST_ADDRESS *unicast = adapter->FirstUnicastAddress; unicast != NULL;
+             unicast = unicast->Next) {
             if (unicast->Address.lpSockaddr == NULL ||
                 unicast->Address.lpSockaddr->sa_family != AF_INET ||
                 unicast->OnLinkPrefixLength < LP_ACTIVE_SCAN_MAX_PREFIX) {
@@ -890,9 +899,9 @@ static size_t probe_active_subnets(lp_neighbor_list_t *out)
             }
             const uint32_t usable_count = host_count - 2;
             const uint32_t start = g_active_probe_offset % usable_count;
-            const uint32_t probes_this_subnet =
-                (usable_count < LP_ACTIVE_SCAN_MAX_PROBES) ? usable_count
-                                                           : LP_ACTIVE_SCAN_MAX_PROBES;
+            const uint32_t probes_this_subnet = (usable_count < LP_ACTIVE_SCAN_MAX_PROBES)
+                                                    ? usable_count
+                                                    : LP_ACTIVE_SCAN_MAX_PROBES;
             lp_arp_probe_batch_t *batch = (lp_arp_probe_batch_t *)HeapAlloc(
                 GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(lp_arp_probe_batch_t));
             if (batch == NULL) {
@@ -902,9 +911,9 @@ static size_t probe_active_subnets(lp_neighbor_list_t *out)
             batch->refs = 1; /* Held by this scan until it stops reading results. */
             lp_arp_probe_t *probes = batch->probes;
             size_t probe_count = 0;
-            for (uint32_t probe = 0; probe < probes_this_subnet &&
-                                       probes_sent < LP_ACTIVE_SCAN_MAX_PROBES &&
-                                       probe_count < LP_ACTIVE_SCAN_MAX_PROBES;
+            for (uint32_t probe = 0;
+                 probe < probes_this_subnet && probes_sent < LP_ACTIVE_SCAN_MAX_PROBES &&
+                 probe_count < LP_ACTIVE_SCAN_MAX_PROBES;
                  ++probe) {
                 const uint32_t host = 1 + ((start + probe) % usable_count);
                 const uint32_t candidate = network + host;
@@ -924,7 +933,8 @@ static size_t probe_active_subnets(lp_neighbor_list_t *out)
             DWORD thread_count = 0;
             for (size_t i = 0; i < probe_count; ++i) {
                 (void)InterlockedIncrement(&batch->refs);
-                HANDLE thread = CreateThread(NULL, 0, active_probe_thread_proc, &probes[i], 0, NULL);
+                HANDLE thread =
+                    CreateThread(NULL, 0, active_probe_thread_proc, &probes[i], 0, NULL);
                 if (thread == NULL) {
                     (void)InterlockedDecrement(&batch->refs);
                     continue;
@@ -1070,8 +1080,8 @@ static bool format_sockaddr(const SOCKADDR *address, char *out, size_t out_cap)
         return false;
     }
     if (address->sa_family == AF_INET) {
-        return InetNtopA(AF_INET, &((const SOCKADDR_IN *)address)->sin_addr, out,
-                         (DWORD)out_cap) != NULL;
+        return InetNtopA(AF_INET, &((const SOCKADDR_IN *)address)->sin_addr, out, (DWORD)out_cap) !=
+               NULL;
     }
     if (address->sa_family == AF_INET6) {
         return InetNtopA(AF_INET6, &((const SOCKADDR_IN6 *)address)->sin6_addr, out,
@@ -1115,7 +1125,8 @@ static void get_default_gateway_mac(const char *gateway, char *mac, size_t mac_c
             continue;
         }
         char address[LP_IP_STR_MAX] = {0};
-        if (InetNtopA(AF_INET, (PVOID)&row->Address.Ipv4.sin_addr, address, sizeof(address)) != NULL &&
+        if (InetNtopA(AF_INET, (PVOID)&row->Address.Ipv4.sin_addr, address, sizeof(address)) !=
+                NULL &&
             strcmp(address, gateway) == 0) {
             format_mac(row->PhysicalAddress, row->PhysicalAddressLength, mac, mac_cap);
             break;
@@ -1132,18 +1143,16 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
     }
     out->count = 0;
     DWORD hostname_size = LP_HOSTNAME_MAX;
-    (void)GetComputerNameExA(ComputerNamePhysicalDnsHostname, out->local_hostname,
-                             &hostname_size);
+    (void)GetComputerNameExA(ComputerNamePhysicalDnsHostname, out->local_hostname, &hostname_size);
 
     NET_LUID default_interface_luid;
     memset(&default_interface_luid, 0, sizeof(default_interface_luid));
     char default_gateway[LP_IP_STR_MAX] = {0};
-    const bool has_default_gateway = get_default_gateway(
-        &default_interface_luid, default_gateway, sizeof(default_gateway));
+    const bool has_default_gateway =
+        get_default_gateway(&default_interface_luid, default_gateway, sizeof(default_gateway));
     char default_gateway_mac[LP_MAC_STR_MAX] = {0};
     if (has_default_gateway) {
-        get_default_gateway_mac(default_gateway, default_gateway_mac,
-                                sizeof(default_gateway_mac));
+        get_default_gateway_mac(default_gateway, default_gateway_mac, sizeof(default_gateway_mac));
     }
     char default_gateway_hostname[LP_HOSTNAME_MAX] = {0};
     lp_device_type_t default_gateway_type = LP_DEVICE_UNKNOWN;
@@ -1173,8 +1182,7 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
         return (result == ERROR_NOT_ENOUGH_MEMORY) ? LP_ERR_NO_MEMORY : LP_ERR_IO;
     }
 
-    for (IP_ADAPTER_ADDRESSES *adapter = adapters; adapter != NULL;
-         adapter = adapter->Next) {
+    for (IP_ADAPTER_ADDRESSES *adapter = adapters; adapter != NULL; adapter = adapter->Next) {
         char gateway[LP_IP_STR_MAX] = {0};
         const bool is_default_adapter =
             has_default_gateway && adapter->Luid.Value == default_interface_luid.Value;
@@ -1183,8 +1191,7 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
         }
 
         for (IP_ADAPTER_UNICAST_ADDRESS *unicast = adapter->FirstUnicastAddress;
-             unicast != NULL && out->count < LP_DISCOVERY_MAX_NETWORKS;
-             unicast = unicast->Next) {
+             unicast != NULL && out->count < LP_DISCOVERY_MAX_NETWORKS; unicast = unicast->Next) {
             char address[LP_IP_STR_MAX] = {0};
             if (!format_sockaddr(unicast->Address.lpSockaddr, address, sizeof(address))) {
                 continue;
@@ -1203,8 +1210,8 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
                 network->gateway_device_type = default_gateway_type;
                 network->gateway_confidence = default_gateway_confidence;
             }
-            if (out->local_ip[0] == '\0' &&
-                unicast->Address.lpSockaddr->sa_family == AF_INET && is_default_adapter) {
+            if (out->local_ip[0] == '\0' && unicast->Address.lpSockaddr->sa_family == AF_INET &&
+                is_default_adapter) {
                 snprintf(out->local_ip, sizeof(out->local_ip), "%s", address);
                 out->local_connection_type = connection_type_for_interface(&adapter->Luid);
             }

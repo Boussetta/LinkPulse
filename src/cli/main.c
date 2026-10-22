@@ -239,10 +239,10 @@ int main(int argc, char **argv)
 
     if (want_tray) {
         LP_INFO("starting tray mode: selection=%d iface=%s virtual=%s bits=%s interval_ms=%u",
-            sampler_config.mode,
-            sampler_config.iface_name[0] != '\0' ? sampler_config.iface_name : "(default)",
-            sampler_config.include_virtual ? "yes" : "no", use_bits ? "yes" : "no",
-            interval_ms);
+                sampler_config.mode,
+                sampler_config.iface_name[0] != '\0' ? sampler_config.iface_name : "(default)",
+                sampler_config.include_virtual ? "yes" : "no", use_bits ? "yes" : "no",
+                interval_ms);
         return lp_tray_run(&sampler_config, use_bits, interval_ms);
     }
 
