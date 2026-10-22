@@ -811,10 +811,10 @@ static DWORD WINAPI device_refresh_thread_proc(LPVOID param)
     lp_capture_activity_t capture = {0};
     const lp_status_t capture_status =
         lp_win32_capture_device_activity(neighbor.ip, 5000, &capture);
-    LP_INFO("device capture: ip=%s status=%s visible=%d flows=%u rx_bytes=%llu tx_bytes=%llu "
+    LP_INFO("device capture: ip=%s status=%s visible=%d packets=%u rx_bytes=%llu tx_bytes=%llu "
             "detail=%s",
             neighbor.ip, lp_status_str(capture_status), capture.device_visible ? 1 : 0,
-            capture.flow_count, (unsigned long long)capture.rx_bytes,
+            capture.packet_count, (unsigned long long)capture.rx_bytes,
             (unsigned long long)capture.tx_bytes,
             capture.detail[0] != '\0' ? capture.detail : "(none)");
 
