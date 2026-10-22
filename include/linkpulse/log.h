@@ -16,7 +16,8 @@ void lp_log_set_level(lp_log_level_t level);
 /* Returns the process-wide logging threshold. */
 lp_log_level_t lp_log_get_level(void);
 
-/* Redirects log output; NULL restores stderr output. The FILE remains caller-owned. */
+/* Adds a file sink that receives every record in addition to stderr; NULL removes it.
+   The FILE remains caller-owned. Records longer than about 1 KiB are truncated. */
 void lp_log_set_file(FILE *file);
 
 #if defined(__GNUC__)
