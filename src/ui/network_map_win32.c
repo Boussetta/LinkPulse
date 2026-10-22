@@ -690,6 +690,9 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
         lp_network_map_state_t *state =
             (lp_network_map_state_t *)GetWindowLongPtrA(window, GWLP_USERDATA);
         if (state != NULL) {
+            /* Clear the pointer first: the tray keeps this HWND until its own
+               WM_DESTROY, and every entry point treats a NULL state as a no-op. */
+            SetWindowLongPtrA(window, GWLP_USERDATA, 0);
             DeleteObject(state->cloud_font);
             DeleteObject(state->icon_font);
             DeleteObject(state->label_font);
