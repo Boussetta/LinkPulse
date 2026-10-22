@@ -101,8 +101,9 @@ lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *e
         return LP_ERR_UNSUPPORTED;
     }
 
-    lp_neighbor_list_t current;
-    const lp_status_t status = discovery->sources.snapshot_fn(&current);
+    /* Kept in the discovery state: a full snapshot is ~180 KB, too large for a thread stack. */
+    lp_neighbor_list_t *current = &discovery->scratch;
+    const lp_status_t status = discovery->sources.snapshot_fn(current);
     if (status != LP_OK) {
         return status;
     }
@@ -115,21 +116,21 @@ lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *e
 
     /* Match the snapshot against the retained baseline. Unmatched neighbors are
        collected once each, so an identity duplicated in one snapshot joins once. */
-    for (size_t i = 0; i < current.count; ++i) {
-        current.items[i].active = true;
-        const long idx = find_known_index(discovery->known, old_known_count, &current.items[i]);
+    for (size_t i = 0; i < current->count; ++i) {
+        current->items[i].active = true;
+        const long idx = find_known_index(discovery->known, old_known_count, &current->items[i]);
         if (idx >= 0) {
             seen[idx] = true;
             if (discovery->has_baseline && !discovery->known[idx].active) {
                 emit_event(discovery, events, max_events, &emitted, LP_DISCOVERY_EVENT_JOINED,
-                           &current.items[i]);
+                           &current->items[i]);
             }
-            discovery->known[idx] = current.items[i];
+            discovery->known[idx] = current->items[i];
             continue;
         }
         bool duplicate = false;
         for (size_t j = 0; j < new_count && !duplicate; ++j) {
-            duplicate = neighbors_match(&current.items[new_items[j]], &current.items[i]);
+            duplicate = neighbors_match(&current->items[new_items[j]], &current->items[i]);
         }
         if (!duplicate) {
             new_items[new_count++] = i;
@@ -167,7 +168,7 @@ lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *e
         if (!reserve_known_slot(discovery)) {
             break;
         }
-        const lp_neighbor_t *neighbor = &current.items[new_items[i]];
+        const lp_neighbor_t *neighbor = &current->items[new_items[i]];
         discovery->known[discovery->known_count] = *neighbor;
         discovery->missing_polls[discovery->known_count] = 0;
         ++discovery->known_count;

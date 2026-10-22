@@ -59,7 +59,7 @@ static void test_baseline_and_neighbor_changes(void)
     g_fake_snapshots[3] = g_fake_snapshots[2];
     g_fake_snapshots[4] = g_fake_snapshots[2];
 
-    lp_discovery_t discovery;
+    static lp_discovery_t discovery; /* too large for the stack */
     const lp_discovery_sources_t sources = {fake_snapshot_fn, NULL};
     lp_discovery_init(&discovery);
     lp_discovery_set_sources(&discovery, &sources);
@@ -99,7 +99,7 @@ static void test_baseline_and_neighbor_changes(void)
 /* Verifies discovery reports an unconfigured provider instead of dereferencing it. */
 static void test_poll_rejects_missing_source(void)
 {
-    lp_discovery_t discovery;
+    static lp_discovery_t discovery;
     lp_discovery_event_t events[1];
     size_t event_count = 0;
     lp_discovery_init(&discovery);
