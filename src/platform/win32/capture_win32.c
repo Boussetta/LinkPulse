@@ -131,14 +131,19 @@ static bool default_route_capture_name(char *out, size_t out_cap)
     if (GetBestRoute2(NULL, 0, NULL, &destination, 0, &route, NULL) != NO_ERROR) {
         return false;
     }
-    ULONG size = 0;
-    if (GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, NULL, NULL, &size) !=
-        ERROR_BUFFER_OVERFLOW) {
-        return false;
+    /* Documented pattern: start at 15 KB and retry if the list grows between calls. */
+    ULONG size = 15u * 1024u;
+    IP_ADAPTER_ADDRESSES *adapters = NULL;
+    ULONG result = ERROR_BUFFER_OVERFLOW;
+    for (int attempt = 0; attempt < 3 && result == ERROR_BUFFER_OVERFLOW; ++attempt) {
+        free(adapters);
+        adapters = malloc(size);
+        if (adapters == NULL) {
+            return false;
+        }
+        result = GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, NULL, adapters, &size);
     }
-    IP_ADAPTER_ADDRESSES *adapters = malloc(size);
-    if (adapters == NULL || GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, NULL, adapters,
-                                                 &size) != NO_ERROR) {
+    if (result != NO_ERROR) {
         free(adapters);
         return false;
     }
@@ -234,8 +239,9 @@ static bool npcap_is_admin_only(void)
 {
     DWORD value = 0;
     DWORD size = sizeof(value);
-    return RegGetValueW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Services\\npcap\\Parameters",
-                        L"AdminOnly", RRF_RT_REG_DWORD, NULL, &value, &size) == ERROR_SUCCESS &&
+    return RegGetValueW(HKEY_LOCAL_MACHINE,
+                        L"SYSTEM\\CurrentControlSet\\Services\\npcap\\Parameters", L"AdminOnly",
+                        RRF_RT_REG_DWORD, NULL, &value, &size) == ERROR_SUCCESS &&
            value != 0;
 }
 
@@ -258,8 +264,8 @@ static bool process_is_elevated(void)
    one, so any open failure is reported as the restriction rather than a generic error. */
 static bool report_admin_only(lp_capture_activity_t *out, const char *error)
 {
-    const bool access_denied =
-        error != NULL && (strstr(error, "Access is denied") != NULL || strstr(error, "(5)") != NULL);
+    const bool access_denied = error != NULL && (strstr(error, "Access is denied") != NULL ||
+                                                 strstr(error, "(5)") != NULL);
     if (!access_denied && !(npcap_is_admin_only() && !process_is_elevated())) {
         return false;
     }
