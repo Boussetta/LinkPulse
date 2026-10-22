@@ -154,8 +154,8 @@ static void test_non_ip_and_unknown_links_are_ignored(void)
 
     length = write_ethernet(frame, 0x0806, false); /* ARP */
     memset(frame + length, 0, 40);
-    LP_CHECK(lp_capture_classify_frame(LP_CAPTURE_LINKTYPE_ETHERNET, frame, length + 40,
-                                       &device) == LP_CAPTURE_FRAME_IGNORED);
+    LP_CHECK(lp_capture_classify_frame(LP_CAPTURE_LINKTYPE_ETHERNET, frame, length + 40, &device) ==
+             LP_CAPTURE_FRAME_IGNORED);
 }
 
 static void test_peer_is_the_other_endpoint(void)

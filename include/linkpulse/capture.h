@@ -17,7 +17,7 @@ typedef struct {
     bool device_visible;
     uint64_t rx_bytes;
     uint64_t tx_bytes;
-    uint32_t packet_count; /* IP packets to or from the device, not distinct flows */
+    uint32_t packet_count;  /* IP packets to or from the device, not distinct flows */
     uint32_t local_packets; /* the subset whose other endpoint is this PC */
     /* Every captured packet was exchanged with this PC: the adapter is not seeing the device's
        traffic with other hosts, which is the normal case on a Wi-Fi client. */
@@ -39,8 +39,7 @@ typedef enum {
 
 /* Classifies one captured frame relative to `device`. Accepts Ethernet frames with at most one
    802.1Q tag carrying IPv4 or IPv6, and never reads past `caplen`. Pure; safe on untrusted data. */
-lp_capture_direction_t lp_capture_classify_frame(int link_type, const uint8_t *frame,
-                                                 size_t caplen,
+lp_capture_direction_t lp_capture_classify_frame(int link_type, const uint8_t *frame, size_t caplen,
                                                  const lp_capture_address_t *device);
 
 /* Same as lp_capture_classify_frame; when the frame belongs to the device, also stores the other

@@ -618,8 +618,7 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
                         copy_data.dwData = LP_NETWORK_MAP_COPYDATA_DEVICE_SELECTED;
                         copy_data.cbData = (DWORD)strlen(visible_items[i].ip) + 1;
                         copy_data.lpData = (PVOID)visible_items[i].ip;
-                        (void)SendMessageA(owner, WM_COPYDATA, (WPARAM)window,
-                                           (LPARAM)&copy_data);
+                        (void)SendMessageA(owner, WM_COPYDATA, (WPARAM)window, (LPARAM)&copy_data);
                     }
                     InvalidateRect(window, NULL, TRUE);
                     break;
