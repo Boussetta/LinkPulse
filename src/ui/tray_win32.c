@@ -1072,6 +1072,7 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             state->current_icon = NULL;
         }
         InterlockedExchange(&state->stop_requested, 1);
+        lp_net_cancel_name_lookups();
         if (state->thread != NULL) {
             WaitForSingleObject(state->thread, INFINITE);
             CloseHandle(state->thread);

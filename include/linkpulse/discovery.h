@@ -80,6 +80,9 @@ typedef lp_status_t (*lp_net_local_networks_fn)(lp_local_network_list_t *out);
 /* Refreshes best-effort name/type metadata for one already-known neighbor. */
 lp_status_t lp_net_refresh_neighbor_identity(lp_neighbor_t *neighbor);
 
+/* Makes in-flight and future neighbor-name lookups stop promptly; call once at shutdown. */
+void lp_net_cancel_name_lookups(void);
+
 typedef struct {
     lp_net_neighbor_snapshot_fn snapshot_fn;
     lp_net_local_networks_fn local_networks_fn;
