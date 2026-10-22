@@ -704,9 +704,10 @@ static void show_speed_meter(lp_tray_state_t *state, const char *gateway_ip)
                         isp, use_bits);
 }
 
-/* Opens the "This PC" details view with the current throughput history and
-   adapter/Wi-Fi snapshot; also used to refresh it while already visible. */
-static void show_this_pc(lp_tray_state_t *state)
+/* Pushes the current throughput history and adapter/Wi-Fi snapshot to the "This PC" view.
+   `activate` opens, positions, and focuses it (explicit user opens); otherwise it only repaints,
+   so periodic refreshes never move the window or steal focus. */
+static void show_this_pc(lp_tray_state_t *state, bool activate)
 {
     if (state->this_pc_hwnd == NULL) {
         return;
@@ -723,11 +724,17 @@ static void show_this_pc(lp_tray_state_t *state)
     LeaveCriticalSection(&state->lock);
 
     const bool use_bits = InterlockedCompareExchange(&state->use_bits, 0, 0) != 0;
-    lp_this_pc_show(state->this_pc_hwnd, networks.local_hostname, &networks, rx_history,
-                    tx_history, history_count, use_bits);
+    if (activate) {
+        lp_this_pc_show(state->this_pc_hwnd, networks.local_hostname, &networks, rx_history,
+                        tx_history, history_count, use_bits);
+    } else {
+        lp_this_pc_update(state->this_pc_hwnd, networks.local_hostname, &networks, rx_history,
+                          tx_history, history_count, use_bits);
+    }
 }
 
-static void show_device_details(lp_tray_state_t *state, const char *device_ip)
+/* Pushes the selected device's snapshot to the details view; `activate` as for show_this_pc. */
+static void show_device_details(lp_tray_state_t *state, const char *device_ip, bool activate)
 {
     if (state->device_details_hwnd == NULL || device_ip == NULL || device_ip[0] == '\0') {
         return;
@@ -767,7 +774,13 @@ static void show_device_details(lp_tray_state_t *state, const char *device_ip)
                 snprintf(capture.detail, sizeof(capture.detail), "Capture did not start");
             }
         }
-        lp_device_details_show(state->device_details_hwnd, &neighbor, capture_state, &capture);
+        if (activate) {
+            lp_device_details_show(state->device_details_hwnd, &neighbor, capture_state,
+                                   &capture);
+        } else {
+            lp_device_details_update(state->device_details_hwnd, &neighbor, capture_state,
+                                     &capture);
+        }
     }
 }
 
@@ -956,7 +969,7 @@ static void refresh_open_device_views(lp_tray_state_t *state)
         lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
     }
     if (state->device_details_hwnd != NULL && IsWindowVisible(state->device_details_hwnd)) {
-        show_device_details(state, state->pending_device_ip);
+        show_device_details(state, state->pending_device_ip, false);
     }
     if (state->isp_view_hwnd != NULL && IsWindowVisible(state->isp_view_hwnd)) {
         show_isp_view(state, false);
@@ -1045,7 +1058,7 @@ static void show_context_menu(lp_tray_state_t *state)
                     refresh_selected_device_identity(state, state->pending_device_ip);
                 }
             }
-            show_device_details(state, state->pending_device_ip);
+            show_device_details(state, state->pending_device_ip, false);
         }
         break;
     case IDM_UPDATE:
@@ -1229,7 +1242,7 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         if (wparam == LP_TRAY_TIMER_ID) {
             refresh_icon_and_tooltip(state);
             if (state->this_pc_hwnd != NULL && IsWindowVisible(state->this_pc_hwnd)) {
-                show_this_pc(state);
+                show_this_pc(state, false);
             }
         }
         return 0;
@@ -1329,10 +1342,10 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         show_speed_meter(state, state->pending_speed_meter_ip);
         return 0;
     case WM_LP_THIS_PC_OPEN:
-        show_this_pc(state);
+        show_this_pc(state, true);
         return 0;
     case WM_LP_DEVICE_DETAILS_OPEN:
-        show_device_details(state, state->pending_device_ip);
+        show_device_details(state, state->pending_device_ip, true);
         return 0;
     case WM_LP_ISP_VIEW_OPEN:
         show_isp_view(state, true);

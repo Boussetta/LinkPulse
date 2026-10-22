@@ -400,6 +400,7 @@ static LRESULT CALLBACK this_pc_wndproc(HWND window, UINT message, WPARAM wparam
             DeleteObject(state->label_font);
             DeleteObject(state->small_font);
             DeleteObject(state->background_brush);
+            SetWindowLongPtrA(window, GWLP_USERDATA, 0);
             HeapFree(GetProcessHeap(), 0, state);
         }
         return 0;
@@ -434,16 +435,17 @@ HWND lp_this_pc_create(HINSTANCE instance, HWND owner)
     return window;
 }
 
-void lp_this_pc_show(HWND window, const char *hostname, const lp_local_network_list_t *networks,
-                     const uint64_t *rx_history, const uint64_t *tx_history, size_t history_count,
-                     bool use_bits)
+/* Copies the snapshot into the window state; returns false if the window is not ready. */
+static bool store_snapshot(HWND window, const char *hostname,
+                           const lp_local_network_list_t *networks, const uint64_t *rx_history,
+                           const uint64_t *tx_history, size_t history_count, bool use_bits)
 {
     if (window == NULL) {
-        return;
+        return false;
     }
     lp_this_pc_state_t *state = state_of(window);
     if (state == NULL) {
-        return;
+        return false;
     }
     snprintf(state->hostname, sizeof(state->hostname), "%s", hostname != NULL ? hostname : "");
     if (networks != NULL) {
@@ -460,6 +462,27 @@ void lp_this_pc_show(HWND window, const char *hostname, const lp_local_network_l
         memcpy(state->tx_history, tx_history, state->history_count * sizeof(state->tx_history[0]));
     }
     state->use_bits = use_bits;
+    return true;
+}
+
+void lp_this_pc_update(HWND window, const char *hostname, const lp_local_network_list_t *networks,
+                       const uint64_t *rx_history, const uint64_t *tx_history,
+                       size_t history_count, bool use_bits)
+{
+    if (store_snapshot(window, hostname, networks, rx_history, tx_history, history_count,
+                       use_bits)) {
+        InvalidateRect(window, NULL, FALSE);
+    }
+}
+
+void lp_this_pc_show(HWND window, const char *hostname, const lp_local_network_list_t *networks,
+                     const uint64_t *rx_history, const uint64_t *tx_history, size_t history_count,
+                     bool use_bits)
+{
+    if (!store_snapshot(window, hostname, networks, rx_history, tx_history, history_count,
+                        use_bits)) {
+        return;
+    }
 
     POINT cursor;
     GetCursorPos(&cursor);

@@ -15,9 +15,14 @@ typedef enum {
 } lp_device_capture_state_t;
 
 HWND lp_device_details_create(HINSTANCE instance, HWND owner);
-/* `capture` is only read when `capture_state` is LP_DEVICE_CAPTURE_DONE. */
+/* Stores the snapshot, positions the popup near the taskbar, and activates it. Use for explicit
+   user opens only. `capture` is only read when `capture_state` is LP_DEVICE_CAPTURE_DONE. */
 void lp_device_details_show(HWND window, const lp_neighbor_t *neighbor,
                             lp_device_capture_state_t capture_state,
                             const lp_capture_activity_t *capture);
+/* Stores the snapshot and repaints without moving, showing, or activating the popup. */
+void lp_device_details_update(HWND window, const lp_neighbor_t *neighbor,
+                              lp_device_capture_state_t capture_state,
+                              const lp_capture_activity_t *capture);
 
 #endif /* LINKPULSE_DEVICE_DETAILS_WIN32_H */
