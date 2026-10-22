@@ -121,6 +121,14 @@ void lp_discovery_set_sources(lp_discovery_t *discovery,
 lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *events,
                               size_t max_events, size_t *event_count);
 
+/* Normalizes MAC identities in one platform snapshot, in place.
+   - A MAC shared by two or more IPv4 addresses is treated as proxy ARP (the access
+     point answering for every client) and cleared, so those neighbors fall back to
+     IP identity.
+   - Otherwise, entries sharing a MAC are one dual-stack device and are merged into a
+     single entry that prefers the IPv4 address and keeps any learned metadata. */
+void lp_discovery_normalize_macs(lp_neighbor_list_t *list);
+
 /* Collects the current passive neighbor table into caller-provided storage. */
 lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out);
 

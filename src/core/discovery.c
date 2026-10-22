@@ -1,6 +1,99 @@
 #include "linkpulse/discovery.h"
 
+#include "linkpulse/log.h"
+
+#include <stdio.h>
 #include <string.h>
+
+/* Presentation-format IPv6 addresses always contain a colon; IPv4 ones never do. */
+static bool is_ipv4_text(const char *ip)
+{
+    return ip[0] != '\0' && strchr(ip, ':') == NULL;
+}
+
+/* Copies metadata that `dst` has not learned yet from another entry of the same device. */
+static void adopt_missing_metadata(lp_neighbor_t *dst, const lp_neighbor_t *src)
+{
+    if (dst->hostname[0] == '\0') {
+        snprintf(dst->hostname, sizeof(dst->hostname), "%s", src->hostname);
+    }
+    if (dst->vendor[0] == '\0') {
+        snprintf(dst->vendor, sizeof(dst->vendor), "%s", src->vendor);
+    }
+    if (dst->connection_type == LP_CONNECTION_UNKNOWN) {
+        dst->connection_type = src->connection_type;
+    }
+    if (src->device_confidence > dst->device_confidence) {
+        dst->device_type = src->device_type;
+        dst->device_confidence = src->device_confidence;
+    }
+}
+
+/* Clears every occurrence of a MAC that more than one IPv4 address answers with. */
+static void clear_proxy_arp_macs(lp_neighbor_list_t *list)
+{
+    for (size_t i = 0; i < list->count; ++i) {
+        const lp_neighbor_t *item = &list->items[i];
+        if (item->mac[0] == '\0' || !is_ipv4_text(item->ip)) {
+            continue;
+        }
+        size_t ipv4_count = 1;
+        for (size_t j = i + 1; j < list->count; ++j) {
+            if (is_ipv4_text(list->items[j].ip) && strcmp(list->items[j].mac, item->mac) == 0) {
+                ++ipv4_count;
+            }
+        }
+        if (ipv4_count < 2) {
+            continue;
+        }
+        LP_DEBUG("clearing ambiguous MAC %s shared by %llu IPv4 addresses (likely proxy ARP)",
+                 item->mac, (unsigned long long)ipv4_count);
+        char ambiguous_mac[LP_MAC_STR_MAX];
+        snprintf(ambiguous_mac, sizeof(ambiguous_mac), "%s", item->mac);
+        for (size_t j = 0; j < list->count; ++j) {
+            if (strcmp(list->items[j].mac, ambiguous_mac) == 0) {
+                list->items[j].mac[0] = '\0';
+            }
+        }
+    }
+}
+
+/* Proxy-ARP MACs are cleared first; remaining shared MACs are merged per device. */
+void lp_discovery_normalize_macs(lp_neighbor_list_t *list)
+{
+    if (list == NULL) {
+        return;
+    }
+    clear_proxy_arp_macs(list);
+
+    size_t write = 0;
+    for (size_t i = 0; i < list->count; ++i) {
+        const lp_neighbor_t item = list->items[i];
+        size_t kept = write;
+        if (item.mac[0] != '\0') {
+            for (size_t j = 0; j < write; ++j) {
+                if (strcmp(list->items[j].mac, item.mac) == 0) {
+                    kept = j;
+                    break;
+                }
+            }
+        }
+        if (kept == write) {
+            list->items[write++] = item;
+            continue;
+        }
+        lp_neighbor_t *device = &list->items[kept];
+        if (!is_ipv4_text(device->ip) && is_ipv4_text(item.ip)) {
+            /* Show the device under its IPv4 address, keeping what the IPv6 entry knew. */
+            const lp_neighbor_t previous = *device;
+            *device = item;
+            adopt_missing_metadata(device, &previous);
+        } else {
+            adopt_missing_metadata(device, &item);
+        }
+    }
+    list->count = write;
+}
 
 /* Clears retained neighbor identities so the next successful poll establishes a baseline. */
 void lp_discovery_init(lp_discovery_t *discovery)

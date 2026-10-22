@@ -480,39 +480,6 @@ static long find_neighbor_ip(const lp_neighbor_list_t *list, const char *ip)
     return -1;
 }
 
-/* Some public/isolated Wi-Fi networks proxy-ARP: the access point answers for
-   every client with its own MAC, so distinct devices end up sharing one MAC
-   in our neighbor table. Treating that shared MAC as a stable identity would
-   merge those devices into one entry (or hide all but one), so any MAC seen
-   on more than one IP is blanked out and those neighbors fall back to
-   IP-based identity instead. */
-static void clear_ambiguous_macs(lp_neighbor_list_t *list)
-{
-    for (size_t i = 0; i < list->count; ++i) {
-        if (list->items[i].mac[0] == '\0') {
-            continue;
-        }
-        size_t sharing_count = 1;
-        for (size_t j = i + 1; j < list->count; ++j) {
-            if (strcmp(list->items[j].mac, list->items[i].mac) == 0) {
-                ++sharing_count;
-            }
-        }
-        if (sharing_count <= 1) {
-            continue;
-        }
-        LP_DEBUG("clearing ambiguous MAC %s shared by %llu addresses (likely proxy ARP)",
-                list->items[i].mac, (unsigned long long)sharing_count);
-        char ambiguous_mac[LP_MAC_STR_MAX];
-        snprintf(ambiguous_mac, sizeof(ambiguous_mac), "%s", list->items[i].mac);
-        for (size_t j = i; j < list->count; ++j) {
-            if (strcmp(list->items[j].mac, ambiguous_mac) == 0) {
-                list->items[j].mac[0] = '\0';
-            }
-        }
-    }
-}
-
 /* Matches active results against passive entries without duplicating devices. */
 static long find_neighbor_index(const lp_neighbor_list_t *list, const char *ip,
                                 const char *mac)
@@ -818,7 +785,9 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
     if (winsock_ready) {
         WSACleanup();
     }
-    clear_ambiguous_macs(out);
+    /* Some public/isolated Wi-Fi networks proxy-ARP, so one MAC can stand for
+       several devices; dual-stack devices also list one MAC per address. */
+    lp_discovery_normalize_macs(out);
     return LP_OK;
 }
 
