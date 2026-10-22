@@ -88,6 +88,14 @@ int main(int argc, char **argv)
         (strcmp(argv[1], "linkpulse://download-update") == 0 ||
          strcmp(argv[1], "linkpulse://download-update/") == 0)) {
         LP_INFO("protocol update activation received");
+        /* Any web page can open a linkpulse:// link, so never download or run anything
+           without the user's explicit consent. */
+        if (MessageBoxA(NULL, "Download and install the latest LinkPulse update?",
+                        "LinkPulse update", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) {
+            LP_INFO("protocol update activation declined");
+            lp_win32_log_stop();
+            return 0;
+        }
         char installer_path[MAX_PATH];
         if (lp_update_download_latest(installer_path, sizeof(installer_path)) != LP_OK) {
             MessageBoxA(NULL, "Could not download the LinkPulse update.", "LinkPulse update",
@@ -95,15 +103,18 @@ int main(int argc, char **argv)
             lp_win32_log_stop();
             return 1;
         }
-        if ((INT_PTR)ShellExecuteA(NULL, "open", installer_path, NULL, NULL, SW_SHOWNORMAL) <= 32) {
-            DeleteFileA(installer_path);
+        const lp_status_t launched = lp_update_launch_installer(installer_path);
+        if (launched == LP_ERR_IO) {
             MessageBoxA(NULL, "Could not launch the LinkPulse installer.", "LinkPulse update",
                         MB_OK | MB_ICONERROR);
-            lp_win32_log_stop();
-            return 1;
+        } else if (launched == LP_ERR_UNSUPPORTED) {
+            MessageBoxA(NULL,
+                        "The downloaded installer has no valid signature, so it was not run. "
+                        "The release page was opened in your browser instead.",
+                        "LinkPulse update", MB_OK | MB_ICONWARNING);
         }
         lp_win32_log_stop();
-        return 0;
+        return launched == LP_OK ? 0 : 1;
     }
 
     (void)argc;
