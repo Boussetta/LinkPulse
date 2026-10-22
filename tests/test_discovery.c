@@ -247,6 +247,38 @@ static void test_duplicate_mac_in_snapshot_joins_once(void)
     LP_CHECK(poll_events() == 0);
 }
 
+/* Verifies events beyond max_events are counted, and the count resets on the next poll. */
+static void test_event_overflow_is_counted(void)
+{
+    reset_fakes();
+    for (unsigned i = 0; i < 5; ++i) {
+        char ip[LP_IP_STR_MAX];
+        char mac[LP_MAC_STR_MAX];
+        snprintf(ip, sizeof(ip), "192.168.2.%u", 10u + i);
+        snprintf(mac, sizeof(mac), "AA:BB:CC:00:00:%02X", i);
+        set_neighbor(&g_fake_snapshots[1].items[i], ip, mac);
+    }
+    g_fake_snapshots[1].count = 5;
+    g_fake_snapshots[2] = g_fake_snapshots[1];
+    start_discovery();
+
+    lp_discovery_event_t events[2];
+    size_t event_count = 0;
+    LP_CHECK(lp_discovery_poll(&g_discovery, events, 2, &event_count) == LP_OK);
+    LP_CHECK(event_count == 0);
+    LP_CHECK(g_discovery.dropped_events == 0);
+
+    LP_CHECK(lp_discovery_poll(&g_discovery, events, 2, &event_count) == LP_OK);
+    LP_CHECK(event_count == 2);
+    LP_CHECK(g_discovery.dropped_events == 3);
+    /* The dropped neighbors are still stored, so they are not reported again. */
+    LP_CHECK(g_discovery.known_count == 5);
+
+    LP_CHECK(lp_discovery_poll(&g_discovery, events, 2, &event_count) == LP_OK);
+    LP_CHECK(event_count == 0);
+    LP_CHECK(g_discovery.dropped_events == 0);
+}
+
 /* Runs discovery reconciliation and provider-validation scenarios. */
 int main(void)
 {
@@ -256,5 +288,6 @@ int main(void)
     test_rejoin_after_left_joins_once();
     test_mac_less_neighbor_uses_ip_identity();
     test_duplicate_mac_in_snapshot_joins_once();
+    test_event_overflow_is_counted();
     LP_TEST_RETURN();
 }

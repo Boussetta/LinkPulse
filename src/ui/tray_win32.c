@@ -82,6 +82,8 @@ typedef struct {
     HANDLE isp_refresh_event;
     lp_discovery_event_t discovery_events[LP_DISCOVERY_MAX_EVENTS];
     size_t discovery_event_count;
+    /* Join/leave events that did not fit in discovery_events; summarized in one toast. */
+    size_t discovery_dropped_count;
     lp_neighbor_list_t map_neighbors;
     lp_local_network_list_t map_networks;
 
@@ -387,6 +389,11 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                      (unsigned long long)active_count,
                      (unsigned long long)state->discovery.known_count,
                      (unsigned long long)event_count);
+            const size_t dropped_count = state->discovery.dropped_events;
+            if (dropped_count > 0) {
+                LP_WARN("discovery poll produced more events than fit: dropped=%llu",
+                        (unsigned long long)dropped_count);
+            }
             for (size_t i = 0; i < event_count; ++i) {
                 LP_INFO("discovery event: type=%s ip=%s mac=%s hostname=%s",
                         events[i].type == LP_DISCOVERY_EVENT_JOINED ? "joined" : "left",
@@ -414,10 +421,16 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                 networks.isp_info = state->isp_info;
             }
             state->map_networks = networks;
-            if (event_count > 0) {
-                memcpy(state->discovery_events, events, event_count * sizeof(events[0]));
+            /* Append rather than overwrite: the UI thread may not have drained the
+               previous poll's events yet. Whatever does not fit is summarized. */
+            const size_t queued = state->discovery_event_count;
+            const size_t room = LP_DISCOVERY_MAX_EVENTS - queued;
+            const size_t appended = event_count < room ? event_count : room;
+            if (appended > 0) {
+                memcpy(&state->discovery_events[queued], events, appended * sizeof(events[0]));
             }
-            state->discovery_event_count = event_count;
+            state->discovery_event_count = queued + appended;
+            state->discovery_dropped_count += dropped_count + (event_count - appended);
             LeaveCriticalSection(&state->lock);
             /* One disk write per poll, outside the tray lock, instead of one per device. */
             lp_win32_device_store_flush(state->device_store);
@@ -505,11 +518,23 @@ static void show_discovery_notifications(lp_tray_state_t *state)
 {
     lp_discovery_event_t events[LP_DISCOVERY_MAX_EVENTS];
     size_t event_count;
+    size_t dropped_count;
     EnterCriticalSection(&state->lock);
     event_count = state->discovery_event_count;
     memcpy(events, state->discovery_events, event_count * sizeof(events[0]));
     state->discovery_event_count = 0;
+    dropped_count = state->discovery_dropped_count;
+    state->discovery_dropped_count = 0;
     LeaveCriticalSection(&state->lock);
+
+    if (dropped_count > 0) {
+        char summary[128];
+        snprintf(summary, sizeof(summary), "%llu more device%s joined or left the network.",
+                 (unsigned long long)dropped_count, dropped_count == 1 ? "" : "s");
+        if (!lp_win32_show_toast("Network devices changed", summary)) {
+            LP_WARN("failed to show network discovery summary notification");
+        }
+    }
 
     for (size_t i = 0; i < event_count; ++i) {
         const bool joined = events[i].type == LP_DISCOVERY_EVENT_JOINED;
