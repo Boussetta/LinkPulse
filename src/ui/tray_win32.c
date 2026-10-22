@@ -13,6 +13,7 @@
 #include "linkpulse/sampler.h"
 #include "linkpulse/update.h"
 
+#include "dpi_win32.h"
 #include "isp_view_win32.h"
 #include "network_map_win32.h"
 #include "speed_meter_win32.h"
@@ -47,9 +48,10 @@
 #define IDM_UPDATE 2005
 #define IDM_SUPPORT 2006
 
-/* Enough points to fill the icon at the largest realistic SM_CXSMICON (24px at
-   125% scaling); render_icon only ever reads the last `size` of them. */
-#define LP_TRAY_GRAPH_POINTS 32
+/* Enough points to fill the icon at the largest realistic SM_CXSMICON (64px at
+   400% scaling, now that the process is DPI aware); render_icon only ever reads
+   the last `size` of them. */
+#define LP_TRAY_GRAPH_POINTS 64
 
 /* Cross-thread shared state, guarded by `lock`. Everything else below (nid,
    icon handles, timer/thread handles) is only ever touched by the UI thread. */
@@ -1234,6 +1236,9 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
 int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned interval_ms)
 {
     LP_INFO("initializing tray runtime");
+    /* Before any window exists: popups and the tray icon then render at the monitor's real DPI
+       instead of being bitmap-stretched by Windows. */
+    lp_ui_enable_dpi_awareness();
     lp_win32_set_app_user_model_id();
     HANDLE single_instance_mutex = CreateMutexA(NULL, FALSE, "Local\\LinkPulse_SingleInstance");
     if (single_instance_mutex == NULL || GetLastError() == ERROR_ALREADY_EXISTS) {

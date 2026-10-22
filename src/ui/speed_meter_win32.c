@@ -1,5 +1,7 @@
 #include "speed_meter_win32.h"
 
+#include "dpi_win32.h"
+
 #include "linkpulse/discovery.h"
 #include "linkpulse/format.h"
 #include "linkpulse/isp.h"
@@ -300,12 +302,14 @@ static void paint_meter(HWND window, HDC target_dc)
         return;
     }
 
-    RECT client;
-    GetClientRect(window, &client);
+    const UINT dpi = lp_ui_window_dpi(window);
+    RECT physical;
+    GetClientRect(window, &physical);
+    const RECT client = lp_ui_layout_client_rect(window, dpi);
 
     /* Double-buffered: the gauge repaints ~10x/s while a test runs. */
     HDC dc = CreateCompatibleDC(target_dc);
-    HBITMAP bitmap = CreateCompatibleBitmap(target_dc, client.right, client.bottom);
+    HBITMAP bitmap = CreateCompatibleBitmap(target_dc, physical.right, physical.bottom);
     if (dc == NULL || bitmap == NULL) {
         if (bitmap != NULL) {
             DeleteObject(bitmap);
@@ -316,6 +320,7 @@ static void paint_meter(HWND window, HDC target_dc)
         return;
     }
     HBITMAP old_bitmap = (HBITMAP)SelectObject(dc, bitmap);
+    lp_ui_begin_scaled_paint(dc, dpi);
     FillRect(dc, &client, state->background_brush);
 
     lp_speedtest_progress_t progress;
@@ -466,7 +471,8 @@ static void paint_meter(HWND window, HDC target_dc)
     SelectObject(dc, old_frame_brush);
     DeleteObject(frame_pen);
 
-    BitBlt(target_dc, 0, 0, client.right, client.bottom, dc, 0, 0, SRCCOPY);
+    lp_ui_end_scaled_paint(dc, dpi);
+    BitBlt(target_dc, 0, 0, physical.right, physical.bottom, dc, 0, 0, SRCCOPY);
     SelectObject(dc, old_bitmap);
     DeleteObject(bitmap);
     DeleteDC(dc);
@@ -595,10 +601,11 @@ static LRESULT CALLBACK speed_meter_wndproc(HWND window, UINT message, WPARAM wp
         if (state == NULL) {
             return 0;
         }
-        const int x = (short)LOWORD(lparam);
-        const int y = (short)HIWORD(lparam);
-        RECT client;
-        GetClientRect(window, &client);
+        const UINT dpi = lp_ui_window_dpi(window);
+        const POINT point = lp_ui_layout_point(lparam, dpi);
+        const int x = point.x;
+        const int y = point.y;
+        const RECT client = lp_ui_layout_client_rect(window, dpi);
         if (x >= client.right - 58 && y <= 58) {
             /* Closing only hides the view; the test and its result survive. */
             ShowWindow(window, SW_HIDE);
@@ -620,6 +627,9 @@ static LRESULT CALLBACK speed_meter_wndproc(HWND window, UINT message, WPARAM wp
         }
         return 0;
     }
+    case WM_DPICHANGED:
+        lp_ui_handle_dpi_changed(window, wparam, LP_SPEED_WIDTH, LP_SPEED_HEIGHT);
+        return 0;
     case WM_SETTINGCHANGE: {
         lp_speed_meter_state_t *state = state_of(window);
         if (state != NULL) {
@@ -695,14 +705,13 @@ void lp_speed_meter_show(HWND window, const char *router_label, const char *rout
     POINT cursor;
     GetCursorPos(&cursor);
     HMONITOR monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO monitor_info;
-    memset(&monitor_info, 0, sizeof(monitor_info));
-    monitor_info.cbSize = sizeof(monitor_info);
-    GetMonitorInfoA(monitor, &monitor_info);
-    const int x = monitor_info.rcWork.right - LP_SPEED_WIDTH - 12;
-    const int y = monitor_info.rcWork.bottom - LP_SPEED_HEIGHT - 8;
-    SetWindowPos(window, HWND_TOPMOST, x, y, LP_SPEED_WIDTH, LP_SPEED_HEIGHT,
+    UINT dpi = LP_UI_DEFAULT_DPI;
+    const RECT rect = lp_ui_popup_rect(monitor, LP_SPEED_WIDTH, LP_SPEED_HEIGHT, &dpi);
+    const int width = rect.right - rect.left;
+    const int height = rect.bottom - rect.top;
+    SetWindowPos(window, HWND_TOPMOST, rect.left, rect.top, width, height,
                  SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    lp_ui_apply_popup_region(window, width, height, dpi);
     InvalidateRect(window, NULL, FALSE);
     SetForegroundWindow(window);
     LP_INFO("speed meter opened: router=%s ip=%s", state->router_label, state->router_ip);
