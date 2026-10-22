@@ -19,8 +19,48 @@
 #define LP_MDNS_PORT 5353
 #define LP_MDNS_TIMEOUT_MS 250
 #define LP_DNS_PACKET_MAX 1500
+/* Documented GetAdaptersAddresses pattern: start at 15 KB, retry when it grows. */
+#define LP_ADAPTER_BUFFER_INITIAL (15u * 1024u)
+#define LP_ADAPTER_BUFFER_ATTEMPTS 3
 
 static uint32_t g_active_probe_offset;
+
+/* Returns a heap-allocated adapter list (free with HeapFree), retrying when the
+   list grows between calls. Returns NULL with the last Win32 error in *result. */
+static IP_ADAPTER_ADDRESSES *get_adapter_addresses(ULONG family, ULONG flags, DWORD *result)
+{
+    ULONG buffer_size = LP_ADAPTER_BUFFER_INITIAL;
+    *result = ERROR_BUFFER_OVERFLOW;
+    for (int attempt = 0; attempt < LP_ADAPTER_BUFFER_ATTEMPTS; ++attempt) {
+        IP_ADAPTER_ADDRESSES *adapters =
+            (IP_ADAPTER_ADDRESSES *)HeapAlloc(GetProcessHeap(), 0, buffer_size);
+        if (adapters == NULL) {
+            *result = ERROR_NOT_ENOUGH_MEMORY;
+            return NULL;
+        }
+        *result = GetAdaptersAddresses(family, flags, NULL, adapters, &buffer_size);
+        if (*result == NO_ERROR) {
+            return adapters;
+        }
+        HeapFree(GetProcessHeap(), 0, adapters);
+        if (*result != ERROR_BUFFER_OVERFLOW) {
+            return NULL;
+        }
+    }
+    return NULL;
+}
+
+/* Converts a wide adapter string, always leaving out NUL-terminated even when
+   the conversion fails part-way (for example on a too-small buffer). */
+static void wide_to_ansi(const wchar_t *value, char *out, size_t out_cap)
+{
+    if (out_cap == 0) {
+        return;
+    }
+    if (WideCharToMultiByte(CP_ACP, 0, value, -1, out, (int)out_cap, NULL, NULL) == 0) {
+        out[out_cap - 1] = '\0';
+    }
+}
 
 /* Keeps neighbors with recent or active reachability evidence. Stale and
     permanent cache entries are excluded because they can outlive a device. */
@@ -539,21 +579,10 @@ static bool probe_finished(lp_arp_probe_t *probe)
 /* Probes bounded on-link IPv4 networks so idle devices need not be in the ARP cache. */
 static size_t probe_active_subnets(lp_neighbor_list_t *out)
 {
-    ULONG buffer_size = 0;
-    const ULONG flags = GAA_FLAG_INCLUDE_PREFIX;
-    DWORD result = GetAdaptersAddresses(AF_INET, flags, NULL, NULL, &buffer_size);
-    if (result != ERROR_BUFFER_OVERFLOW || buffer_size == 0) {
-        return 0;
-    }
-
+    DWORD result = NO_ERROR;
     IP_ADAPTER_ADDRESSES *adapters =
-        (IP_ADAPTER_ADDRESSES *)HeapAlloc(GetProcessHeap(), 0, buffer_size);
+        get_adapter_addresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, &result);
     if (adapters == NULL) {
-        return 0;
-    }
-    result = GetAdaptersAddresses(AF_INET, flags, NULL, adapters, &buffer_size);
-    if (result != NO_ERROR) {
-        HeapFree(GetProcessHeap(), 0, adapters);
         return 0;
     }
 
@@ -862,22 +891,11 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
                       sizeof(default_gateway_vendor), &default_gateway_type,
                       &default_gateway_confidence);
 
-    ULONG buffer_size = 0;
-    const ULONG flags = GAA_FLAG_INCLUDE_PREFIX;
-    DWORD result = GetAdaptersAddresses(AF_UNSPEC, flags, NULL, NULL, &buffer_size);
-    if (result != ERROR_BUFFER_OVERFLOW || buffer_size == 0) {
-        return LP_ERR_IO;
-    }
-
+    DWORD result = NO_ERROR;
     IP_ADAPTER_ADDRESSES *adapters =
-        (IP_ADAPTER_ADDRESSES *)HeapAlloc(GetProcessHeap(), 0, buffer_size);
+        get_adapter_addresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, &result);
     if (adapters == NULL) {
-        return LP_ERR_NO_MEMORY;
-    }
-    result = GetAdaptersAddresses(AF_UNSPEC, flags, NULL, adapters, &buffer_size);
-    if (result != NO_ERROR) {
-        HeapFree(GetProcessHeap(), 0, adapters);
-        return LP_ERR_IO;
+        return (result == ERROR_NOT_ENOUGH_MEMORY) ? LP_ERR_NO_MEMORY : LP_ERR_IO;
     }
 
     for (IP_ADAPTER_ADDRESSES *adapter = adapters; adapter != NULL;
