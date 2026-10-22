@@ -13,6 +13,7 @@
 #include "linkpulse/sampler.h"
 #include "linkpulse/update.h"
 
+#include "isp_view_win32.h"
 #include "network_map_win32.h"
 #include "speed_meter_win32.h"
 
@@ -29,6 +30,8 @@
 #define WM_LP_DISCOVERY_RESULT (WM_APP + 3)
 #define WM_LP_SPEED_METER_OPEN (WM_APP + 4)
 #define WM_LP_NETWORK_MAP_OPEN (WM_APP + 5)
+#define WM_LP_ISP_VIEW_OPEN (WM_APP + 9)
+#define WM_LP_ISP_RESULT (WM_APP + 10)
 #define LP_TRAY_TIMER_ID 1
 #define LP_TRAY_ICON_UID 1
 #define LP_UPDATE_VERSION_MAX 32
@@ -64,6 +67,7 @@ typedef struct {
     bool update_available;
     char update_version[LP_UPDATE_VERSION_MAX];
     bool isp_available;
+    bool isp_lookup_failed; /* the latest lookup failed and none has succeeded since */
     lp_isp_info_t isp_info;
     char last_gateway_mac[LP_MAC_STR_MAX];
     bool last_gateway_mac_set;
@@ -90,6 +94,7 @@ typedef struct {
     HWND hwnd;
     HWND network_map_hwnd;
     HWND speed_meter_hwnd;
+    HWND isp_view_hwnd;
     char pending_speed_meter_ip[LP_IP_STR_MAX];
     NOTIFYICONDATAA nid;
     HICON current_icon;
@@ -308,9 +313,17 @@ static DWORD WINAPI isp_thread_proc(LPVOID param)
             EnterCriticalSection(&state->lock);
             state->isp_info = info;
             state->isp_available = true;
+            state->isp_lookup_failed = false;
             LeaveCriticalSection(&state->lock);
         } else {
             LP_WARN("ISP lookup failed: %s", lp_status_str(status));
+            EnterCriticalSection(&state->lock);
+            state->isp_lookup_failed = true;
+            LeaveCriticalSection(&state->lock);
+        }
+        /* Lets an open ISP view pick up the new result or failure. */
+        if (InterlockedCompareExchange(&state->stop_requested, 0, 0) == 0) {
+            PostMessageA(state->hwnd, WM_LP_ISP_RESULT, 0, 0);
         }
 
         const HANDLE wait_handles[2] = {state->update_stop_event, state->isp_refresh_event};
@@ -590,6 +603,26 @@ static void toggle_network_map(lp_tray_state_t *state)
         return;
     }
     show_network_map(state);
+}
+
+/* Pushes the latest ISP lookup result to the ISP view. `activate` opens, positions, and focuses
+   it (explicit user opens); otherwise it only repaints. */
+static void show_isp_view(lp_tray_state_t *state, bool activate)
+{
+    if (state->isp_view_hwnd == NULL) {
+        return;
+    }
+    lp_isp_info_t info;
+    EnterCriticalSection(&state->lock);
+    const bool available = state->isp_available;
+    const bool failed = state->isp_lookup_failed;
+    info = state->isp_info;
+    LeaveCriticalSection(&state->lock);
+    if (activate) {
+        lp_isp_view_show(state->isp_view_hwnd, available ? &info : NULL, failed);
+    } else {
+        lp_isp_view_update(state->isp_view_hwnd, available ? &info : NULL, failed);
+    }
 }
 
 /* Opens the speed meter layer for the gateway the map reported as clicked. */
@@ -1000,6 +1033,11 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
         }
         return 0;
+    case WM_LP_ISP_RESULT:
+        if (state->isp_view_hwnd != NULL && IsWindowVisible(state->isp_view_hwnd)) {
+            show_isp_view(state, false);
+        }
+        return 0;
     case WM_COPYDATA: {
         const COPYDATASTRUCT *copy_data = (const COPYDATASTRUCT *)lparam;
         if (copy_data == NULL || copy_data->lpData == NULL || copy_data->cbData == 0) {
@@ -1031,16 +1069,31 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             PostMessageA(hwnd, WM_LP_NETWORK_MAP_OPEN, 0, 0);
             return TRUE;
         }
+        if (copy_data->dwData == LP_NETWORK_MAP_COPYDATA_INTERNET_SELECTED) {
+            /* Posted for the same re-entrancy reason as the router selection above. */
+            PostMessageA(hwnd, WM_LP_ISP_VIEW_OPEN, 0, 0);
+            return TRUE;
+        }
+        if (copy_data->dwData == LP_ISP_VIEW_COPYDATA_BACK) {
+            PostMessageA(hwnd, WM_LP_NETWORK_MAP_OPEN, 0, 0);
+            return TRUE;
+        }
         return FALSE;
     }
     case WM_LP_SPEED_METER_OPEN:
         show_speed_meter(state, state->pending_speed_meter_ip);
+        return 0;
+    case WM_LP_ISP_VIEW_OPEN:
+        show_isp_view(state, true);
         return 0;
     case WM_LP_NETWORK_MAP_OPEN:
         /* Map first: it inherits the foreground from the still-visible meter. */
         show_network_map(state);
         if (state->speed_meter_hwnd != NULL) {
             ShowWindow(state->speed_meter_hwnd, SW_HIDE);
+        }
+        if (state->isp_view_hwnd != NULL) {
+            ShowWindow(state->isp_view_hwnd, SW_HIDE);
         }
         return 0;
     case WM_DESTROY: {
@@ -1066,6 +1119,10 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         if (state->speed_meter_hwnd != NULL) {
             DestroyWindow(state->speed_meter_hwnd);
             state->speed_meter_hwnd = NULL;
+        }
+        if (state->isp_view_hwnd != NULL) {
+            DestroyWindow(state->isp_view_hwnd);
+            state->isp_view_hwnd = NULL;
         }
         if (state->current_icon != NULL) {
             DestroyIcon(state->current_icon);
@@ -1235,6 +1292,10 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
     g_tray.speed_meter_hwnd = lp_speed_meter_create(instance, g_tray.hwnd);
     if (g_tray.speed_meter_hwnd == NULL) {
         LP_WARN("failed to create speed meter window");
+    }
+    g_tray.isp_view_hwnd = lp_isp_view_create(instance, g_tray.hwnd);
+    if (g_tray.isp_view_hwnd == NULL) {
+        LP_WARN("failed to create ISP view window");
     }
 
     g_tray.nid.cbSize = sizeof(g_tray.nid);
