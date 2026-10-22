@@ -14,7 +14,9 @@ typedef struct {
     const lp_isp_info_t *isp; /* NULL when not yet known this poll */
 } lp_network_context_t;
 
-/* Opens the per-user MAC-keyed XML device store. The returned handle is opaque. */
+/* Opens the per-user MAC-keyed XML device store. The returned handle is opaque.
+   apply, observe, and flush are safe to call concurrently from any thread;
+   close must not race with them. */
 int lp_win32_device_store_open(void **store);
 
 /* Applies persisted label, trust, type, and icon metadata for the given
@@ -22,12 +24,16 @@ int lp_win32_device_store_open(void **store);
    unresolved network. */
 void lp_win32_device_store_apply(void *store, const char *gateway_mac, lp_neighbor_t *neighbor);
 
-/* Records observed device and ISP metadata under the given network and
-   persists the store atomically. */
+/* Records observed device and ISP metadata under the given network in memory.
+   Call lp_win32_device_store_flush() once after a batch of observations. */
 void lp_win32_device_store_observe(void *store, const lp_network_context_t *network_context,
                                     const lp_neighbor_t *neighbor);
 
-/* Releases the store and any XML resources owned by it. */
+/* Atomically persists pending observations, if any. A failed write keeps the
+   previous file and retries on the next flush. */
+void lp_win32_device_store_flush(void *store);
+
+/* Flushes pending observations, then releases the store. */
 void lp_win32_device_store_close(void *store);
 
 #endif /* LINKPULSE_DEVICE_STORE_H */

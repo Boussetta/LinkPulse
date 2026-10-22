@@ -58,11 +58,16 @@ typedef struct {
     size_t device_capacity;
 } lp_network_record_t;
 
+/* The discovery and device-refresh threads both use the store, and observe can
+   realloc networks/devices, so every entry point takes `lock` itself rather
+   than trusting each caller to hold the same external lock. */
 typedef struct {
+    SRWLOCK lock;
     char path[LP_DEVICE_STORE_PATH_MAX];
     lp_network_record_t *networks;
     size_t network_count;
     size_t network_capacity;
+    bool dirty; /* observed changes not yet written by lp_win32_device_store_flush */
 } lp_device_store_t;
 
 static void copy_text(char *out, size_t cap, const char *value)
@@ -586,6 +591,7 @@ int lp_win32_device_store_open(void **store_out)
         free(store);
         return 1;
     }
+    InitializeSRWLock(&store->lock);
     bool migrated = false;
     load_store(store, &migrated);
     if (migrated) {
@@ -600,18 +606,18 @@ void lp_win32_device_store_apply(void *opaque, const char *gateway_mac, lp_neigh
 {
     lp_device_store_t *store = opaque;
     if (store == NULL || neighbor == NULL || neighbor->mac[0] == '\0') return;
+    AcquireSRWLockShared(&store->lock);
     lp_network_record_t *network =
         find_network(store, gateway_mac != NULL ? gateway_mac : LP_DEVICE_STORE_UNKNOWN_NETWORK_KEY);
-    if (network == NULL) return;
-    const lp_device_record_t *device = find_device(network, neighbor->mac);
+    const lp_device_record_t *device = network != NULL ? find_device(network, neighbor->mac) : NULL;
     if (device != NULL) apply_record(device, neighbor);
+    ReleaseSRWLockShared(&store->lock);
 }
 
-void lp_win32_device_store_observe(void *opaque, const lp_network_context_t *network_context,
-                                    const lp_neighbor_t *neighbor)
+/* Merges one observation into memory; the caller holds the store lock exclusively. */
+static void observe_locked(lp_device_store_t *store, const lp_network_context_t *network_context,
+                           const lp_neighbor_t *neighbor)
 {
-    lp_device_store_t *store = opaque;
-    if (store == NULL || neighbor == NULL || neighbor->mac[0] == '\0') return;
     const char *gateway_mac =
         (network_context != NULL && network_context->gateway_mac != NULL)
             ? network_context->gateway_mac
@@ -645,13 +651,35 @@ void lp_win32_device_store_observe(void *opaque, const lp_network_context_t *net
         device->has_device_type = true;
     }
     device->last_seen = now_seconds();
-    (void)save_store(store);
+    store->dirty = true;
+}
+
+void lp_win32_device_store_observe(void *opaque, const lp_network_context_t *network_context,
+                                    const lp_neighbor_t *neighbor)
+{
+    lp_device_store_t *store = opaque;
+    if (store == NULL || neighbor == NULL || neighbor->mac[0] == '\0') return;
+    AcquireSRWLockExclusive(&store->lock);
+    observe_locked(store, network_context, neighbor);
+    ReleaseSRWLockExclusive(&store->lock);
+}
+
+void lp_win32_device_store_flush(void *opaque)
+{
+    lp_device_store_t *store = opaque;
+    if (store == NULL) return;
+    AcquireSRWLockExclusive(&store->lock);
+    if (store->dirty && save_store(store)) {
+        store->dirty = false;
+    }
+    ReleaseSRWLockExclusive(&store->lock);
 }
 
 void lp_win32_device_store_close(void *opaque)
 {
     lp_device_store_t *store = opaque;
     if (store == NULL) return;
+    lp_win32_device_store_flush(store);
     for (size_t i = 0; i < store->network_count; ++i) {
         free(store->networks[i].devices);
     }

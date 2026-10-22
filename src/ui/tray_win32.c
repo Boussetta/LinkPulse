@@ -419,6 +419,8 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
             }
             state->discovery_event_count = event_count;
             LeaveCriticalSection(&state->lock);
+            /* One disk write per poll, outside the tray lock, instead of one per device. */
+            lp_win32_device_store_flush(state->device_store);
             if (event_count > 0 ||
                 (state->network_map_hwnd != NULL && IsWindowVisible(state->network_map_hwnd))) {
                 PostMessageA(state->hwnd, WM_LP_DISCOVERY_RESULT, 0, 0);
@@ -672,6 +674,7 @@ static DWORD WINAPI device_refresh_thread_proc(LPVOID param)
     network_context_from_snapshot(&networks, isp_available ? &isp : NULL, &network_context);
     lp_win32_device_store_observe(state->device_store, &network_context, &neighbor);
     LeaveCriticalSection(&state->lock);
+    lp_win32_device_store_flush(state->device_store);
     PostMessageA(state->hwnd, WM_LP_DISCOVERY_RESULT, 0, 0);
     free(request);
     return 0;
