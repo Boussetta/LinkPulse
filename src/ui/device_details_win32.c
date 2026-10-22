@@ -306,6 +306,7 @@ static LRESULT CALLBACK device_details_wndproc(HWND window, UINT message, WPARAM
             DeleteObject(state->label_font);
             DeleteObject(state->small_font);
             DeleteObject(state->background_brush);
+            SetWindowLongPtrA(window, GWLP_USERDATA, 0);
             HeapFree(GetProcessHeap(), 0, state);
         }
         return 0;
@@ -338,15 +339,16 @@ HWND lp_device_details_create(HINSTANCE instance, HWND owner)
     return window;
 }
 
-void lp_device_details_show(HWND window, const lp_neighbor_t *neighbor,
-                            lp_device_capture_state_t capture_state,
-                            const lp_capture_activity_t *capture)
+/* Copies the device snapshot into the window state; returns false if the window is not ready. */
+static bool store_snapshot(HWND window, const lp_neighbor_t *neighbor,
+                           lp_device_capture_state_t capture_state,
+                           const lp_capture_activity_t *capture)
 {
     if (window == NULL || neighbor == NULL)
-        return;
+        return false;
     lp_device_details_state_t *state = state_of(window);
     if (state == NULL)
-        return;
+        return false;
     state->neighbor = *neighbor;
     state->capture_state = capture_state;
     if (capture_state == LP_DEVICE_CAPTURE_DONE && capture != NULL) {
@@ -354,6 +356,23 @@ void lp_device_details_show(HWND window, const lp_neighbor_t *neighbor,
     } else {
         memset(&state->capture, 0, sizeof(state->capture));
     }
+    return true;
+}
+
+void lp_device_details_update(HWND window, const lp_neighbor_t *neighbor,
+                              lp_device_capture_state_t capture_state,
+                              const lp_capture_activity_t *capture)
+{
+    if (store_snapshot(window, neighbor, capture_state, capture))
+        InvalidateRect(window, NULL, FALSE);
+}
+
+void lp_device_details_show(HWND window, const lp_neighbor_t *neighbor,
+                            lp_device_capture_state_t capture_state,
+                            const lp_capture_activity_t *capture)
+{
+    if (!store_snapshot(window, neighbor, capture_state, capture))
+        return;
 
     POINT cursor;
     GetCursorPos(&cursor);
