@@ -279,6 +279,58 @@ static void test_event_overflow_is_counted(void)
     LP_CHECK(g_discovery.dropped_events == 0);
 }
 
+static lp_neighbor_list_t g_snapshot;
+
+/* Verifies one device's IPv4 and IPv6 entries merge into one IPv4-addressed entry. */
+static void test_normalize_merges_dual_stack_device(void)
+{
+    memset(&g_snapshot, 0, sizeof(g_snapshot));
+    set_neighbor(&g_snapshot.items[0], "fe80::1c2b", "AA:BB:CC:DD:EE:10");
+    snprintf(g_snapshot.items[0].hostname, sizeof(g_snapshot.items[0].hostname), "pixel");
+    set_neighbor(&g_snapshot.items[1], "192.168.1.30", "AA:BB:CC:DD:EE:11");
+    set_neighbor(&g_snapshot.items[2], "192.168.1.31", "AA:BB:CC:DD:EE:10");
+    set_neighbor(&g_snapshot.items[3], "2001:db8::31", "AA:BB:CC:DD:EE:10");
+    g_snapshot.count = 4;
+
+    lp_discovery_normalize_macs(&g_snapshot);
+    LP_CHECK(g_snapshot.count == 2);
+    LP_CHECK_STR_EQ(g_snapshot.items[0].ip, "192.168.1.31");
+    LP_CHECK_STR_EQ(g_snapshot.items[0].mac, "AA:BB:CC:DD:EE:10");
+    LP_CHECK_STR_EQ(g_snapshot.items[0].hostname, "pixel");
+    LP_CHECK_STR_EQ(g_snapshot.items[1].ip, "192.168.1.30");
+}
+
+/* Verifies a MAC answering for several IPv4 addresses is cleared on every entry. */
+static void test_normalize_clears_proxy_arp_mac(void)
+{
+    memset(&g_snapshot, 0, sizeof(g_snapshot));
+    set_neighbor(&g_snapshot.items[0], "fe80::99", "AA:BB:CC:DD:EE:99");
+    set_neighbor(&g_snapshot.items[1], "10.0.0.5", "AA:BB:CC:DD:EE:99");
+    set_neighbor(&g_snapshot.items[2], "10.0.0.6", "AA:BB:CC:DD:EE:99");
+    g_snapshot.count = 3;
+
+    lp_discovery_normalize_macs(&g_snapshot);
+    LP_CHECK(g_snapshot.count == 3);
+    for (size_t i = 0; i < g_snapshot.count; ++i) {
+        LP_CHECK_STR_EQ(g_snapshot.items[i].mac, "");
+    }
+}
+
+/* Verifies several IPv6 addresses of one device without IPv4 still merge into one entry. */
+static void test_normalize_merges_ipv6_only_device(void)
+{
+    memset(&g_snapshot, 0, sizeof(g_snapshot));
+    set_neighbor(&g_snapshot.items[0], "fe80::7", "AA:BB:CC:DD:EE:07");
+    set_neighbor(&g_snapshot.items[1], "2001:db8::7", "AA:BB:CC:DD:EE:07");
+    g_snapshot.items[1].connection_type = LP_CONNECTION_WIFI;
+    g_snapshot.count = 2;
+
+    lp_discovery_normalize_macs(&g_snapshot);
+    LP_CHECK(g_snapshot.count == 1);
+    LP_CHECK_STR_EQ(g_snapshot.items[0].ip, "fe80::7");
+    LP_CHECK(g_snapshot.items[0].connection_type == LP_CONNECTION_WIFI);
+}
+
 /* Runs discovery reconciliation and provider-validation scenarios. */
 int main(void)
 {
@@ -289,5 +341,8 @@ int main(void)
     test_mac_less_neighbor_uses_ip_identity();
     test_duplicate_mac_in_snapshot_joins_once();
     test_event_overflow_is_counted();
+    test_normalize_merges_dual_stack_device();
+    test_normalize_clears_proxy_arp_mac();
+    test_normalize_merges_ipv6_only_device();
     LP_TEST_RETURN();
 }
