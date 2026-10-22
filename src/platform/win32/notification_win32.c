@@ -12,6 +12,8 @@
 #include <windows.h>
 #include <shobjidl.h>
 
+#include "linkpulse/format.h"
+
 #define LP_APP_USER_MODEL_ID L"LinkPulse.NetworkMonitor"
 
 #if defined(_MSC_VER)
@@ -38,6 +40,81 @@ static HRESULT make_hstring(PCWSTR value, HSTRING *out)
     return WindowsCreateString(value, (UINT32)wcslen(value), out);
 }
 
+/* Returns a heap copy of UTF-8 text escaped for XML, or NULL when allocation fails. */
+static char *xml_escape_alloc(const char *text)
+{
+    const size_t length = lp_format_xml_escape(text, NULL, 0);
+    char *escaped = HeapAlloc(GetProcessHeap(), 0, length + 1);
+    if (escaped != NULL) {
+        lp_format_xml_escape(text, escaped, length + 1);
+    }
+    return escaped;
+}
+
+/* Converts UTF-8 to a heap wide string; invalid sequences become U+FFFD rather than failing. */
+static wchar_t *utf8_to_wide_alloc(const char *text)
+{
+    const int count = MultiByteToWideChar(CP_UTF8, 0, text, -1, NULL, 0);
+    if (count <= 0) {
+        return NULL;
+    }
+    wchar_t *wide = HeapAlloc(GetProcessHeap(), 0, (size_t)count * sizeof(wchar_t));
+    if (wide != NULL && MultiByteToWideChar(CP_UTF8, 0, text, -1, wide, count) != count) {
+        HeapFree(GetProcessHeap(), 0, wide);
+        wide = NULL;
+    }
+    return wide;
+}
+
+/* Builds the toast XML as a heap wide string. Caller-supplied text (which can include LAN
+   hostnames chosen by other devices) is escaped so it can never add or close markup. */
+static wchar_t *build_toast_xml(const char *title, const char *message, const char *tag,
+                                bool update_action)
+{
+    const char *launch_uri = update_action ? "linkpulse://download-update" : "";
+    const char *actions = update_action ? "<actions><action activationType=\"protocol\" "
+                                          "arguments=\"linkpulse://download-update\" "
+                                          "content=\"Download update\"/></actions>"
+                                        : "";
+    static const char format[] = "<toast launch=\"%s\" tag=\"%s\" group=\"LinkPulse\"><visual>"
+                                 "<binding template=\"ToastText02\">"
+                                 "<text id=\"1\">%s</text>"
+                                 "<text id=\"2\">%s</text>"
+                                 "</binding></visual>%s</toast>";
+
+    wchar_t *wide = NULL;
+    char *xml = NULL;
+    char *escaped_tag = xml_escape_alloc(tag);
+    char *escaped_title = xml_escape_alloc(title);
+    char *escaped_message = xml_escape_alloc(message);
+    if (escaped_tag != NULL && escaped_title != NULL && escaped_message != NULL) {
+        const int length = snprintf(NULL, 0, format, launch_uri, escaped_tag, escaped_title,
+                                    escaped_message, actions);
+        if (length >= 0) {
+            xml = HeapAlloc(GetProcessHeap(), 0, (size_t)length + 1);
+        }
+        if (xml != NULL) {
+            snprintf(xml, (size_t)length + 1, format, launch_uri, escaped_tag, escaped_title,
+                     escaped_message, actions);
+            wide = utf8_to_wide_alloc(xml);
+        }
+    }
+
+    if (xml != NULL) {
+        HeapFree(GetProcessHeap(), 0, xml);
+    }
+    if (escaped_message != NULL) {
+        HeapFree(GetProcessHeap(), 0, escaped_message);
+    }
+    if (escaped_title != NULL) {
+        HeapFree(GetProcessHeap(), 0, escaped_title);
+    }
+    if (escaped_tag != NULL) {
+        HeapFree(GetProcessHeap(), 0, escaped_tag);
+    }
+    return wide;
+}
+
 /* Builds and submits one toast, optionally adding the protocol update action. */
 static bool show_toast_internal(const char *title, const char *message, const char *tag,
                                 bool update_action)
@@ -46,31 +123,22 @@ static bool show_toast_internal(const char *title, const char *message, const ch
         return false;
     }
 
-    const wchar_t *launch_uri = update_action ? L"linkpulse://download-update" : L"";
-    const wchar_t *actions = update_action
-                                 ? L"<actions><action activationType=\"protocol\" "
-                                   L"arguments=\"linkpulse://download-update\" "
-                                   L"content=\"Download update\"/></actions>"
-                                 : L"";
-    wchar_t xml[512];
-    const int written = swprintf(xml, sizeof(xml) / sizeof(xml[0]),
-                                 L"<toast launch=\"%ls\" tag=\"%hs\" group=\"LinkPulse\"><visual>"
-                                 L"<binding template=\"ToastText02\">"
-                                 L"<text id=\"1\">%hs</text>"
-                                 L"<text id=\"2\">%hs</text>"
-                                 L"</binding></visual>%ls</toast>", launch_uri, tag, title, message,
-                                 actions);
-    if (written < 0 || (size_t)written >= sizeof(xml) / sizeof(xml[0])) {
+    wchar_t *xml = build_toast_xml(title, message, tag, update_action);
+    if (xml == NULL) {
         return false;
     }
 
     HRESULT result = RoInitialize(RO_INIT_MULTITHREADED);
     const bool initialized_here = SUCCEEDED(result);
     if (FAILED(result) && result != RPC_E_CHANGED_MODE) {
+        HeapFree(GetProcessHeap(), 0, xml);
         return false;
     }
 
-    HSTRING class_id = NULL;
+    /* One HSTRING per class name: reusing a single variable leaked the earlier strings. */
+    HSTRING xml_class_id = NULL;
+    HSTRING manager_class_id = NULL;
+    HSTRING notification_class_id = NULL;
     HSTRING xml_text = NULL;
     HSTRING app_id = NULL;
     IInspectable *xml_inspectable = NULL;
@@ -81,9 +149,9 @@ static bool show_toast_internal(const char *title, const char *message, const ch
     __x_ABI_CWindows_CUI_CNotifications_CIToastNotifier *notifier = NULL;
     __x_ABI_CWindows_CUI_CNotifications_CIToastNotification *notification = NULL;
 
-    result = make_hstring(L"Windows.Data.Xml.Dom.XmlDocument", &class_id);
+    result = make_hstring(L"Windows.Data.Xml.Dom.XmlDocument", &xml_class_id);
     if (SUCCEEDED(result)) {
-        result = RoActivateInstance(class_id, &xml_inspectable);
+        result = RoActivateInstance(xml_class_id, &xml_inspectable);
     }
     if (SUCCEEDED(result)) {
         result = IInspectable_QueryInterface(
@@ -101,12 +169,14 @@ static bool show_toast_internal(const char *title, const char *message, const ch
             xml_io, &IID___x_ABI_CWindows_CData_CXml_CDom_CIXmlDocument, (void **)&document);
     }
     if (SUCCEEDED(result)) {
-        result = make_hstring(L"Windows.UI.Notifications.ToastNotificationManager", &class_id);
+        result = make_hstring(L"Windows.UI.Notifications.ToastNotificationManager",
+                              &manager_class_id);
     }
     if (SUCCEEDED(result)) {
         result = RoGetActivationFactory(
-            class_id, &IID___x_ABI_CWindows_CUI_CNotifications_CIToastNotificationManagerStatics,
-                                        (void **)&manager);
+            manager_class_id,
+            &IID___x_ABI_CWindows_CUI_CNotifications_CIToastNotificationManagerStatics,
+            (void **)&manager);
     }
     if (SUCCEEDED(result)) {
         result = make_hstring(L"LinkPulse.NetworkMonitor", &app_id);
@@ -116,12 +186,14 @@ static bool show_toast_internal(const char *title, const char *message, const ch
             manager, app_id, &notifier);
     }
     if (SUCCEEDED(result)) {
-        result = make_hstring(L"Windows.UI.Notifications.ToastNotification", &class_id);
+        result = make_hstring(L"Windows.UI.Notifications.ToastNotification",
+                              &notification_class_id);
     }
     if (SUCCEEDED(result)) {
         result = RoGetActivationFactory(
-            class_id, &IID___x_ABI_CWindows_CUI_CNotifications_CIToastNotificationFactory,
-                                        (void **)&factory);
+            notification_class_id,
+            &IID___x_ABI_CWindows_CUI_CNotifications_CIToastNotificationFactory,
+            (void **)&factory);
     }
     if (SUCCEEDED(result)) {
         result = __x_ABI_CWindows_CUI_CNotifications_CIToastNotificationFactory_CreateToastNotification(
@@ -158,12 +230,19 @@ static bool show_toast_internal(const char *title, const char *message, const ch
     if (xml_text != NULL) {
         WindowsDeleteString(xml_text);
     }
-    if (class_id != NULL) {
-        WindowsDeleteString(class_id);
+    if (notification_class_id != NULL) {
+        WindowsDeleteString(notification_class_id);
+    }
+    if (manager_class_id != NULL) {
+        WindowsDeleteString(manager_class_id);
+    }
+    if (xml_class_id != NULL) {
+        WindowsDeleteString(xml_class_id);
     }
     if (initialized_here) {
         RoUninitialize();
     }
+    HeapFree(GetProcessHeap(), 0, xml);
     return SUCCEEDED(result);
 }
 

@@ -9,4 +9,10 @@
    "1.5 MB/s". Scales through b/s, Kb/s, Mb/s, Gb/s (or the byte equivalents). */
 void lp_format_rate(uint64_t bytes_per_sec, bool use_bits, char *out, size_t out_cap);
 
+/* Escapes UTF-8 text for an XML attribute or text node: & < > " ' become entities and ASCII
+   control characters are dropped. Writes at most out_cap - 1 bytes plus a terminator and
+   returns the full escaped length, so a return value >= out_cap means the output was
+   truncated (like snprintf). Bytes >= 0x80 pass through unchanged. */
+size_t lp_format_xml_escape(const char *in, char *out, size_t out_cap);
+
 #endif /* LINKPULSE_FORMAT_H */
