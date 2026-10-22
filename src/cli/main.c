@@ -243,7 +243,7 @@ int main(int argc, char **argv)
                 sampler_config.iface_name[0] != '\0' ? sampler_config.iface_name : "(default)",
                 sampler_config.include_virtual ? "yes" : "no", use_bits ? "yes" : "no",
                 interval_ms);
-        return lp_tray_run(&sampler_config, use_bits, interval_ms);
+        return lp_tray_run(&sampler_config, use_bits, interval_ms, saved_config.packet_capture);
     }
 
     if (want_watch) {

@@ -39,7 +39,9 @@ lp_capture_direction_t lp_capture_classify_frame(int link_type, const uint8_t *f
                                                  const lp_capture_address_t *device);
 
 /* Captures visible metadata for one device for a bounded proof-of-concept run.
-   Npcap is loaded dynamically; no SDK or link-time dependency is required. */
+   Npcap is loaded dynamically from the system directory; no SDK or link-time dependency is
+   required. Only packet headers are captured, in non-promiscuous mode. Callers must only invoke
+   this after the user has opted in (lp_config_t.packet_capture). */
 lp_status_t lp_win32_capture_device_activity(const char *device_ip, unsigned duration_ms,
                                              lp_capture_activity_t *out);
 

@@ -134,6 +134,10 @@ The future backend should be optional and should:
 - show explicit states such as `capture unavailable`, `capture sees local host only`, and
 	`encrypted source unknown`.
 
+The current preview is opt-in: it only runs after the user enables "Capture device traffic
+(Npcap)" in the tray menu (persisted as `packet_capture=1`). It loads `wpcap.dll` from the system
+Npcap directory only, opens the adapter in non-promiscuous mode, and captures 96-byte headers.
+
 Installing Npcap alone is not sufficient for this use case. A supported monitor-mode adapter or a
 capture point on the gateway/bridge is required to observe other devices reliably.
 

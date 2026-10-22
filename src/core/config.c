@@ -16,6 +16,7 @@ void lp_config_defaults(lp_config_t *config)
     config->include_virtual = false;
     config->use_bits = false;
     config->interval_ms = 1000;
+    config->packet_capture = false;
 }
 
 bool lp_config_parse_interval(const char *text, unsigned *out_ms)
@@ -107,6 +108,12 @@ static void apply_line(lp_config_t *config, char *line)
         } else if (strcmp(value, "0") == 0) {
             config->use_bits = false;
         }
+    } else if (strcmp(key, "packet_capture") == 0) {
+        if (strcmp(value, "1") == 0) {
+            config->packet_capture = true;
+        } else if (strcmp(value, "0") == 0) {
+            config->packet_capture = false;
+        }
     } else if (strcmp(key, "interval_ms") == 0) {
         (void)lp_config_parse_interval(value, &config->interval_ms);
     }
@@ -160,9 +167,10 @@ size_t lp_config_serialize(const lp_config_t *config, char *out, size_t cap)
                  "iface=%s\n"
                  "include_virtual=%d\n"
                  "use_bits=%d\n"
-                 "interval_ms=%u\n",
+                 "interval_ms=%u\n"
+                 "packet_capture=%d\n",
                  mode_name(config->mode), config->iface_name, config->include_virtual ? 1 : 0,
-                 config->use_bits ? 1 : 0, config->interval_ms);
+                 config->use_bits ? 1 : 0, config->interval_ms, config->packet_capture ? 1 : 0);
 
     if (written < 0) {
         out[0] = '\0';

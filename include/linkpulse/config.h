@@ -13,6 +13,7 @@ typedef struct {
     bool include_virtual;
     bool use_bits;
     unsigned interval_ms;
+    bool packet_capture; /* opt-in Npcap device capture; off by default */
 } lp_config_t;
 
 /* Accepted poll interval range. Faster polling only burns CPU; slower polling

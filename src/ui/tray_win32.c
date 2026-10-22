@@ -52,6 +52,7 @@
 #define IDM_EXIT 2004
 #define IDM_UPDATE 2005
 #define IDM_SUPPORT 2006
+#define IDM_PACKET_CAPTURE 2007
 
 /* Enough points to fill the icon at the largest realistic SM_CXSMICON (64px at
    400% scaling, now that the process is DPI aware); render_icon only ever reads
@@ -74,6 +75,7 @@ typedef struct {
     volatile LONG stop_requested;
     volatile LONG paused;
     volatile LONG use_bits;
+    volatile LONG packet_capture; /* user opt-in for Npcap device capture */
     bool update_available;
     char update_version[LP_UPDATE_VERSION_MAX];
     bool isp_available;
@@ -743,7 +745,11 @@ static void show_device_details(lp_tray_state_t *state, const char *device_ip)
         capture = state->selected_device_capture;
         has_capture = state->has_selected_device_capture;
         LeaveCriticalSection(&state->lock);
-        lp_device_details_show(state->device_details_hwnd, &neighbor, has_capture ? &capture : NULL);
+        lp_device_capture_state_t capture_state = LP_DEVICE_CAPTURE_OFF;
+        if (InterlockedCompareExchange(&state->packet_capture, 0, 0) != 0) {
+            capture_state = has_capture ? LP_DEVICE_CAPTURE_DONE : LP_DEVICE_CAPTURE_RUNNING;
+        }
+        lp_device_details_show(state->device_details_hwnd, &neighbor, capture_state, &capture);
     }
 }
 
@@ -809,22 +815,27 @@ static DWORD WINAPI device_refresh_thread_proc(LPVOID param)
     }
 
     lp_capture_activity_t capture = {0};
-    const lp_status_t capture_status =
-        lp_win32_capture_device_activity(neighbor.ip, 5000, &capture);
-    LP_INFO("device capture: ip=%s status=%s visible=%d packets=%u rx_bytes=%llu tx_bytes=%llu "
-            "detail=%s",
-            neighbor.ip, lp_status_str(capture_status), capture.device_visible ? 1 : 0,
-            capture.packet_count, (unsigned long long)capture.rx_bytes,
-            (unsigned long long)capture.tx_bytes,
-            capture.detail[0] != '\0' ? capture.detail : "(none)");
+    const bool capture_enabled = InterlockedCompareExchange(&state->packet_capture, 0, 0) != 0;
+    if (capture_enabled) {
+        const lp_status_t capture_status =
+            lp_win32_capture_device_activity(neighbor.ip, 5000, &capture);
+        LP_INFO("device capture: ip=%s status=%s visible=%d packets=%u rx_bytes=%llu "
+                "tx_bytes=%llu detail=%s",
+                neighbor.ip, lp_status_str(capture_status), capture.device_visible ? 1 : 0,
+                capture.packet_count, (unsigned long long)capture.rx_bytes,
+                (unsigned long long)capture.tx_bytes,
+                capture.detail[0] != '\0' ? capture.detail : "(none)");
+    }
 
     /* Shutdown may have given up waiting for this thread; the device store and window must
        then not be touched again. */
     EnterCriticalSection(&state->lock);
     const bool stopping = InterlockedCompareExchange(&state->stop_requested, 0, 0) != 0;
     if (!stopping) {
-        state->selected_device_capture = capture;
-        state->has_selected_device_capture = true;
+        if (capture_enabled) {
+            state->selected_device_capture = capture;
+            state->has_selected_device_capture = true;
+        }
         for (size_t i = 0; i < state->map_neighbors.count; ++i) {
             if (strcmp(state->map_neighbors.items[i].ip, neighbor.ip) == 0) {
                 state->map_neighbors.items[i] = neighbor;
@@ -882,6 +893,7 @@ static void show_context_menu(lp_tray_state_t *state)
     const bool paused = InterlockedCompareExchange(&state->paused, 0, 0) != 0;
     const bool use_bits = InterlockedCompareExchange(&state->use_bits, 0, 0) != 0;
     const bool autostart = lp_autostart_is_enabled();
+    const bool packet_capture = InterlockedCompareExchange(&state->packet_capture, 0, 0) != 0;
     bool update_available;
     EnterCriticalSection(&state->lock);
     update_available = state->update_available;
@@ -892,6 +904,8 @@ static void show_context_menu(lp_tray_state_t *state)
     AppendMenuA(menu, MF_STRING | (use_bits ? MF_CHECKED : 0), IDM_UNITS_BITS, "Show bits/s");
     AppendMenuA(menu, MF_STRING | (autostart ? MF_CHECKED : 0), IDM_AUTOSTART,
                 "Start with Windows");
+    AppendMenuA(menu, MF_STRING | (packet_capture ? MF_CHECKED : 0), IDM_PACKET_CAPTURE,
+                "Capture device traffic (Npcap)");
     if (update_available) {
         AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
         AppendMenuA(menu, MF_STRING, IDM_UPDATE, "Download update");
@@ -928,6 +942,19 @@ static void show_context_menu(lp_tray_state_t *state)
     case IDM_AUTOSTART:
         if (lp_autostart_set(!autostart) != LP_OK) {
             LP_WARN("failed to %s start-on-login", autostart ? "disable" : "enable");
+        }
+        break;
+    case IDM_PACKET_CAPTURE:
+        InterlockedExchange(&state->packet_capture, packet_capture ? 0 : 1);
+        LP_INFO("packet capture %s by user", packet_capture ? "disabled" : "enabled");
+        if (state->device_details_hwnd != NULL && IsWindowVisible(state->device_details_hwnd)) {
+            if (!packet_capture) {
+                EnterCriticalSection(&state->lock);
+                state->has_selected_device_capture = false;
+                LeaveCriticalSection(&state->lock);
+                refresh_selected_device_identity(state, state->pending_device_ip);
+            }
+            show_device_details(state, state->pending_device_ip);
         }
         break;
     case IDM_UPDATE:
@@ -1253,6 +1280,8 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         config_to_save.include_virtual = state->sampler.config.include_virtual;
         config_to_save.use_bits = InterlockedCompareExchange(&state->use_bits, 0, 0) != 0;
         config_to_save.interval_ms = state->interval_ms;
+        config_to_save.packet_capture =
+            InterlockedCompareExchange(&state->packet_capture, 0, 0) != 0;
         if (lp_config_save(&config_to_save) != LP_OK) {
             LP_WARN("failed to save config file");
         }
@@ -1400,7 +1429,8 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
 }
 
 /* Initializes the singleton tray process, starts workers, and runs its message loop. */
-int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned interval_ms)
+int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned interval_ms,
+                bool packet_capture)
 {
     LP_INFO("initializing tray runtime");
     /* Before any window exists: popups and the tray icon then render at the monitor's real DPI
@@ -1420,6 +1450,7 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
     InitializeCriticalSection(&g_tray.lock);
     g_tray.interval_ms = (interval_ms == 0) ? 1000 : interval_ms;
     g_tray.use_bits = use_bits ? 1 : 0;
+    g_tray.packet_capture = packet_capture ? 1 : 0;
     g_tray.wm_taskbar_created = RegisterWindowMessageA("TaskbarCreated");
 
     lp_sampler_init(&g_tray.sampler, config);

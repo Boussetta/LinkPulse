@@ -11,6 +11,9 @@
 #include <string.h>
 
 #define LP_PCAP_ERRBUF_SIZE 256
+/* Enough for Ethernet + one VLAN tag + an IPv6 header; payload bytes are never captured.
+   header->len still reports the full on-wire length for byte counting. */
+#define LP_CAPTURE_SNAPLEN 96
 
 typedef struct pcap pcap_t;
 typedef struct pcap_addr {
@@ -70,10 +73,31 @@ static lp_proc_fn resolve(HMODULE module, const char *name)
     return (lp_proc_fn)GetProcAddress(module, name);
 }
 
+/* Loads wpcap.dll only from system directories so a DLL planted next to the executable or on
+   PATH is never picked up. Npcap installs to System32\Npcap, or to System32 itself in
+   WinPcap-compatible mode; Packet.dll is resolved from the same directory. */
+static HMODULE load_wpcap(void)
+{
+    wchar_t path[MAX_PATH];
+    const UINT length = GetSystemDirectoryW(path, MAX_PATH);
+    if (length > 0 && length < MAX_PATH) {
+        static const wchar_t suffix[] = L"\\Npcap\\wpcap.dll";
+        if ((size_t)length + sizeof(suffix) / sizeof(suffix[0]) <= MAX_PATH) {
+            memcpy(path + length, suffix, sizeof(suffix));
+            HMODULE module = LoadLibraryExW(
+                path, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+            if (module != NULL) {
+                return module;
+            }
+        }
+    }
+    return LoadLibraryExW(L"wpcap.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+}
+
 static bool load_pcap_api(lp_pcap_api_t *api)
 {
     memset(api, 0, sizeof(*api));
-    api->module = LoadLibraryA("wpcap.dll");
+    api->module = load_wpcap();
     if (api->module == NULL) {
         return false;
     }
@@ -174,7 +198,7 @@ static pcap_t *open_default_route_interface(const lp_pcap_api_t *api, char *deta
     if (default_route_capture_name(capture_name, sizeof(capture_name))) {
         for (pcap_if_t *item = devices; item != NULL && handle == NULL; item = item->next) {
             if (item->name != NULL && strcmp(item->name, capture_name) == 0) {
-                handle = api->open_live(item->name, 65535, 1, 250, error);
+                handle = api->open_live(item->name, LP_CAPTURE_SNAPLEN, 0, 250, error);
             }
         }
     }

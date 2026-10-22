@@ -12,6 +12,7 @@ static void test_defaults(void)
     LP_CHECK(!config.include_virtual);
     LP_CHECK(!config.use_bits);
     LP_CHECK(config.interval_ms == 1000);
+    LP_CHECK(!config.packet_capture);
 }
 
 /* Verifies whitespace, comments, and all supported key overrides. */
@@ -27,13 +28,15 @@ static void test_parse_overrides_fields(void)
                              "iface = Wi-Fi \n"
                              "include_virtual=1\n"
                              "use_bits=1\n"
-                             "interval_ms=500\n");
+                             "interval_ms=500\n"
+                             "packet_capture=1\n");
 
     LP_CHECK(config.mode == LP_IFACE_SELECT_MANUAL);
     LP_CHECK_STR_EQ(config.iface_name, "Wi-Fi");
     LP_CHECK(config.include_virtual);
     LP_CHECK(config.use_bits);
     LP_CHECK(config.interval_ms == 500);
+    LP_CHECK(config.packet_capture);
 }
 
 /* Verifies malformed input cannot overwrite a valid existing configuration. */
@@ -49,6 +52,7 @@ static void test_parse_ignores_unknown_and_malformed(void)
                              "mode=bogus\n"
                              "include_virtual=bogus\n"
                              "use_bits=bogus\n"
+                             "packet_capture=yes\n"
                              "interval_ms=not_a_number\n"
                              "interval_ms=0\n");
 
@@ -58,6 +62,7 @@ static void test_parse_ignores_unknown_and_malformed(void)
     LP_CHECK(config.include_virtual);
     LP_CHECK(config.use_bits);
     LP_CHECK(config.interval_ms == 1000);
+    LP_CHECK(!config.packet_capture);
 }
 
 /* Verifies canonical serialization can reconstruct every configuration field. */
@@ -69,6 +74,7 @@ static void test_serialize_round_trips_through_parse(void)
     original.include_virtual = true;
     original.use_bits = true;
     original.interval_ms = 2000;
+    original.packet_capture = true;
     snprintf(original.iface_name, sizeof(original.iface_name), "Ethernet");
 
     char text[512];
@@ -85,6 +91,7 @@ static void test_serialize_round_trips_through_parse(void)
     LP_CHECK(restored.include_virtual == original.include_virtual);
     LP_CHECK(restored.use_bits == original.use_bits);
     LP_CHECK(restored.interval_ms == original.interval_ms);
+    LP_CHECK(restored.packet_capture == original.packet_capture);
 }
 
 /* Verifies serialization handles unusable output buffers without writing. */
