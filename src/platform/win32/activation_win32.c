@@ -44,6 +44,9 @@ struct LP_NOTIFICATION_ACTIVATION_CALLBACK {
 };
 
 static DWORD activator_thread_id = 0;
+/* Joined before the activator process exits; process exit would otherwise kill it mid-download. */
+static HANDLE activation_download_thread = NULL;
+static LONG activation_download_started = 0;
 
 /* Exposes the COM interfaces implemented by the toast callback object. */
 static HRESULT STDMETHODCALLTYPE callback_query_interface(LP_NOTIFICATION_ACTIVATION_CALLBACK *self,
@@ -121,12 +124,15 @@ static HRESULT STDMETHODCALLTYPE callback_activate(LP_NOTIFICATION_ACTIVATION_CA
     LP_INFO("toast activation received: args=%ls", invoked_args != NULL ? invoked_args : L"(null)");
     HRESULT result = S_OK;
     if (invoked_args != NULL && lstrcmpW(invoked_args, L"linkpulse://download-update") == 0) {
-        HANDLE download_thread =
-            CreateThread(NULL, 0, activation_download_thread_proc, NULL, 0, NULL);
-        if (download_thread == NULL) {
-            result = E_FAIL;
+        /* COM may deliver activations concurrently; only the first one downloads. */
+        if (InterlockedCompareExchange(&activation_download_started, 1, 0) != 0) {
+            LP_INFO("toast update download already in progress");
         } else {
-            CloseHandle(download_thread);
+            activation_download_thread =
+                CreateThread(NULL, 0, activation_download_thread_proc, NULL, 0, NULL);
+            if (activation_download_thread == NULL) {
+                result = E_FAIL;
+            }
         }
     }
 
@@ -242,6 +248,13 @@ int lp_win32_run_toast_activator(void)
 
     activator_thread_id = 0;
     CoRevokeClassObject(cookie);
+    if (activation_download_thread != NULL) {
+        /* WinHTTP timeouts bound the download, so this wait cannot hang indefinitely. */
+        LP_INFO("waiting for toast update download before exiting");
+        WaitForSingleObject(activation_download_thread, INFINITE);
+        CloseHandle(activation_download_thread);
+        activation_download_thread = NULL;
+    }
     CoUninitialize();
     return 0;
 }
