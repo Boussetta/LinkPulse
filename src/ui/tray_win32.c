@@ -1,6 +1,7 @@
 #include "linkpulse/tray.h"
 
 #include "linkpulse/autostart.h"
+#include "linkpulse/capture.h"
 #include "linkpulse/clock.h"
 #include "linkpulse/config.h"
 #include "linkpulse/device_store.h"
@@ -13,10 +14,12 @@
 #include "linkpulse/sampler.h"
 #include "linkpulse/update.h"
 
+#include "device_details_win32.h"
 #include "dpi_win32.h"
 #include "isp_view_win32.h"
 #include "network_map_win32.h"
 #include "speed_meter_win32.h"
+#include "this_pc_win32.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -31,6 +34,8 @@
 #define WM_LP_DISCOVERY_RESULT (WM_APP + 3)
 #define WM_LP_SPEED_METER_OPEN (WM_APP + 4)
 #define WM_LP_NETWORK_MAP_OPEN (WM_APP + 5)
+#define WM_LP_THIS_PC_OPEN (WM_APP + 6)
+#define WM_LP_DEVICE_DETAILS_OPEN (WM_APP + 7)
 #define WM_LP_ISP_VIEW_OPEN (WM_APP + 9)
 #define WM_LP_ISP_RESULT (WM_APP + 10)
 #define LP_TRAY_TIMER_ID 1
@@ -62,6 +67,9 @@ typedef struct {
     bool has_sample;
     uint64_t rx_history[LP_TRAY_GRAPH_POINTS]; /* oldest first */
     size_t rx_history_count;
+    uint64_t this_pc_rx_history[LP_THIS_PC_GRAPH_POINTS]; /* oldest first */
+    uint64_t this_pc_tx_history[LP_THIS_PC_GRAPH_POINTS]; /* oldest first */
+    size_t this_pc_history_count;
 
     volatile LONG stop_requested;
     volatile LONG paused;
@@ -92,12 +100,17 @@ typedef struct {
     size_t discovery_dropped_count;
     lp_neighbor_list_t map_neighbors;
     lp_local_network_list_t map_networks;
+    lp_capture_activity_t selected_device_capture;
+    bool has_selected_device_capture;
 
     HWND hwnd;
     HWND network_map_hwnd;
     HWND speed_meter_hwnd;
+    HWND this_pc_hwnd;
+    HWND device_details_hwnd;
     HWND isp_view_hwnd;
     char pending_speed_meter_ip[LP_IP_STR_MAX];
+    char pending_device_ip[LP_IP_STR_MAX];
     NOTIFYICONDATAA nid;
     HICON current_icon;
     UINT wm_taskbar_created;
@@ -246,6 +259,23 @@ static DWORD WINAPI sampler_thread_proc(LPVOID param)
                     memmove(state->rx_history, state->rx_history + 1,
                             (LP_TRAY_GRAPH_POINTS - 1) * sizeof(state->rx_history[0]));
                     state->rx_history[LP_TRAY_GRAPH_POINTS - 1] = sample.rx_bytes_per_sec;
+                }
+
+                if (state->this_pc_history_count < LP_THIS_PC_GRAPH_POINTS) {
+                    state->this_pc_rx_history[state->this_pc_history_count] =
+                        sample.rx_bytes_per_sec;
+                    state->this_pc_tx_history[state->this_pc_history_count] =
+                        sample.tx_bytes_per_sec;
+                    ++state->this_pc_history_count;
+                } else {
+                    memmove(state->this_pc_rx_history, state->this_pc_rx_history + 1,
+                            (LP_THIS_PC_GRAPH_POINTS - 1) * sizeof(state->this_pc_rx_history[0]));
+                    memmove(state->this_pc_tx_history, state->this_pc_tx_history + 1,
+                            (LP_THIS_PC_GRAPH_POINTS - 1) * sizeof(state->this_pc_tx_history[0]));
+                    state->this_pc_rx_history[LP_THIS_PC_GRAPH_POINTS - 1] =
+                        sample.rx_bytes_per_sec;
+                    state->this_pc_tx_history[LP_THIS_PC_GRAPH_POINTS - 1] =
+                        sample.tx_bytes_per_sec;
                 }
             }
             LeaveCriticalSection(&state->lock);
@@ -551,6 +581,12 @@ static void show_discovery_notifications(lp_tray_state_t *state)
     }
 
     for (size_t i = 0; i < event_count; ++i) {
+        if (events[i].neighbor.known_device) {
+            LP_DEBUG("suppressing notification for known device: mac=%s ip=%s",
+                     events[i].neighbor.mac[0] != '\0' ? events[i].neighbor.mac : "(unknown)",
+                     events[i].neighbor.ip[0] != '\0' ? events[i].neighbor.ip : "(unknown)");
+            continue;
+        }
         const bool joined = events[i].type == LP_DISCOVERY_EVENT_JOINED;
         const char *name = events[i].neighbor.label[0] != '\0'      ? events[i].neighbor.label
                            : events[i].neighbor.hostname[0] != '\0' ? events[i].neighbor.hostname
@@ -661,6 +697,56 @@ static void show_speed_meter(lp_tray_state_t *state, const char *gateway_ip)
                         isp, use_bits);
 }
 
+/* Opens the "This PC" details view with the current throughput history and
+   adapter/Wi-Fi snapshot; also used to refresh it while already visible. */
+static void show_this_pc(lp_tray_state_t *state)
+{
+    if (state->this_pc_hwnd == NULL) {
+        return;
+    }
+    lp_local_network_list_t networks;
+    uint64_t rx_history[LP_THIS_PC_GRAPH_POINTS];
+    uint64_t tx_history[LP_THIS_PC_GRAPH_POINTS];
+    size_t history_count;
+    EnterCriticalSection(&state->lock);
+    networks = state->map_networks;
+    history_count = state->this_pc_history_count;
+    memcpy(rx_history, state->this_pc_rx_history, history_count * sizeof(rx_history[0]));
+    memcpy(tx_history, state->this_pc_tx_history, history_count * sizeof(tx_history[0]));
+    LeaveCriticalSection(&state->lock);
+
+    const bool use_bits = InterlockedCompareExchange(&state->use_bits, 0, 0) != 0;
+    lp_this_pc_show(state->this_pc_hwnd, networks.local_hostname, &networks, rx_history,
+                    tx_history, history_count, use_bits);
+}
+
+static void show_device_details(lp_tray_state_t *state, const char *device_ip)
+{
+    if (state->device_details_hwnd == NULL || device_ip == NULL || device_ip[0] == '\0') {
+        return;
+    }
+    lp_neighbor_t neighbor = {0};
+    bool found = false;
+    EnterCriticalSection(&state->lock);
+    for (size_t i = 0; i < state->map_neighbors.count; ++i) {
+        if (strcmp(state->map_neighbors.items[i].ip, device_ip) == 0) {
+            neighbor = state->map_neighbors.items[i];
+            found = true;
+            break;
+        }
+    }
+    LeaveCriticalSection(&state->lock);
+    if (found) {
+        lp_capture_activity_t capture = {0};
+        bool has_capture;
+        EnterCriticalSection(&state->lock);
+        capture = state->selected_device_capture;
+        has_capture = state->has_selected_device_capture;
+        LeaveCriticalSection(&state->lock);
+        lp_device_details_show(state->device_details_hwnd, &neighbor, has_capture ? &capture : NULL);
+    }
+}
+
 typedef struct {
     lp_tray_state_t *state;
     char ip[LP_IP_STR_MAX];
@@ -722,11 +808,23 @@ static DWORD WINAPI device_refresh_thread_proc(LPVOID param)
         return 0;
     }
 
+    lp_capture_activity_t capture = {0};
+    const lp_status_t capture_status =
+        lp_win32_capture_device_activity(neighbor.ip, 5000, &capture);
+    LP_INFO("device capture: ip=%s status=%s visible=%d flows=%u rx_bytes=%llu tx_bytes=%llu "
+            "detail=%s",
+            neighbor.ip, lp_status_str(capture_status), capture.device_visible ? 1 : 0,
+            capture.flow_count, (unsigned long long)capture.rx_bytes,
+            (unsigned long long)capture.tx_bytes,
+            capture.detail[0] != '\0' ? capture.detail : "(none)");
+
     /* Shutdown may have given up waiting for this thread; the device store and window must
        then not be touched again. */
     EnterCriticalSection(&state->lock);
     const bool stopping = InterlockedCompareExchange(&state->stop_requested, 0, 0) != 0;
     if (!stopping) {
+        state->selected_device_capture = capture;
+        state->has_selected_device_capture = true;
         for (size_t i = 0; i < state->map_neighbors.count; ++i) {
             if (strcmp(state->map_neighbors.items[i].ip, neighbor.ip) == 0) {
                 state->map_neighbors.items[i] = neighbor;
@@ -1012,6 +1110,9 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
     case WM_TIMER:
         if (wparam == LP_TRAY_TIMER_ID) {
             refresh_icon_and_tooltip(state);
+            if (state->this_pc_hwnd != NULL && IsWindowVisible(state->this_pc_hwnd)) {
+                show_this_pc(state);
+            }
         }
         return 0;
     case WM_LP_TRAYICON:
@@ -1039,6 +1140,9 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             LeaveCriticalSection(&state->lock);
             lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
         }
+        if (state->device_details_hwnd != NULL && IsWindowVisible(state->device_details_hwnd)) {
+            show_device_details(state, state->pending_device_ip);
+        }
         return 0;
     case WM_LP_ISP_RESULT:
         if (state->isp_view_hwnd != NULL && IsWindowVisible(state->isp_view_hwnd)) {
@@ -1051,7 +1155,20 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             return FALSE;
         }
         if (copy_data->dwData == LP_NETWORK_MAP_COPYDATA_DEVICE_SELECTED) {
-            refresh_selected_device_identity(state, (const char *)copy_data->lpData);
+            const size_t data_size = copy_data->cbData < sizeof(state->pending_device_ip)
+                                         ? copy_data->cbData
+                                         : sizeof(state->pending_device_ip);
+            const char *terminator = (const char *)memchr(copy_data->lpData, '\0', data_size);
+            if (terminator == NULL) {
+                return FALSE;
+            }
+            const size_t ip_size = (size_t)(terminator - (const char *)copy_data->lpData);
+            memcpy(state->pending_device_ip, copy_data->lpData, ip_size + 1);
+            EnterCriticalSection(&state->lock);
+            state->has_selected_device_capture = false;
+            LeaveCriticalSection(&state->lock);
+            refresh_selected_device_identity(state, state->pending_device_ip);
+            PostMessageA(hwnd, WM_LP_DEVICE_DETAILS_OPEN, 0, 0);
             return TRUE;
         }
         if (copy_data->dwData == LP_NETWORK_MAP_COPYDATA_ROUTER_SELECTED) {
@@ -1075,6 +1192,18 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             PostMessageA(hwnd, WM_LP_NETWORK_MAP_OPEN, 0, 0);
             return TRUE;
         }
+        if (copy_data->dwData == LP_NETWORK_MAP_COPYDATA_LOCAL_SELECTED) {
+            PostMessageA(hwnd, WM_LP_THIS_PC_OPEN, 0, 0);
+            return TRUE;
+        }
+        if (copy_data->dwData == LP_THIS_PC_COPYDATA_BACK) {
+            PostMessageA(hwnd, WM_LP_NETWORK_MAP_OPEN, 0, 0);
+            return TRUE;
+        }
+        if (copy_data->dwData == LP_DEVICE_DETAILS_COPYDATA_BACK) {
+            PostMessageA(hwnd, WM_LP_NETWORK_MAP_OPEN, 0, 0);
+            return TRUE;
+        }
         if (copy_data->dwData == LP_NETWORK_MAP_COPYDATA_INTERNET_SELECTED) {
             /* Posted for the same re-entrancy reason as the router selection above. */
             PostMessageA(hwnd, WM_LP_ISP_VIEW_OPEN, 0, 0);
@@ -1089,6 +1218,12 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
     case WM_LP_SPEED_METER_OPEN:
         show_speed_meter(state, state->pending_speed_meter_ip);
         return 0;
+    case WM_LP_THIS_PC_OPEN:
+        show_this_pc(state);
+        return 0;
+    case WM_LP_DEVICE_DETAILS_OPEN:
+        show_device_details(state, state->pending_device_ip);
+        return 0;
     case WM_LP_ISP_VIEW_OPEN:
         show_isp_view(state, true);
         return 0;
@@ -1097,6 +1232,12 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         show_network_map(state);
         if (state->speed_meter_hwnd != NULL) {
             ShowWindow(state->speed_meter_hwnd, SW_HIDE);
+        }
+        if (state->this_pc_hwnd != NULL) {
+            ShowWindow(state->this_pc_hwnd, SW_HIDE);
+        }
+        if (state->device_details_hwnd != NULL) {
+            ShowWindow(state->device_details_hwnd, SW_HIDE);
         }
         if (state->isp_view_hwnd != NULL) {
             ShowWindow(state->isp_view_hwnd, SW_HIDE);
@@ -1125,6 +1266,14 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         if (state->speed_meter_hwnd != NULL) {
             DestroyWindow(state->speed_meter_hwnd);
             state->speed_meter_hwnd = NULL;
+        }
+        if (state->this_pc_hwnd != NULL) {
+            DestroyWindow(state->this_pc_hwnd);
+            state->this_pc_hwnd = NULL;
+        }
+        if (state->device_details_hwnd != NULL) {
+            DestroyWindow(state->device_details_hwnd);
+            state->device_details_hwnd = NULL;
         }
         if (state->isp_view_hwnd != NULL) {
             DestroyWindow(state->isp_view_hwnd);
@@ -1315,6 +1464,14 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
     g_tray.speed_meter_hwnd = lp_speed_meter_create(instance, g_tray.hwnd);
     if (g_tray.speed_meter_hwnd == NULL) {
         LP_WARN("failed to create speed meter window");
+    }
+    g_tray.this_pc_hwnd = lp_this_pc_create(instance, g_tray.hwnd);
+    if (g_tray.this_pc_hwnd == NULL) {
+        LP_WARN("failed to create this PC window");
+    }
+    g_tray.device_details_hwnd = lp_device_details_create(instance, g_tray.hwnd);
+    if (g_tray.device_details_hwnd == NULL) {
+        LP_WARN("failed to create device details window");
     }
     g_tray.isp_view_hwnd = lp_isp_view_create(instance, g_tray.hwnd);
     if (g_tray.isp_view_hwnd == NULL) {

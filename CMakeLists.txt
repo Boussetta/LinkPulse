@@ -65,6 +65,7 @@ endif()
 
 # --- core: portable C11 only, no OS headers ------------------------------------
 add_library(lp_core STATIC
+  src/core/activity.c
   src/core/config.c
   src/core/discovery.c
   src/core/format.c
@@ -85,6 +86,7 @@ if(NOT WIN32)
 endif()
 
 add_library(lp_platform STATIC
+  src/platform/win32/capture_win32.c
   src/platform/win32/activation_win32.c
   src/platform/win32/autostart_win32.c
   src/platform/win32/clock_win32.c
@@ -100,7 +102,7 @@ add_library(lp_platform STATIC
   src/platform/win32/update_win32.c
 )
 target_link_libraries(lp_platform PUBLIC lp_core PRIVATE lp_warnings)
-target_link_libraries(lp_platform PUBLIC iphlpapi ole32 runtimeobject winhttp ws2_32 xmllite shlwapi shell32 wintrust crypt32)
+target_link_libraries(lp_platform PUBLIC iphlpapi ole32 runtimeobject winhttp ws2_32 xmllite shlwapi wlanapi rpcrt4 shell32 wintrust crypt32)
 # Windows 10/11 API surface (GetIfTable2, GetBestRoute2).
 target_compile_definitions(lp_platform PUBLIC _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN NOMINMAX)
 # Optional update publisher pin: the exact subject display name of the code-signing
@@ -109,7 +111,7 @@ set(LINKPULSE_UPDATE_SIGNER "" CACHE STRING "Required signer name for downloaded
 target_compile_definitions(lp_platform PRIVATE LP_UPDATE_SIGNER="${LINKPULSE_UPDATE_SIGNER}")
 
 # --- executable ----------------------------------------------------------------
-add_executable(linkpulse src/cli/main.c src/ui/dpi_win32.c src/ui/isp_view_win32.c src/ui/network_map_win32.c src/ui/speed_meter_win32.c src/ui/tray_win32.c)
+add_executable(linkpulse src/cli/main.c src/ui/device_details_win32.c src/ui/dpi_win32.c src/ui/isp_view_win32.c src/ui/network_map_win32.c src/ui/speed_meter_win32.c src/ui/this_pc_win32.c src/ui/tray_win32.c)
 target_link_libraries(linkpulse PRIVATE lp_platform lp_warnings)
 target_link_libraries(linkpulse PRIVATE shell32 gdi32 user32 advapi32)
 # Single source of truth for the version string, consumed by --version.
@@ -128,7 +130,7 @@ target_compile_definitions(linkpulse PRIVATE
 # so it never needs a console in the first place; linkpulse.exe (this target,
 # console subsystem, unchanged) remains the CLI/debug tool, including its own
 # --tray for debugging with visible log output.
-add_executable(linkpulse-tray src/cli/tray_main.c src/ui/dpi_win32.c src/ui/isp_view_win32.c src/ui/network_map_win32.c src/ui/speed_meter_win32.c src/ui/tray_win32.c)
+add_executable(linkpulse-tray src/cli/tray_main.c src/ui/device_details_win32.c src/ui/dpi_win32.c src/ui/isp_view_win32.c src/ui/network_map_win32.c src/ui/speed_meter_win32.c src/ui/this_pc_win32.c src/ui/tray_win32.c)
 target_link_libraries(linkpulse-tray PRIVATE lp_platform lp_warnings)
 target_link_libraries(linkpulse-tray PRIVATE shell32 gdi32 user32 advapi32)
 target_compile_definitions(linkpulse-tray PRIVATE

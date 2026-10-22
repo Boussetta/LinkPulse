@@ -133,8 +133,14 @@ Release workflow moved to Milestone 7, where it actually belongs.
 
 - [ ] Socket → PID mapping via `GetExtendedTcpTable()` / `GetExtendedUdpTable()`
 - [ ] Top talkers view (true per-process byte counts need ETW — best-effort otherwise)
+- [x] Portable per-device flow-risk detector: high destination fan-out, one port across many
+      destinations, and many ports on one destination
+- [ ] Feed device flow observations and byte counters from a supported router/gateway sensor
+- [ ] Optional Npcap/libpcap capture backend with capability detection and no-payload storage
+- [ ] Vendor only a license-compatible parser/API; keep capture drivers optional and explicit
+- [ ] Capture-device/monitor-mode guidance and explicit local-host-only fallback state
 - [ ] Reverse DNS + optional GeoIP for remote endpoints
-- [ ] Alerts on suspicious patterns (connection fan-out, unusual ports)
+- [ ] Surface detector evidence in device previews and notifications; add unusual-port policy
 
 ## Milestone 6 — History, stats & alerts
 

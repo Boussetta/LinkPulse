@@ -235,6 +235,7 @@ static lp_device_record_t *find_or_create_device(lp_network_record_t *network, c
 
 static void apply_record(const lp_device_record_t *record, lp_neighbor_t *neighbor)
 {
+    neighbor->known_device = true;
     if (record->label[0] != '\0')
         copy_text(neighbor->label, sizeof(neighbor->label), record->label);
     /* Falls back to a previously learned name/vendor when this poll's live

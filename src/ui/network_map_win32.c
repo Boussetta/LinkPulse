@@ -593,23 +593,33 @@ static LRESULT CALLBACK network_map_wndproc(HWND window, UINT message, WPARAM wp
                 device_node_center(i, visible_actual, center_x, &device_x, &device_y);
                 if (x >= device_x - 75 && x <= device_x + 75 && y >= device_y - 45 &&
                     y <= device_y + 45) {
-                    if (state->has_selected_device &&
-                        strcmp(state->selected_device_ip, visible_items[i].ip) == 0) {
-                        state->has_selected_device = false;
-                    } else {
-                        snprintf(state->selected_device_ip, sizeof(state->selected_device_ip), "%s",
-                                 visible_items[i].ip);
-                        state->has_selected_device = true;
+                    if (visible_is_local[i]) {
+                        /* "This PC" opens a dedicated details view instead of the
+                           inline device panel used for neighbors. */
                         HWND owner = GetWindow(window, GW_OWNER);
-                        if (owner != NULL && visible_items[i].ip[0] != '\0') {
+                        if (owner != NULL) {
                             COPYDATASTRUCT copy_data;
                             memset(&copy_data, 0, sizeof(copy_data));
-                            copy_data.dwData = LP_NETWORK_MAP_COPYDATA_DEVICE_SELECTED;
-                            copy_data.cbData = (DWORD)strlen(visible_items[i].ip) + 1;
-                            copy_data.lpData = (PVOID)visible_items[i].ip;
+                            copy_data.dwData = LP_NETWORK_MAP_COPYDATA_LOCAL_SELECTED;
+                            copy_data.cbData = 1;
+                            copy_data.lpData = (PVOID) "";
                             (void)SendMessageA(owner, WM_COPYDATA, (WPARAM)window,
                                                (LPARAM)&copy_data);
                         }
+                        break;
+                    }
+                    snprintf(state->selected_device_ip, sizeof(state->selected_device_ip), "%s",
+                             visible_items[i].ip);
+                    state->has_selected_device = true;
+                    HWND owner = GetWindow(window, GW_OWNER);
+                    if (owner != NULL && visible_items[i].ip[0] != '\0') {
+                        COPYDATASTRUCT copy_data;
+                        memset(&copy_data, 0, sizeof(copy_data));
+                        copy_data.dwData = LP_NETWORK_MAP_COPYDATA_DEVICE_SELECTED;
+                        copy_data.cbData = (DWORD)strlen(visible_items[i].ip) + 1;
+                        copy_data.lpData = (PVOID)visible_items[i].ip;
+                        (void)SendMessageA(owner, WM_COPYDATA, (WPARAM)window,
+                                           (LPARAM)&copy_data);
                     }
                     InvalidateRect(window, NULL, TRUE);
                     break;

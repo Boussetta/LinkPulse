@@ -101,6 +101,55 @@ The current discovery layer combines:
 
 Passive ARP/NDP is incomplete. Quiet Wi-Fi devices, including phones and watches, may be absent even while connected. The next authoritative source is a gateway adapter, beginning with Fritz!Box connected-device APIs. Keep gateway access optional and isolated behind an interface so unsupported routers continue to work.
 
+## Device activity and risk detection
+
+`include/linkpulse/activity.h` defines the router/sensor-facing flow observation contract.
+`src/core/activity.c` can assess one device over a rolling time window for high destination
+fan-out, horizontal port scans, and vertical port scans. The core detector is implemented and
+unit-tested, but it is deliberately not wired to discovery: ARP/NDP entries contain no byte or
+connection telemetry.
+
+A gateway adapter must provide cumulative per-client RX/TX counters for upload/download rates
+and outbound `(source IP, destination IP, destination port, timestamp)` observations for risk
+analysis. Counter deltas must be computed at the adapter boundary, handling reset/wrap and device
+identity changes. Service classification can later enrich these observations with DNS, TLS SNI,
+or destination ASN evidence, each carrying an explicit confidence level.
+
+## Independent packet capture
+
+An independent capture backend can use Npcap's libpcap-compatible API, but it cannot be assumed
+to see another Wi-Fi client's traffic. A normal Windows client is not on the forwarding path for
+peer-to-router unicast frames; promiscuous mode is driver-dependent, and monitor mode usually
+requires a compatible adapter and may still be blocked by the access point. The current machine's
+Intel Wi-Fi 7 BE201 exposes neither a capture library nor a monitor-mode capability, so LinkPulse
+must report packet capture as unavailable rather than infer activity from its own adapter rate.
+
+The future backend should be optional and should:
+
+- load Npcap/libpcap only when installed, without making the base build depend on it;
+- enumerate capture interfaces and report whether monitor/promiscuous capture is available;
+- filter LAN IPv4/IPv6 traffic by the selected device's IP/MAC;
+- derive byte counters, DNS names, TLS hostnames where visible, destination ASN, and flow-risk
+	observations without storing packet payloads;
+- show explicit states such as `capture unavailable`, `capture sees local host only`, and
+	`encrypted source unknown`.
+
+Installing Npcap alone is not sufficient for this use case. A supported monitor-mode adapter or a
+capture point on the gateway/bridge is required to observe other devices reliably.
+
+### Dependency policy
+
+LinkPulse may vendor a permissively licensed packet parser or libpcap-compatible API and keep it
+inside an optional capture module. That library parses packets; it does not create a Windows
+capture path. Windows still needs either a compatible capture driver, a monitor-mode adapter, or
+traffic delivered from a bridge/sensor. The base LinkPulse build must therefore remain driver-free
+and continue to build and run without the optional module.
+
+Do not copy a Wireshark installation or silently install a kernel driver. Any future installer
+support must identify the driver separately, preserve its license/notice files, request the
+required administrator consent, and make capture opt-in. A statically linked public parser alone
+cannot make the Pixel's traffic visible from this PC.
+
 ## Safe handoff to a new chat or environment
 
 Paste this short context when starting a new session:

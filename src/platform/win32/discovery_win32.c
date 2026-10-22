@@ -7,6 +7,8 @@
 #include <windows.h>
 #include <iphlpapi.h>
 #include <netioapi.h>
+#include <rpc.h>
+#include <wlanapi.h>
 
 #include <ctype.h>
 #include <stdio.h>
@@ -1135,6 +1137,63 @@ static void get_default_gateway_mac(const char *gateway, char *mac, size_t mac_c
     FreeMibTable(table);
 }
 
+/* Best-effort SSID/signal lookup for the default adapter; `adapter_guid` is the
+   ANSI "{XXXXXXXX-XXXX-...}" string from IP_ADAPTER_ADDRESSES::AdapterName. */
+static void query_wifi_details(const char *adapter_guid, lp_local_network_list_t *out)
+{
+    HANDLE client = NULL;
+    DWORD negotiated_version = 0;
+    if (WlanOpenHandle(2, NULL, &negotiated_version, &client) != ERROR_SUCCESS ||
+        client == NULL) {
+        return;
+    }
+    PWLAN_INTERFACE_INFO_LIST interface_list = NULL;
+    if (WlanEnumInterfaces(client, NULL, &interface_list) != ERROR_SUCCESS ||
+        interface_list == NULL) {
+        WlanCloseHandle(client, NULL);
+        return;
+    }
+    for (DWORD i = 0; i < interface_list->dwNumberOfItems; ++i) {
+        const WLAN_INTERFACE_INFO *iface = &interface_list->InterfaceInfo[i];
+        RPC_CSTR uuid_str = NULL;
+        if (UuidToStringA((UUID *)&iface->InterfaceGuid, &uuid_str) != RPC_S_OK ||
+            uuid_str == NULL) {
+            continue;
+        }
+        char guid_str[64];
+        snprintf(guid_str, sizeof(guid_str), "{%s}", (const char *)uuid_str);
+        RpcStringFreeA(&uuid_str);
+        if (_stricmp(guid_str, adapter_guid) != 0) {
+            continue;
+        }
+        PWLAN_CONNECTION_ATTRIBUTES connection_attributes = NULL;
+        DWORD data_size = 0;
+        WLAN_OPCODE_VALUE_TYPE opcode_type;
+        if (WlanQueryInterface(client, &iface->InterfaceGuid, wlan_intf_opcode_current_connection,
+                               NULL, &data_size, (PVOID *)&connection_attributes,
+                               &opcode_type) == ERROR_SUCCESS &&
+            connection_attributes != NULL) {
+            if (connection_attributes->isState == wlan_interface_state_connected) {
+                const DOT11_SSID *ssid =
+                    &connection_attributes->wlanAssociationAttributes.dot11Ssid;
+                size_t length = ssid->uSSIDLength < sizeof(out->local_ssid) - 1
+                                    ? ssid->uSSIDLength
+                                    : sizeof(out->local_ssid) - 1;
+                memcpy(out->local_ssid, ssid->ucSSID, length);
+                out->local_ssid[length] = '\0';
+                out->local_has_ssid = true;
+                out->local_signal_percent =
+                    (int)connection_attributes->wlanAssociationAttributes.wlanSignalQuality;
+                out->local_has_signal = true;
+            }
+            WlanFreeMemory(connection_attributes);
+        }
+        break;
+    }
+    WlanFreeMemory(interface_list);
+    WlanCloseHandle(client, NULL);
+}
+
 /* Enumerates local prefixes and attaches gateway identity to the default adapter. */
 lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
 {
@@ -1189,6 +1248,22 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
         if (has_default_gateway && adapter->Luid.Value == default_interface_luid.Value) {
             snprintf(gateway, sizeof(gateway), "%s", default_gateway);
         }
+        if (is_default_adapter) {
+            out->local_connection_type = connection_type_for_interface(&adapter->Luid);
+            if (adapter->FriendlyName != NULL) {
+                WideCharToMultiByte(CP_ACP, 0, adapter->FriendlyName, -1,
+                                    out->local_adapter_name, sizeof(out->local_adapter_name), NULL,
+                                    NULL);
+            }
+            if (adapter->DnsSuffix != NULL && adapter->DnsSuffix[0] != L'\0') {
+                WideCharToMultiByte(CP_ACP, 0, adapter->DnsSuffix, -1, out->local_dns_suffix,
+                                    sizeof(out->local_dns_suffix), NULL, NULL);
+            }
+            if (out->local_connection_type == LP_CONNECTION_WIFI &&
+                adapter->AdapterName != NULL) {
+                query_wifi_details(adapter->AdapterName, out);
+            }
+        }
 
         for (IP_ADAPTER_UNICAST_ADDRESS *unicast = adapter->FirstUnicastAddress;
              unicast != NULL && out->count < LP_DISCOVERY_MAX_NETWORKS; unicast = unicast->Next) {
@@ -1210,10 +1285,14 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
                 network->gateway_device_type = default_gateway_type;
                 network->gateway_confidence = default_gateway_confidence;
             }
-            if (out->local_ip[0] == '\0' && unicast->Address.lpSockaddr->sa_family == AF_INET &&
-                is_default_adapter) {
-                snprintf(out->local_ip, sizeof(out->local_ip), "%s", address);
-                out->local_connection_type = connection_type_for_interface(&adapter->Luid);
+            if (is_default_adapter && unicast->Address.lpSockaddr->sa_family == AF_INET) {
+                if (out->local_ip[0] == '\0') {
+                    snprintf(out->local_ip, sizeof(out->local_ip), "%s", address);
+                }
+            } else if (is_default_adapter &&
+                      unicast->Address.lpSockaddr->sa_family == AF_INET6 &&
+                      out->local_ipv6[0] == '\0') {
+                snprintf(out->local_ipv6, sizeof(out->local_ipv6), "%s", address);
             }
         }
     }

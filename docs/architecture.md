@@ -37,6 +37,38 @@ The dependency direction is intentional:
 - `src/ui` owns presentation and consumes snapshots/events from the core.
 - Tests inject fake providers into core modules, so rate and discovery behavior does not require a live network.
 
+### Device activity visibility
+
+Neighbor discovery proves that a device is present; it does not expose that device's traffic.
+Per-device upload/download rates and remote endpoints require counters or flow records from the
+network path, such as a supported router, OpenWrt/pfSense sensor, NetFlow/IPFIX exporter, or an
+agent installed on the device. A normal Windows LAN client cannot reliably observe another
+client's switched Ethernet or Wi-Fi traffic.
+
+`activity.c` accepts timestamped outbound flow observations from those future adapters and
+produces bounded evidence for:
+
+- high distinct-destination fan-out;
+- one destination port contacted across many hosts (horizontal scan); and
+- many destination ports contacted on one host (vertical scan).
+
+The default rolling window is 60 seconds, with conservative thresholds of 40 distinct
+destinations or 16 scan targets/ports. Repeated packets for one endpoint do not inflate those
+counts. The detector intentionally remains source-agnostic: no alert is shown until an adapter
+can provide real flow observations.
+
+An independent packet-capture source is optional, not a substitute for a forwarding-path source.
+Npcap/libpcap can inspect packets visible to the local adapter, but ordinary Wi-Fi client mode
+does not guarantee visibility of another client's unicast traffic. Capture capability and scope
+must be detected at runtime; the UI must distinguish unavailable capture, local-host-only capture,
+and device traffic with unknown encrypted origin.
+
+The preferred implementation split is a small LinkPulse-owned flow parser and classifier behind
+the existing activity API, plus an optional vendored public packet library. The parser can remain
+MIT-compatible and payload-free. The capture mechanism is a separate capability: Windows still
+requires a capture driver or a sensor/bridge feed, so bundling a parser must never be presented as
+equivalent to installing a capture path.
+
 ## CLI Runtime
 
 ```mermaid

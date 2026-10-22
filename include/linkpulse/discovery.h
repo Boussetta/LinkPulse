@@ -16,6 +16,7 @@
 #define LP_DISCOVERY_MAX_EVENTS 32
 #define LP_DISCOVERY_MAX_NETWORKS 32
 #define LP_DISCOVERY_MISSING_POLLS_BEFORE_LEFT 3
+#define LP_WIFI_SSID_MAX 33
 
 typedef enum {
     LP_CONNECTION_UNKNOWN = 0,
@@ -45,6 +46,7 @@ typedef struct {
     lp_device_type_t device_type;
     uint8_t device_confidence;
     bool trusted;
+    bool known_device;
     bool has_device_type_override;
     bool active;
 } lp_neighbor_t;
@@ -70,6 +72,13 @@ typedef struct {
     size_t count;
     char local_hostname[LP_HOSTNAME_MAX];
     char local_ip[LP_IP_STR_MAX];
+    char local_ipv6[LP_IP_STR_MAX];
+    char local_adapter_name[LP_HOSTNAME_MAX];
+    char local_dns_suffix[LP_HOSTNAME_MAX];
+    char local_ssid[LP_WIFI_SSID_MAX];
+    bool local_has_ssid;
+    int local_signal_percent; /* 0-100, only meaningful when local_has_signal */
+    bool local_has_signal;
     lp_connection_type_t local_connection_type;
     lp_isp_info_t isp_info;
 } lp_local_network_list_t;
