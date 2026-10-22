@@ -487,22 +487,53 @@ static void append_active_neighbor(lp_neighbor_list_t *out, const char *ip,
     classify_neighbor(neighbor);
 }
 
+typedef struct lp_arp_probe_batch lp_arp_probe_batch_t;
+
 typedef struct {
     IPAddr destination;
     IPAddr source;
     UCHAR mac[6];
     ULONG mac_length;
     DWORD status;
+    /* Set once the result fields above are final; read them only after that. */
+    volatile LONG done;
+    lp_arp_probe_batch_t *batch;
 } lp_arp_probe_t;
+
+/* Heap-owned probe results. A probe that outlives the scan's wait keeps the batch
+   alive through its reference, so it never writes into a released stack frame. */
+struct lp_arp_probe_batch {
+    volatile LONG refs;
+    lp_arp_probe_t probes[LP_ACTIVE_SCAN_MAX_PROBES];
+};
+
+/* Drops one reference and frees the batch when the last holder is done. */
+static void release_probe_batch(lp_arp_probe_batch_t *batch)
+{
+    if (InterlockedDecrement(&batch->refs) == 0) {
+        HeapFree(GetProcessHeap(), 0, batch);
+    }
+}
 
 /* Runs one blocking ARP request away from the discovery worker's main loop. */
 static DWORD WINAPI active_probe_thread_proc(LPVOID param)
 {
     lp_arp_probe_t *probe = (lp_arp_probe_t *)param;
-    probe->mac_length = sizeof(probe->mac);
-    probe->status = SendARP(probe->destination, probe->source, (PULONG)probe->mac,
-                            &probe->mac_length);
+    UCHAR mac[6] = {0};
+    ULONG mac_length = sizeof(mac);
+    const DWORD status = SendARP(probe->destination, probe->source, (PULONG)mac, &mac_length);
+    memcpy(probe->mac, mac, sizeof(probe->mac));
+    probe->mac_length = mac_length;
+    probe->status = status;
+    (void)InterlockedExchange(&probe->done, 1);
+    release_probe_batch(probe->batch);
     return 0;
+}
+
+/* Reports whether a probe thread has published its final result. */
+static bool probe_finished(lp_arp_probe_t *probe)
+{
+    return InterlockedCompareExchange(&probe->done, 0, 0) != 0;
 }
 
 /* Probes bounded on-link IPv4 networks so idle devices need not be in the ARP cache. */
@@ -575,8 +606,14 @@ static size_t probe_active_subnets(lp_neighbor_list_t *out)
             const uint32_t probes_this_subnet =
                 (usable_count < LP_ACTIVE_SCAN_MAX_PROBES) ? usable_count
                                                            : LP_ACTIVE_SCAN_MAX_PROBES;
-            lp_arp_probe_t probes[LP_ACTIVE_SCAN_MAX_PROBES] = {0};
-            HANDLE probe_threads[LP_ACTIVE_SCAN_MAX_PROBES] = {0};
+            lp_arp_probe_batch_t *batch = (lp_arp_probe_batch_t *)HeapAlloc(
+                GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(lp_arp_probe_batch_t));
+            if (batch == NULL) {
+                HeapFree(GetProcessHeap(), 0, adapters);
+                return discovered_count;
+            }
+            batch->refs = 1; /* Held by this scan until it stops reading results. */
+            lp_arp_probe_t *probes = batch->probes;
             size_t probe_count = 0;
             for (uint32_t probe = 0; probe < probes_this_subnet &&
                                        probes_sent < LP_ACTIVE_SCAN_MAX_PROBES &&
@@ -590,24 +627,34 @@ static size_t probe_active_subnets(lp_neighbor_list_t *out)
                 ++probes_sent;
                 probes[probe_count].destination = htonl(candidate);
                 probes[probe_count].source = local->sin_addr.S_un.S_addr;
+                probes[probe_count].batch = batch;
                 ++probe_count;
             }
 
+            /* Wait only on threads that were actually created: a NULL handle would
+               make WaitForMultipleObjects fail immediately. */
+            HANDLE probe_threads[LP_ACTIVE_SCAN_MAX_PROBES] = {0};
+            DWORD thread_count = 0;
             for (size_t i = 0; i < probe_count; ++i) {
-                probe_threads[i] = CreateThread(NULL, 0, active_probe_thread_proc, &probes[i], 0,
-                                                NULL);
-                if (probe_threads[i] == NULL) {
-                    probes[i].status = ERROR_NOT_ENOUGH_MEMORY;
+                (void)InterlockedIncrement(&batch->refs);
+                HANDLE thread = CreateThread(NULL, 0, active_probe_thread_proc, &probes[i], 0, NULL);
+                if (thread == NULL) {
+                    (void)InterlockedDecrement(&batch->refs);
+                    continue;
                 }
+                probe_threads[thread_count++] = thread;
             }
-            if (probe_count > 0) {
-                (void)WaitForMultipleObjects((DWORD)probe_count, probe_threads, TRUE, 5000);
+            if (thread_count > 0) {
+                (void)WaitForMultipleObjects(thread_count, probe_threads, TRUE, 5000);
+            }
+            for (DWORD i = 0; i < thread_count; ++i) {
+                CloseHandle(probe_threads[i]);
             }
             for (size_t i = 0; i < probe_count; ++i) {
-                if (probe_threads[i] != NULL) {
-                    CloseHandle(probe_threads[i]);
-                }
-                if (probes[i].status != NO_ERROR || probes[i].mac_length != sizeof(probes[i].mac)) {
+                /* A probe still running after the wait is left to finish on its own
+                   reference to the batch; its result is ignored. */
+                if (!probe_finished(&probes[i]) || probes[i].status != NO_ERROR ||
+                    probes[i].mac_length != sizeof(probes[i].mac)) {
                     continue;
                 }
                 char ip[LP_IP_STR_MAX] = {0};
@@ -624,10 +671,12 @@ static size_t probe_active_subnets(lp_neighbor_list_t *out)
                     ++discovered_count;
                 }
                 if (out->count >= LP_DISCOVERY_MAX_NEIGHBORS) {
+                    release_probe_batch(batch);
                     HeapFree(GetProcessHeap(), 0, adapters);
                     return discovered_count;
                 }
             }
+            release_probe_batch(batch);
             g_active_probe_offset = (uint32_t)((start + probe_count) % usable_count);
             if (probes_sent >= LP_ACTIVE_SCAN_MAX_PROBES) {
                 HeapFree(GetProcessHeap(), 0, adapters);
