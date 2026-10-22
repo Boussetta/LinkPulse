@@ -138,6 +138,15 @@ The current preview is opt-in: it only runs after the user enables "Capture devi
 (Npcap)" in the tray menu (persisted as `packet_capture=1`). It loads `wpcap.dll` from the system
 Npcap directory only, opens the adapter in non-promiscuous mode, and captures 96-byte headers.
 
+LinkPulse installs per user and runs without elevation, but Npcap can be installed with
+"Restrict Npcap driver's access to Administrators only" (registry value
+`HKLM\SYSTEM\CurrentControlSet\Services\npcap\Parameters\AdminOnly=1`). In that mode a
+non-elevated process sees no adapters or gets "Access is denied" when opening one. The capture
+backend detects this, from the registry value combined with the process token's elevation or from
+the access-denied error, and sets `lp_capture_activity_t.restricted_to_admins`. Device details
+then shows "Npcap needs administrator rights" instead of a generic failure. LinkPulse never
+requests elevation itself.
+
 Installing Npcap alone is not sufficient for this use case. A supported monitor-mode adapter or a
 capture point on the gateway/bridge is required to observe other devices reliably.
 
