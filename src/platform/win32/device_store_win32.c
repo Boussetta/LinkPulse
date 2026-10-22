@@ -63,7 +63,7 @@ typedef struct {
    than trusting each caller to hold the same external lock. */
 typedef struct {
     SRWLOCK lock;
-    char path[LP_DEVICE_STORE_PATH_MAX];
+    WCHAR path[LP_DEVICE_STORE_PATH_MAX]; /* wide: profile paths may be outside the ANSI code page */
     lp_network_record_t *networks;
     size_t network_count;
     size_t network_capacity;
@@ -100,7 +100,7 @@ static bool wide_to_utf8(const WCHAR *value, char *out, size_t cap)
     return true;
 }
 
-static bool store_path(char *out, size_t cap)
+static bool store_path(WCHAR *out, size_t cap)
 {
     WCHAR local_app_data[MAX_PATH];
     const DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", local_app_data,
@@ -115,11 +115,8 @@ static bool store_path(char *out, size_t cap)
     if (CreateDirectoryW(directory, NULL) == 0 && GetLastError() != ERROR_ALREADY_EXISTS) {
         return false;
     }
-    WCHAR path[MAX_PATH];
-    if (swprintf(path, ARRAYSIZE(path), L"%ls\\devices.xml", directory) < 0) {
-        return false;
-    }
-    return WideCharToMultiByte(CP_UTF8, 0, path, -1, out, (int)cap, NULL, NULL) > 0;
+    const int written = swprintf(out, cap, L"%ls\\devices.xml", directory);
+    return written >= 0 && (size_t)written < cap;
 }
 
 static lp_device_type_t type_from_text(const char *value)
@@ -370,13 +367,8 @@ static void load_store(lp_device_store_t *store, bool *migrated)
 {
     const HRESULT com_result = CoInitializeEx(NULL, COINIT_MULTITHREADED);
     const bool uninitialize = SUCCEEDED(com_result);
-    WCHAR path[MAX_PATH];
-    if (!utf8_to_wide(store->path, path, ARRAYSIZE(path))) {
-        if (uninitialize) CoUninitialize();
-        return;
-    }
     IStream *stream = NULL;
-    if (FAILED(SHCreateStreamOnFileEx(path, STGM_READ | STGM_SHARE_DENY_NONE, 0, FALSE, NULL,
+    if (FAILED(SHCreateStreamOnFileEx(store->path, STGM_READ | STGM_SHARE_DENY_NONE, 0, FALSE, NULL,
                                       &stream))) {
         if (uninitialize) CoUninitialize();
         return;
@@ -548,10 +540,8 @@ static bool flush_file_to_disk(const WCHAR *path)
    keeps the previous file instead of replacing it with a truncated one. */
 static bool save_store(const lp_device_store_t *store)
 {
-    WCHAR path_wide[MAX_PATH];
-    WCHAR temp_wide[MAX_PATH + 8];
-    if (!utf8_to_wide(store->path, path_wide, ARRAYSIZE(path_wide)) ||
-        swprintf(temp_wide, ARRAYSIZE(temp_wide), L"%ls.tmp", path_wide) < 0) {
+    WCHAR temp_wide[LP_DEVICE_STORE_PATH_MAX + 8];
+    if (swprintf(temp_wide, ARRAYSIZE(temp_wide), L"%ls.tmp", store->path) < 0) {
         return false;
     }
     const HRESULT com_result = CoInitializeEx(NULL, COINIT_MULTITHREADED);
@@ -572,7 +562,7 @@ static bool save_store(const lp_device_store_t *store)
     if (uninitialize) CoUninitialize();
 
     const bool saved = SUCCEEDED(hr) && flush_file_to_disk(temp_wide) &&
-                 MoveFileExW(temp_wide, path_wide,
+                 MoveFileExW(temp_wide, store->path,
                              MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
     if (!saved) {
         LP_WARN("device store save failed (hr=0x%08lx, error %lu); keeping previous file",
@@ -587,7 +577,7 @@ int lp_win32_device_store_open(void **store_out)
     if (store_out == NULL) return 1;
     *store_out = NULL;
     lp_device_store_t *store = calloc(1, sizeof(*store));
-    if (store == NULL || !store_path(store->path, sizeof(store->path))) {
+    if (store == NULL || !store_path(store->path, ARRAYSIZE(store->path))) {
         free(store);
         return 1;
     }
