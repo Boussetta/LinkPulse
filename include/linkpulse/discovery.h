@@ -100,6 +100,9 @@ typedef struct {
     lp_neighbor_t known[LP_DISCOVERY_MAX_NEIGHBORS];
     uint8_t missing_polls[LP_DISCOVERY_MAX_NEIGHBORS];
     size_t known_count;
+    /* Events the last poll could not write because max_events was reached. Their
+       state change is still committed, so they will not be reported later. */
+    size_t dropped_events;
     bool has_baseline;
 } lp_discovery_t;
 
@@ -110,7 +113,8 @@ void lp_discovery_init(lp_discovery_t *discovery);
 void lp_discovery_set_sources(lp_discovery_t *discovery,
                               const lp_discovery_sources_t *sources);
 
-/* Polls current neighbors and writes at most max_events join/leave events. */
+/* Polls current neighbors and writes at most max_events join/leave events; any
+   further events are counted in discovery->dropped_events. */
 lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *events,
                               size_t max_events, size_t *event_count);
 

@@ -74,11 +74,13 @@ static bool reserve_known_slot(lp_discovery_t *discovery)
     return false;
 }
 
-/* Appends one event when the caller-provided buffer still has room. */
-static void emit_event(lp_discovery_event_t *events, size_t max_events, size_t *emitted,
-                       lp_discovery_event_type_t type, const lp_neighbor_t *neighbor)
+/* Appends one event when the caller-provided buffer still has room, else counts it as dropped. */
+static void emit_event(lp_discovery_t *discovery, lp_discovery_event_t *events, size_t max_events,
+                       size_t *emitted, lp_discovery_event_type_t type,
+                       const lp_neighbor_t *neighbor)
 {
     if (*emitted >= max_events) {
+        ++discovery->dropped_events;
         return;
     }
     events[*emitted].type = type;
@@ -94,6 +96,7 @@ lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *e
         return LP_ERR_INVALID_ARG;
     }
     *event_count = 0;
+    discovery->dropped_events = 0;
     if (discovery->sources.snapshot_fn == NULL) {
         return LP_ERR_UNSUPPORTED;
     }
@@ -118,7 +121,7 @@ lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *e
         if (idx >= 0) {
             seen[idx] = true;
             if (discovery->has_baseline && !discovery->known[idx].active) {
-                emit_event(events, max_events, &emitted, LP_DISCOVERY_EVENT_JOINED,
+                emit_event(discovery, events, max_events, &emitted, LP_DISCOVERY_EVENT_JOINED,
                            &current.items[i]);
             }
             discovery->known[idx] = current.items[i];
@@ -145,7 +148,7 @@ lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *e
                 ++missing;
             } else {
                 if (discovery->known[i].active && discovery->has_baseline) {
-                    emit_event(events, max_events, &emitted, LP_DISCOVERY_EVENT_LEFT,
+                    emit_event(discovery, events, max_events, &emitted, LP_DISCOVERY_EVENT_LEFT,
                                &discovery->known[i]);
                 }
                 discovery->known[i].active = false;
@@ -169,7 +172,8 @@ lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *e
         discovery->missing_polls[discovery->known_count] = 0;
         ++discovery->known_count;
         if (discovery->has_baseline) {
-            emit_event(events, max_events, &emitted, LP_DISCOVERY_EVENT_JOINED, neighbor);
+            emit_event(discovery, events, max_events, &emitted, LP_DISCOVERY_EVENT_JOINED,
+                       neighbor);
         }
     }
     discovery->has_baseline = true;
