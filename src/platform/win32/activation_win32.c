@@ -89,9 +89,8 @@ static DWORD WINAPI activation_download_thread_proc(LPVOID param)
         return 1;
     }
     LP_INFO("toast update downloaded to %s", installer_path);
-    if ((INT_PTR)ShellExecuteA(NULL, "open", installer_path, NULL, NULL, SW_SHOWNORMAL) <= 32) {
-        DeleteFileA(installer_path);
-        LP_ERROR("toast installer launch failed");
+    if (lp_update_launch_installer(installer_path) != LP_OK) {
+        LP_ERROR("toast installer was not launched");
         return 1;
     }
     return 0;

@@ -8,8 +8,12 @@
 #include <wchar.h>
 
 #include <windows.h>
+#include <shellapi.h>
+#include <softpub.h>
+#include <wintrust.h>
 #include <winhttp.h>
 
+#define LP_RELEASE_PAGE_URL L"https://github.com/Boussetta/LinkPulse/releases/latest"
 #define LP_RELEASE_HOST L"api.github.com"
 #define LP_RELEASE_PATH L"/repos/Boussetta/LinkPulse/releases/latest"
 #define LP_INSTALLER_NAME "LinkPulseSetup.exe"
@@ -202,26 +206,33 @@ lp_status_t lp_update_download_latest(char *installer_path, size_t path_cap)
     if (path_cap < MAX_PATH) {
         return LP_ERR_INVALID_ARG;
     }
-    char temp_directory[MAX_PATH];
-    const DWORD temp_length = GetTempPathA(sizeof(temp_directory), temp_directory);
-    char temp_file[MAX_PATH];
-    if (temp_length == 0 || temp_length >= sizeof(temp_directory) ||
-        GetTempFileNameA(temp_directory, "LP", 0, temp_file) == 0) {
+    /* Wide APIs throughout: the ANSI variants mangle profile paths outside the code page. */
+    wchar_t temp_directory[MAX_PATH];
+    const DWORD temp_length = GetTempPathW(MAX_PATH, temp_directory);
+    wchar_t temp_file[MAX_PATH];
+    if (temp_length == 0 || temp_length >= MAX_PATH ||
+        GetTempFileNameW(temp_directory, L"LP", 0, temp_file) == 0) {
         return LP_ERR_IO;
     }
-    DeleteFileA(temp_file);
-    char *dot = strrchr(temp_file, '.');
+    DeleteFileW(temp_file);
+    wchar_t *dot = wcsrchr(temp_file, L'.');
     if (dot != NULL) {
-        *dot = '\0';
+        *dot = L'\0';
     }
-    const int installer_written = snprintf(installer_path, path_cap, "%s.exe", temp_file);
-    if (installer_written < 0 || (size_t)installer_written >= path_cap) {
+    wchar_t wide_installer[MAX_PATH + 4];
+    const int installer_written = swprintf(wide_installer,
+                                           sizeof(wide_installer) / sizeof(wide_installer[0]),
+                                           L"%ls.exe", temp_file);
+    if (installer_written < 0 ||
+        WideCharToMultiByte(CP_UTF8, 0, wide_installer, -1, installer_path, (int)path_cap, NULL,
+                            NULL) == 0) {
+        installer_path[0] = '\0';
         return LP_ERR_IO;
     }
-    HANDLE output = CreateFileA(installer_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
-                                 FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE output = CreateFileW(wide_installer, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                                FILE_ATTRIBUTE_NORMAL, NULL);
     if (output == INVALID_HANDLE_VALUE) {
-        DeleteFileA(installer_path);
+        DeleteFileW(wide_installer);
         installer_path[0] = '\0';
         return LP_ERR_IO;
     }
@@ -274,10 +285,68 @@ lp_status_t lp_update_download_latest(char *installer_path, size_t path_cap)
     close_http_handles(request, connection, session);
     if (!success) {
         LP_ERROR("update installer download failed: HTTP status or file write error");
-        DeleteFileA(installer_path);
+        DeleteFileW(wide_installer);
         installer_path[0] = '\0';
         return LP_ERR_IO;
     }
     LP_INFO("update installer download complete: %s", installer_path);
+    return LP_OK;
+}
+
+/* Checks the file's embedded Authenticode signature against the machine's trusted roots,
+   including revocation of every certificate in the chain. */
+static bool installer_signature_is_trusted(const wchar_t *path)
+{
+    WINTRUST_FILE_INFO file_info;
+    memset(&file_info, 0, sizeof(file_info));
+    file_info.cbStruct = sizeof(file_info);
+    file_info.pcwszFilePath = path;
+
+    WINTRUST_DATA trust_data;
+    memset(&trust_data, 0, sizeof(trust_data));
+    trust_data.cbStruct = sizeof(trust_data);
+    trust_data.dwUIChoice = WTD_UI_NONE;
+    trust_data.fdwRevocationChecks = WTD_REVOKE_WHOLECHAIN;
+    trust_data.dwUnionChoice = WTD_CHOICE_FILE;
+    trust_data.pFile = &file_info;
+    trust_data.dwStateAction = WTD_STATEACTION_VERIFY;
+
+    GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    const LONG result = WinVerifyTrust((HWND)INVALID_HANDLE_VALUE, &action, &trust_data);
+    trust_data.dwStateAction = WTD_STATEACTION_CLOSE;
+    (void)WinVerifyTrust((HWND)INVALID_HANDLE_VALUE, &action, &trust_data);
+
+    if (result != ERROR_SUCCESS) {
+        LP_ERROR("update installer signature rejected: WinVerifyTrust=0x%08lx",
+                 (unsigned long)result);
+        return false;
+    }
+    return true;
+}
+
+/* Verifies, then starts, a downloaded installer; unverified files are never executed. */
+lp_status_t lp_update_launch_installer(const char *installer_path)
+{
+    if (installer_path == NULL || installer_path[0] == '\0') {
+        return LP_ERR_INVALID_ARG;
+    }
+    wchar_t path[MAX_PATH + 4];
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, installer_path, -1, path,
+                            (int)(sizeof(path) / sizeof(path[0]))) == 0) {
+        return LP_ERR_INVALID_ARG;
+    }
+
+    if (!installer_signature_is_trusted(path)) {
+        DeleteFileW(path);
+        LP_WARN("opening the release page instead of running an unverified installer");
+        ShellExecuteW(NULL, L"open", LP_RELEASE_PAGE_URL, NULL, NULL, SW_SHOWNORMAL);
+        return LP_ERR_UNSUPPORTED;
+    }
+    if ((INT_PTR)ShellExecuteW(NULL, L"open", path, NULL, NULL, SW_SHOWNORMAL) <= 32) {
+        DeleteFileW(path);
+        LP_ERROR("update installer launch failed: %s", installer_path);
+        return LP_ERR_IO;
+    }
+    LP_INFO("update installer launched: %s", installer_path);
     return LP_OK;
 }

@@ -445,12 +445,17 @@ static DWORD WINAPI download_thread_proc(LPVOID param)
     if (lp_update_download_latest(installer_path, sizeof(installer_path)) != LP_OK) {
         MessageBoxA(NULL, "Could not download the LinkPulse update.", "LinkPulse update",
                     MB_OK | MB_ICONERROR);
-    } else if ((INT_PTR)ShellExecuteA(NULL, "open", installer_path, NULL, NULL, SW_SHOWNORMAL) <= 32) {
-        DeleteFileA(installer_path);
-        MessageBoxA(state->hwnd, "Could not launch the LinkPulse installer.", "LinkPulse update",
-                    MB_OK | MB_ICONERROR);
     } else {
-        LP_INFO("update installer launched: %s", installer_path);
+        const lp_status_t launched = lp_update_launch_installer(installer_path);
+        if (launched == LP_ERR_IO) {
+            MessageBoxA(state->hwnd, "Could not launch the LinkPulse installer.",
+                        "LinkPulse update", MB_OK | MB_ICONERROR);
+        } else if (launched == LP_ERR_UNSUPPORTED) {
+            MessageBoxA(state->hwnd,
+                        "The downloaded installer has no valid signature, so it was not run. "
+                        "The release page was opened in your browser instead.",
+                        "LinkPulse update", MB_OK | MB_ICONWARNING);
+        }
     }
     return 0;
 }

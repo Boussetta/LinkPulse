@@ -10,7 +10,12 @@
 lp_status_t lp_update_check_latest(const char *current_version, char *latest_version,
                                    size_t latest_cap);
 
-/* Downloads the selected installer and returns its temporary path. */
+/* Downloads the selected installer and returns its temporary path as UTF-8. */
 lp_status_t lp_update_download_latest(char *installer_path, size_t path_cap);
+
+/* Runs a downloaded installer only if it carries a valid Authenticode signature. Otherwise the
+   file is deleted, the release page is opened in the browser instead, and LP_ERR_UNSUPPORTED is
+   returned. LP_ERR_IO means a verified installer could not be started. */
+lp_status_t lp_update_launch_installer(const char *installer_path);
 
 #endif /* LINKPULSE_UPDATE_H */
