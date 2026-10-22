@@ -13,6 +13,7 @@
 
 typedef struct {
     bool available;
+    bool restricted_to_admins; /* Npcap is installed in admin-only mode and we are not elevated */
     bool device_visible;
     uint64_t rx_bytes;
     uint64_t tx_bytes;

@@ -179,6 +179,8 @@ static void paint_device_details(HWND window, HDC target_dc)
         activity_status_text = "Packet capture is off";
     } else if (state->capture_state == LP_DEVICE_CAPTURE_RUNNING) {
         activity_status_text = "Capturing...";
+    } else if (state->capture.restricted_to_admins) {
+        activity_status_text = "Npcap needs administrator rights";
     } else if (!state->capture.available) {
         activity_status_text = "Packet capture unavailable";
     } else if (state->capture.device_visible) {
@@ -201,6 +203,11 @@ static void paint_device_details(HWND window, HDC target_dc)
     } else if (state->capture_state == LP_DEVICE_CAPTURE_RUNNING) {
         snprintf(capture_detail, sizeof(capture_detail),
                  "Sampling the selected device's traffic for a few seconds.");
+    } else if (state->capture.restricted_to_admins) {
+        snprintf(capture_detail, sizeof(capture_detail),
+                 "Npcap is restricted to administrators. Run LinkPulse as administrator, or "
+                 "reinstall Npcap without \"Restrict Npcap driver's access to Administrators "
+                 "only\".");
     } else if (state->capture.device_visible) {
         snprintf(capture_detail, sizeof(capture_detail),
                  "Captured %u packets: %llu B received, "

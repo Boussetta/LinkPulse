@@ -183,12 +183,57 @@ static bool parse_device_address(const char *device_ip, lp_capture_address_t *ad
     return false;
 }
 
-static pcap_t *open_default_route_interface(const lp_pcap_api_t *api, char *detail,
-                                            size_t detail_cap, lp_status_t *status)
+/* True when Npcap was installed with "Restrict Npcap driver's access to Administrators only". */
+static bool npcap_is_admin_only(void)
 {
+    DWORD value = 0;
+    DWORD size = sizeof(value);
+    return RegGetValueW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Services\\npcap\\Parameters",
+                        L"AdminOnly", RRF_RT_REG_DWORD, NULL, &value, &size) == ERROR_SUCCESS &&
+           value != 0;
+}
+
+static bool process_is_elevated(void)
+{
+    HANDLE token = NULL;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        return false;
+    }
+    TOKEN_ELEVATION elevation = {0};
+    DWORD size = 0;
+    const bool elevated =
+        GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size) &&
+        elevation.TokenIsElevated != 0;
+    CloseHandle(token);
+    return elevated;
+}
+
+/* In admin-only mode a non-elevated process either sees no adapters or is denied when opening
+   one, so any open failure is reported as the restriction rather than a generic error. */
+static bool report_admin_only(lp_capture_activity_t *out, const char *error)
+{
+    const bool access_denied =
+        error != NULL && (strstr(error, "Access is denied") != NULL || strstr(error, "(5)") != NULL);
+    if (!access_denied && !(npcap_is_admin_only() && !process_is_elevated())) {
+        return false;
+    }
+    out->restricted_to_admins = true;
+    snprintf(out->detail, sizeof(out->detail), "Npcap is restricted to administrators");
+    return true;
+}
+
+static pcap_t *open_default_route_interface(const lp_pcap_api_t *api, lp_capture_activity_t *out,
+                                            lp_status_t *status)
+{
+    char *detail = out->detail;
+    const size_t detail_cap = sizeof(out->detail);
     char error[LP_PCAP_ERRBUF_SIZE] = "";
     pcap_if_t *devices = NULL;
     if (api->find_all_devs(&devices, error) != 0) {
+        if (report_admin_only(out, error)) {
+            *status = LP_ERR_UNSUPPORTED;
+            return NULL;
+        }
         snprintf(detail, detail_cap, "Npcap: %.110s", error);
         *status = LP_ERR_IO;
         return NULL;
@@ -204,6 +249,10 @@ static pcap_t *open_default_route_interface(const lp_pcap_api_t *api, char *deta
     }
     api->free_all_devs(devices);
     if (handle == NULL) {
+        if (report_admin_only(out, error)) {
+            *status = LP_ERR_UNSUPPORTED;
+            return NULL;
+        }
         if (capture_name[0] == '\0') {
             snprintf(detail, detail_cap, "No default-route adapter found");
         } else {
@@ -245,7 +294,7 @@ lp_status_t lp_win32_capture_device_activity(const char *device_ip, unsigned dur
     out->available = true;
 
     lp_status_t status = LP_OK;
-    pcap_t *handle = open_default_route_interface(&api, out->detail, sizeof(out->detail), &status);
+    pcap_t *handle = open_default_route_interface(&api, out, &status);
     if (handle == NULL) {
         FreeLibrary(api.module);
         return status;
