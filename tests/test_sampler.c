@@ -16,6 +16,7 @@ typedef struct {
     uint64_t tx_bytes;
     bool is_loopback;
     bool is_virtual;
+    bool is_filter;
 } fake_iface_t;
 
 typedef struct {
@@ -73,6 +74,7 @@ static lp_status_t fake_snapshot_fn(lp_iface_list_t *out)
         items[i].tx_bytes = snap->ifaces[i].tx_bytes;
         items[i].is_loopback = snap->ifaces[i].is_loopback;
         items[i].is_virtual = snap->ifaces[i].is_virtual;
+        items[i].is_filter = snap->ifaces[i].is_filter;
         items[i].is_up = true;
     }
     out->items = items;
@@ -482,6 +484,177 @@ static void test_history_wraps_at_capacity(void)
     LP_CHECK(partial[0].timestamp_ns == history[count - 3].timestamp_ns);
 }
 
+/* Verifies packet-filter rows never add to ALL-mode totals, even with virtual
+   adapters included, because they repeat their base adapter's bytes. */
+static void test_all_mode_never_counts_filter_interfaces(void)
+{
+    reset_fakes();
+    g_fake_snapshots[0] = (fake_snapshot_t){{
+                                                {"eth0", 100, 50, false, false, false},
+                                                {"eth0-WFP", 100, 50, false, true, true},
+                                                {"vEthernet", 10, 10, false, true, false},
+                                            },
+                                            3};
+    g_fake_clock_values[0] = 0;
+    g_fake_snapshots[1] = (fake_snapshot_t){{
+                                                {"eth0", 2100, 1050, false, false, false},
+                                                {"eth0-WFP", 2100, 1050, false, true, true},
+                                                {"vEthernet", 110, 10, false, true, false},
+                                            },
+                                            3};
+    g_fake_clock_values[1] = 1000000000ULL;
+
+    lp_sampler_t sampler;
+    lp_sampler_config_t config = {LP_IFACE_SELECT_ALL, "", true};
+    lp_sampler_init(&sampler, &config);
+    install_fakes(&sampler);
+
+    lp_rate_sample_t sample;
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    LP_CHECK(sample.rx_bytes_per_sec == 2100); /* eth0 + vEthernet, not the filter copy */
+    LP_CHECK(sample.tx_bytes_per_sec == 1000);
+}
+
+/* Verifies a poll with no elapsed time keeps its bytes for the next sample. */
+static void test_zero_elapsed_poll_keeps_baselines(void)
+{
+    reset_fakes();
+    g_fake_snapshots[0] = (fake_snapshot_t){{{"eth0", 1000, 1000, false, false, false}}, 1};
+    g_fake_clock_values[0] = 0;
+    g_fake_snapshots[1] = (fake_snapshot_t){{{"eth0", 2000, 1500, false, false, false}}, 1};
+    g_fake_clock_values[1] = 1000000000ULL;
+    g_fake_snapshots[2] = (fake_snapshot_t){{{"eth0", 3000, 2000, false, false, false}}, 1};
+    g_fake_clock_values[2] = 1000000000ULL; /* same reading as the previous poll */
+    g_fake_snapshots[3] = (fake_snapshot_t){{{"eth0", 4000, 2500, false, false, false}}, 1};
+    g_fake_clock_values[3] = 2000000000ULL;
+
+    lp_sampler_t sampler;
+    lp_sampler_config_t config = {LP_IFACE_SELECT_MANUAL, "eth0", false};
+    lp_sampler_init(&sampler, &config);
+    install_fakes(&sampler);
+
+    lp_rate_sample_t sample;
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    LP_CHECK(sample.rx_bytes_per_sec == 1000);
+
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    LP_CHECK(sample.rx_bytes_per_sec == 1000); /* previous sample repeated */
+    LP_CHECK(sample.timestamp_ns == 1000000000ULL);
+    lp_rate_sample_t history[4];
+    LP_CHECK(lp_sampler_history(&sampler, history, 4) == 2); /* nothing appended */
+
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    LP_CHECK(sample.rx_bytes_per_sec == 2000); /* 2000 -> 4000 over one second */
+    LP_CHECK(sample.tx_bytes_per_sec == 1000);
+}
+
+/* Verifies an interface that comes back after NOT_FOUND starts a fresh baseline. */
+static void test_poll_after_not_found_starts_fresh_baseline(void)
+{
+    reset_fakes();
+    g_fake_snapshots[0] = (fake_snapshot_t){{{"eth0", 1000, 1000, false, false, false}}, 1};
+    g_fake_clock_values[0] = 0;
+    g_fake_snapshots[1] = (fake_snapshot_t){{{"wifi", 1, 1, false, false, false}}, 1};
+    g_fake_clock_values[1] = 1000000000ULL;
+    g_fake_snapshots[2] = (fake_snapshot_t){{{"eth0", 900000, 900000, false, false, false}}, 1};
+    g_fake_clock_values[2] = 2000000000ULL;
+    g_fake_snapshots[3] = (fake_snapshot_t){{{"eth0", 901000, 900500, false, false, false}}, 1};
+    g_fake_clock_values[3] = 3000000000ULL;
+
+    lp_sampler_t sampler;
+    lp_sampler_config_t config = {LP_IFACE_SELECT_MANUAL, "eth0", false};
+    lp_sampler_init(&sampler, &config);
+    install_fakes(&sampler);
+
+    lp_rate_sample_t sample;
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_ERR_NOT_FOUND);
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    LP_CHECK(sample.rx_bytes_per_sec == 0); /* no diff against the stale baseline */
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    LP_CHECK(sample.rx_bytes_per_sec == 1000);
+    LP_CHECK(sample.tx_bytes_per_sec == 500);
+}
+
+/* ---- many-interface source for ALL-mode table capacity ---- */
+
+static unsigned g_many_first;
+static unsigned g_many_count;
+static uint64_t g_many_rx;
+static uint64_t g_many_clock_ns;
+
+/* Reports interfaces if<first>..if<first+count-1>, all with the same counters. */
+static lp_status_t many_snapshot_fn(lp_iface_list_t *out)
+{
+    lp_iface_t *items = calloc(g_many_count, sizeof(*items));
+    LP_CHECK(items != NULL);
+    if (items == NULL) {
+        return LP_ERR_NO_MEMORY;
+    }
+    for (unsigned i = 0; i < g_many_count; ++i) {
+        snprintf(items[i].name, sizeof(items[i].name), "if%u", g_many_first + i);
+        items[i].rx_bytes = g_many_rx;
+        items[i].is_up = true;
+    }
+    out->items = items;
+    out->count = g_many_count;
+    return LP_OK;
+}
+
+/* Advances the many-interface test clock by one second per poll. */
+static uint64_t many_clock_fn(void)
+{
+    const uint64_t value = g_many_clock_ns;
+    g_many_clock_ns += 1000000000ULL;
+    return value;
+}
+
+/* Prepares an ALL-mode sampler wired to the many-interface source. */
+static void init_many_sampler(lp_sampler_t *sampler)
+{
+    g_many_first = 0;
+    g_many_count = 0;
+    g_many_rx = 0;
+    g_many_clock_ns = 0;
+    lp_sampler_config_t config = {LP_IFACE_SELECT_ALL, "", false};
+    lp_sampler_init(sampler, &config);
+    const lp_sampler_sources_t sources = {many_snapshot_fn, NULL, many_clock_fn};
+    lp_sampler_set_sources(sampler, &sources);
+}
+
+/* Verifies a full table still counts the interfaces it tracks. */
+static void test_all_mode_overflow_counts_tracked_interfaces(void)
+{
+    lp_sampler_t sampler;
+    init_many_sampler(&sampler);
+    g_many_count = LP_SAMPLER_MAX_TRACKED_IFACES + 1;
+
+    lp_rate_sample_t sample;
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    g_many_rx = 1000;
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    LP_CHECK(sample.rx_bytes_per_sec == 1000ULL * LP_SAMPLER_MAX_TRACKED_IFACES);
+}
+
+/* Verifies a vanished interface frees its slot for one appearing in the same poll. */
+static void test_all_mode_evicts_before_inserting(void)
+{
+    lp_sampler_t sampler;
+    init_many_sampler(&sampler);
+    g_many_count = LP_SAMPLER_MAX_TRACKED_IFACES;
+
+    lp_rate_sample_t sample;
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK); /* if0..if31: table full */
+    g_many_first = 1;                                      /* if0 leaves, if32 joins */
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    g_many_rx = 1000;
+    LP_CHECK(lp_sampler_poll(&sampler, &sample) == LP_OK);
+    /* if32 was admitted last poll, so all 32 interfaces report a delta now. */
+    LP_CHECK(sample.rx_bytes_per_sec == 1000ULL * LP_SAMPLER_MAX_TRACKED_IFACES);
+}
+
 /* Runs the sampler's selection, reset, failure, and history scenarios. */
 int main(void)
 {
@@ -497,5 +670,10 @@ int main(void)
     test_poll_rejects_missing_sources();
     test_history_rejects_null_and_zero_cap();
     test_history_wraps_at_capacity();
+    test_all_mode_never_counts_filter_interfaces();
+    test_zero_elapsed_poll_keeps_baselines();
+    test_poll_after_not_found_starts_fresh_baseline();
+    test_all_mode_overflow_counts_tracked_interfaces();
+    test_all_mode_evicts_before_inserting();
     LP_TEST_RETURN();
 }

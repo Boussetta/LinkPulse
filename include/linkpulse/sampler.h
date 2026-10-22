@@ -66,9 +66,11 @@ typedef struct {
     lp_sampler_sources_t sources;
 
     uint64_t last_poll_timestamp_ns;
+    bool has_last_poll; /* last_poll_timestamp_ns is valid (a clock may legitimately read 0) */
 
     lp_sampler_target_t targets[LP_SAMPLER_MAX_TRACKED_IFACES];
     size_t target_count;
+    bool overflow_reported; /* the ALL-mode table overflow warning was already logged */
 
     lp_rate_sample_t history[LP_SAMPLER_HISTORY_CAP];
     size_t history_count;
@@ -85,7 +87,12 @@ void lp_sampler_set_sources(lp_sampler_t *sampler, const lp_sampler_sources_t *s
    - LP_ERR_NOT_FOUND: the target interface (or default route) could not be resolved
      this round, e.g. the adapter is temporarily offline; keep polling.
    - The first successful poll (or the one right after an interface change or a
-     counter reset) reports a rate of 0: a rate needs two samples. */
+     counter reset) reports a rate of 0: a rate needs two samples.
+   - A poll at the same clock reading as the previous one cannot produce a rate:
+     it returns LP_OK with the previous sample in `out`, appends nothing, and
+     keeps the counter baselines so those bytes count towards the next sample.
+   - LP_IFACE_SELECT_ALL never counts packet-filter interfaces (is_filter), even
+     with include_virtual, because they repeat their base adapter's bytes. */
 lp_status_t lp_sampler_poll(lp_sampler_t *sampler, lp_rate_sample_t *out);
 
 /* Copies up to `cap` of the most recent samples (oldest first) into `out`. Returns

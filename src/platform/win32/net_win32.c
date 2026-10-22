@@ -69,6 +69,8 @@ lp_status_t lp_net_snapshot(lp_iface_list_t *out)
            VPN tunnels, and packet-filter pseudo-adapters. */
         iface->is_virtual = !row->InterfaceAndOperStatusFlags.HardwareInterface ||
                             row->InterfaceAndOperStatusFlags.FilterInterface;
+        /* WFP and LightWeight Filter rows mirror the bytes of the adapter they sit on. */
+        iface->is_filter = row->InterfaceAndOperStatusFlags.FilterInterface;
     }
 
     out->items = items;
