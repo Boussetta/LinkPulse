@@ -251,6 +251,9 @@ static void read_device_attributes(IXmlReader *reader, lp_device_record_t *recor
         char value_utf8[LP_HOSTNAME_MAX];
         if (!wide_to_utf8(name, name_utf8, sizeof(name_utf8)) ||
             !wide_to_utf8(value, value_utf8, sizeof(value_utf8))) {
+            /* Skip an oversized or unconvertible attribute, but still advance
+               the cursor; re-reading it would drop every later attribute. */
+            if (IXmlReader_MoveToNextAttribute(reader) != S_OK) break;
             continue;
         }
         if (strcmp(name_utf8, "mac") == 0) copy_text(record->mac, sizeof(record->mac), value_utf8);
@@ -292,6 +295,7 @@ static void read_network_attributes(IXmlReader *reader, lp_network_record_t *net
         char value_utf8[LP_HOSTNAME_MAX];
         if (!wide_to_utf8(name, name_utf8, sizeof(name_utf8)) ||
             !wide_to_utf8(value, value_utf8, sizeof(value_utf8))) {
+            if (IXmlReader_MoveToNextAttribute(reader) != S_OK) break;
             continue;
         }
         if (strcmp(name_utf8, "gateway-hostname") == 0)
@@ -450,93 +454,127 @@ static void load_store(lp_device_store_t *store, bool *migrated)
     }
 }
 
-static void write_attribute(IXmlWriter *writer, const char *name, const char *value)
+/* Writes one attribute, skipping it (not failing the save) when the text cannot
+   be converted; every field is bounded well below the conversion buffer. */
+static HRESULT write_attribute(IXmlWriter *writer, const char *name, const char *value)
 {
     wchar_t name_wide[64];
     wchar_t value_wide[LP_HOSTNAME_MAX];
-    if (utf8_to_wide(name, name_wide, ARRAYSIZE(name_wide)) &&
-        utf8_to_wide(value, value_wide, ARRAYSIZE(value_wide))) {
-        (void)IXmlWriter_WriteAttributeString(writer, NULL, name_wide, NULL, value_wide);
+    if (!utf8_to_wide(name, name_wide, ARRAYSIZE(name_wide)) ||
+        !utf8_to_wide(value, value_wide, ARRAYSIZE(value_wide))) {
+        return S_OK;
     }
+    return IXmlWriter_WriteAttributeString(writer, NULL, name_wide, NULL, value_wide);
 }
 
-static void save_store(const lp_device_store_t *store)
+/* Chains writer calls so the first failure short-circuits the rest. */
+#define LP_XML_WRITE(call)                                                                         \
+    do {                                                                                           \
+        if (SUCCEEDED(hr)) hr = (call);                                                            \
+    } while (0)
+
+/* Serializes the whole store; stops at the first failed write and returns it. */
+static HRESULT write_store_xml(IXmlWriter *writer, const lp_device_store_t *store)
 {
+    HRESULT hr = IXmlWriter_WriteStartDocument(writer, XmlStandalone_Omit);
+    LP_XML_WRITE(IXmlWriter_WriteStartElement(writer, NULL, L"linkpulse-devices", NULL));
+    LP_XML_WRITE(write_attribute(writer, "version", "2"));
+    for (size_t i = 0; i < store->network_count && SUCCEEDED(hr); ++i) {
+        const lp_network_record_t *network = &store->networks[i];
+        char number[32];
+        LP_XML_WRITE(IXmlWriter_WriteStartElement(writer, NULL, L"network", NULL));
+        LP_XML_WRITE(write_attribute(writer, "gateway-mac", network->gateway_mac));
+        LP_XML_WRITE(write_attribute(writer, "gateway-hostname", network->gateway_hostname));
+        LP_XML_WRITE(write_attribute(writer, "gateway-vendor", network->gateway_vendor));
+        LP_XML_WRITE(write_attribute(writer, "isp", network->isp.isp));
+        LP_XML_WRITE(write_attribute(writer, "isp-asn", network->isp.asn));
+        LP_XML_WRITE(write_attribute(writer, "isp-public-ip", network->isp.public_ip));
+        LP_XML_WRITE(write_attribute(writer, "isp-hostname", network->isp.hostname));
+        LP_XML_WRITE(write_attribute(writer, "isp-city", network->isp.city));
+        LP_XML_WRITE(write_attribute(writer, "isp-region", network->isp.region));
+        LP_XML_WRITE(write_attribute(writer, "isp-country", network->isp.country));
+        LP_XML_WRITE(write_attribute(writer, "isp-postal", network->isp.postal));
+        LP_XML_WRITE(write_attribute(writer, "isp-timezone", network->isp.timezone));
+        LP_XML_WRITE(write_attribute(writer, "isp-loc", network->isp.loc));
+        _ui64toa(network->first_seen, number, 10);
+        LP_XML_WRITE(write_attribute(writer, "firstSeen", number));
+        _ui64toa(network->last_seen, number, 10);
+        LP_XML_WRITE(write_attribute(writer, "lastSeen", number));
+        for (size_t j = 0; j < network->device_count && SUCCEEDED(hr); ++j) {
+            const lp_device_record_t *record = &network->devices[j];
+            LP_XML_WRITE(IXmlWriter_WriteStartElement(writer, NULL, L"device", NULL));
+            LP_XML_WRITE(write_attribute(writer, "mac", record->mac));
+            LP_XML_WRITE(write_attribute(writer, "label", record->label));
+            LP_XML_WRITE(write_attribute(writer, "hostname", record->hostname));
+            LP_XML_WRITE(write_attribute(writer, "vendor", record->vendor));
+            LP_XML_WRITE(write_attribute(writer, "type", type_to_text(record->device_type)));
+            LP_XML_WRITE(write_attribute(writer, "icon", record->icon));
+            LP_XML_WRITE(write_attribute(writer, "trusted", record->trusted ? "true" : "false"));
+            _ui64toa(record->first_seen, number, 10);
+            LP_XML_WRITE(write_attribute(writer, "firstSeen", number));
+            _ui64toa(record->last_seen, number, 10);
+            LP_XML_WRITE(write_attribute(writer, "lastSeen", number));
+            LP_XML_WRITE(IXmlWriter_WriteEndElement(writer));
+        }
+        LP_XML_WRITE(IXmlWriter_WriteEndElement(writer));
+    }
+    LP_XML_WRITE(IXmlWriter_WriteEndElement(writer));
+    LP_XML_WRITE(IXmlWriter_WriteEndDocument(writer));
+    LP_XML_WRITE(IXmlWriter_Flush(writer));
+    return hr;
+}
+#undef LP_XML_WRITE
+
+/* Forces a closed file's contents to disk before it is renamed into place. */
+static bool flush_file_to_disk(const WCHAR *path)
+{
+    HANDLE file = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                              FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    const bool flushed = FlushFileBuffers(file) != 0;
+    CloseHandle(file);
+    return flushed;
+}
+
+/* Writes the store to devices.xml.tmp and renames it over devices.xml only when
+   every write and the flush to disk succeeded, so a full disk or I/O error
+   keeps the previous file instead of replacing it with a truncated one. */
+static bool save_store(const lp_device_store_t *store)
+{
+    WCHAR path_wide[MAX_PATH];
+    WCHAR temp_wide[MAX_PATH + 8];
+    if (!utf8_to_wide(store->path, path_wide, ARRAYSIZE(path_wide)) ||
+        swprintf(temp_wide, ARRAYSIZE(temp_wide), L"%ls.tmp", path_wide) < 0) {
+        return false;
+    }
     const HRESULT com_result = CoInitializeEx(NULL, COINIT_MULTITHREADED);
     const bool uninitialize = SUCCEEDED(com_result);
-    char temp_path[LP_DEVICE_STORE_PATH_MAX + 8];
-    snprintf(temp_path, sizeof(temp_path), "%s.tmp", store->path);
-    WCHAR temp_wide[MAX_PATH];
-    if (!utf8_to_wide(temp_path, temp_wide, ARRAYSIZE(temp_wide))) {
-        if (uninitialize) CoUninitialize();
-        return;
-    }
     IStream *stream = NULL;
     if (FAILED(SHCreateStreamOnFileEx(temp_wide, STGM_CREATE | STGM_WRITE | STGM_SHARE_DENY_NONE,
                                       FILE_ATTRIBUTE_NORMAL, TRUE, NULL, &stream))) {
         if (uninitialize) CoUninitialize();
-        return;
+        return false;
     }
     IXmlWriter *writer = NULL;
-    if (FAILED(CreateXmlWriter(&IID_IXmlWriter, (void **)&writer, NULL)) ||
-        FAILED(IXmlWriter_SetOutput(writer, (IUnknown *)stream))) {
-        if (writer != NULL) IXmlWriter_Release(writer);
-        IStream_Release(stream);
-        DeleteFileA(temp_path);
-        if (uninitialize) CoUninitialize();
-        return;
-    }
-    (void)IXmlWriter_WriteStartDocument(writer, XmlStandalone_Omit);
-    (void)IXmlWriter_WriteStartElement(writer, NULL, L"linkpulse-devices", NULL);
-    write_attribute(writer, "version", "2");
-    for (size_t i = 0; i < store->network_count; ++i) {
-        const lp_network_record_t *network = &store->networks[i];
-        char number[32];
-        (void)IXmlWriter_WriteStartElement(writer, NULL, L"network", NULL);
-        write_attribute(writer, "gateway-mac", network->gateway_mac);
-        write_attribute(writer, "gateway-hostname", network->gateway_hostname);
-        write_attribute(writer, "gateway-vendor", network->gateway_vendor);
-        write_attribute(writer, "isp", network->isp.isp);
-        write_attribute(writer, "isp-asn", network->isp.asn);
-        write_attribute(writer, "isp-public-ip", network->isp.public_ip);
-        write_attribute(writer, "isp-hostname", network->isp.hostname);
-        write_attribute(writer, "isp-city", network->isp.city);
-        write_attribute(writer, "isp-region", network->isp.region);
-        write_attribute(writer, "isp-country", network->isp.country);
-        write_attribute(writer, "isp-postal", network->isp.postal);
-        write_attribute(writer, "isp-timezone", network->isp.timezone);
-        write_attribute(writer, "isp-loc", network->isp.loc);
-        _ui64toa(network->first_seen, number, 10);
-        write_attribute(writer, "firstSeen", number);
-        _ui64toa(network->last_seen, number, 10);
-        write_attribute(writer, "lastSeen", number);
-        for (size_t j = 0; j < network->device_count; ++j) {
-            const lp_device_record_t *record = &network->devices[j];
-            (void)IXmlWriter_WriteStartElement(writer, NULL, L"device", NULL);
-            write_attribute(writer, "mac", record->mac);
-            write_attribute(writer, "label", record->label);
-            write_attribute(writer, "hostname", record->hostname);
-            write_attribute(writer, "vendor", record->vendor);
-            write_attribute(writer, "type", type_to_text(record->device_type));
-            write_attribute(writer, "icon", record->icon);
-            write_attribute(writer, "trusted", record->trusted ? "true" : "false");
-            _ui64toa(record->first_seen, number, 10);
-            write_attribute(writer, "firstSeen", number);
-            _ui64toa(record->last_seen, number, 10);
-            write_attribute(writer, "lastSeen", number);
-            (void)IXmlWriter_WriteEndElement(writer);
-        }
-        (void)IXmlWriter_WriteEndElement(writer);
-    }
-    (void)IXmlWriter_WriteEndElement(writer);
-    (void)IXmlWriter_WriteEndDocument(writer);
-    (void)IXmlWriter_Flush(writer);
-    IXmlWriter_Release(writer);
+    HRESULT hr = CreateXmlWriter(&IID_IXmlWriter, (void **)&writer, NULL);
+    if (SUCCEEDED(hr)) hr = IXmlWriter_SetOutput(writer, (IUnknown *)stream);
+    if (SUCCEEDED(hr)) hr = write_store_xml(writer, store);
+    if (writer != NULL) IXmlWriter_Release(writer);
+    if (SUCCEEDED(hr)) hr = IStream_Commit(stream, STGC_DEFAULT);
     IStream_Release(stream);
-    if (!MoveFileExA(temp_path, store->path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        DeleteFileA(temp_path);
-    }
     if (uninitialize) CoUninitialize();
+
+    const bool saved = SUCCEEDED(hr) && flush_file_to_disk(temp_wide) &&
+                 MoveFileExW(temp_wide, path_wide,
+                             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+    if (!saved) {
+        LP_WARN("device store save failed (hr=0x%08lx, error %lu); keeping previous file",
+                (unsigned long)hr, GetLastError());
+        (void)DeleteFileW(temp_wide);
+    }
+    return saved;
 }
 
 int lp_win32_device_store_open(void **store_out)
@@ -551,7 +589,7 @@ int lp_win32_device_store_open(void **store_out)
     bool migrated = false;
     load_store(store, &migrated);
     if (migrated) {
-        save_store(store);
+        (void)save_store(store);
     }
     *store_out = store;
     LP_DEBUG("device store opened: networks=%llu", (unsigned long long)store->network_count);
@@ -607,7 +645,7 @@ void lp_win32_device_store_observe(void *opaque, const lp_network_context_t *net
         device->has_device_type = true;
     }
     device->last_seen = now_seconds();
-    save_store(store);
+    (void)save_store(store);
 }
 
 void lp_win32_device_store_close(void *opaque)
