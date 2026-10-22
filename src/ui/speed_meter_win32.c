@@ -275,10 +275,10 @@ static RECT back_rect(void)
     return rect;
 }
 
-/* Hides the meter and asks the owner to bring the network map back up. */
+/* Hides the meter and asks the owner to bring the network map back up. A running
+   test keeps going in the background; only the Cancel button stops it. */
 static void go_back(HWND window, lp_speed_meter_state_t *state)
 {
-    cancel_test(state);
     HWND owner = GetWindow(window, GW_OWNER);
     if (owner == NULL) {
         ShowWindow(window, SW_HIDE);
@@ -600,7 +600,7 @@ static LRESULT CALLBACK speed_meter_wndproc(HWND window, UINT message, WPARAM wp
         RECT client;
         GetClientRect(window, &client);
         if (x >= client.right - 58 && y <= 58) {
-            cancel_test(state);
+            /* Closing only hides the view; the test and its result survive. */
             ShowWindow(window, SW_HIDE);
             return 0;
         }
@@ -680,7 +680,12 @@ void lp_speed_meter_show(HWND window, const char *router_label, const char *rout
     if (state == NULL) {
         return;
     }
-    detach_run(state); /* a fresh view: any previous test is abandoned, not awaited */
+    /* Returning to the same gateway shows its running test or last result again. A
+       different gateway gets a fresh view: the old test is abandoned, not awaited. */
+    const char *ip = router_ip != NULL ? router_ip : "";
+    if (strcmp(state->router_ip, ip) != 0) {
+        detach_run(state);
+    }
     snprintf(state->router_label, sizeof(state->router_label), "%s",
              router_label != NULL && router_label[0] != '\0' ? router_label : "Gateway");
     snprintf(state->router_ip, sizeof(state->router_ip), "%s", router_ip != NULL ? router_ip : "");
