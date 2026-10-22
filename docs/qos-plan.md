@@ -5,23 +5,23 @@ Every item below came from reading the code; the highest-impact ones were re-che
 
 ## Branching model
 
-- `QoS` is the integration branch. It starts from `feat/device-activity-capture`, because
-  several fixes target the device activity and capture code that branch introduces.
+- `QoS` is the integration branch. It starts from `main` and contains no unreleased
+  feature work.
 - Each fix lives on its own `fix/<topic>` branch cut from `QoS` and is merged back with
   `git merge --no-ff`, so every fix stays visible as one merge commit.
 - Every branch must build with `/W4 /WX` and keep `ctest` green before it is merged.
 - `QoS` is merged into `main` through a single pull request once the whole set is done.
+- The device activity feature and the fixes that only concern it live on
+  `feat/device-activity-capture`, which is built on top of `QoS`. It stays out of `main`
+  until it is ready; see [Device activity feature](#device-activity-feature).
 
 ## Workstreams
 
-### 1. Device activity capture
+### 1. Shutdown safety
 
 | Branch | Fixes |
 | --- | --- |
-| `fix/capture-frame-parsing` | Npcap device name built as `NPF_{{GUID}}`; direction decided from the first IP octet only; no link-type, EtherType, VLAN or IHL checks; capture errors spin the loop. Frame parsing moves into a portable, unit-tested core function. |
-| `fix/capture-privacy-opt-in` | Capture runs without consent, in promiscuous mode, keeping whole packets. Adds an opt-in setting (off by default), header-only snaplen, non-promiscuous mode, and loads `wpcap.dll` from the Npcap system directory only. |
-| `fix/device-refresh-lifecycle` | Shutdown frees the device store while the 5 s capture still runs; capture results are not tied to the device they belong to; a second click is dropped; a failed identity refresh skips capture and reports "unavailable". |
-| `fix/popup-refresh-focus` | Periodic refreshes reposition the This PC and device details windows and steal focus. |
+| `fix/device-store-shutdown-join` | Shutdown closes the device store even when the discovery or identity-refresh thread did not exit in time, so a slow worker can use freed memory. |
 
 ### 2. Notifications and updates
 
@@ -89,16 +89,30 @@ applies.
 | `fix/dual-stack-mac-identity` | A MAC shared by a device's IPv4 and IPv6 entries is treated as ambiguous. |
 | `fix/serial-name-resolution` | Neighbor names are resolved one at a time, up to 250 ms each, with no cache. |
 
-### 9. Release, installer and capture
+### 9. Release
 
 | Branch | Fixes |
 | --- | --- |
 | `chore/release-code-signing` | Release binaries are unsigned, so the update signature check always falls back to the release page. |
-| `fix/npcap-admin-only-detection` | A per-user install cannot capture when Npcap is restricted to administrators, and the UI does not say why. |
-| `fix/capture-local-host-only-state` | Capture does not distinguish traffic with this PC from traffic the device exchanges with others. |
 
 ### 10. Formatting
 
 | Branch | Fixes |
 | --- | --- |
 | `chore/clang-format-tree` | The tree does not match `.clang-format`, so CI cannot run `format-check`. Applied last, after every other branch is merged, to avoid conflicts. |
+
+## Device activity feature
+
+`feat/device-activity-capture` adds the flow-risk detector, the optional Npcap capture
+preview, and the This PC and device details popups. It is kept out of `main` until it matures.
+The branch starts from `QoS`, carries the feature commit, and merges these fixes with
+`--no-ff`:
+
+| Branch | Fixes |
+| --- | --- |
+| `fix/capture-frame-parsing` | Npcap device name built as `NPF_{{GUID}}`; direction decided from the first IP octet only; no link-type, EtherType, VLAN or IHL checks; capture errors spin the loop. Frame parsing moves into a portable, unit-tested core function. |
+| `fix/capture-privacy-opt-in` | Capture runs without consent, in promiscuous mode, keeping whole packets. Adds an opt-in setting (off by default), header-only snaplen, non-promiscuous mode, and loads `wpcap.dll` from the Npcap system directory only. |
+| `fix/device-refresh-lifecycle` | Shutdown frees the device store while the 5 s capture still runs; capture results are not tied to the device they belong to; a second click is dropped; a failed identity refresh skips capture and reports "unavailable". |
+| `fix/popup-refresh-focus` | Periodic refreshes reposition the This PC and device details windows and steal focus. |
+| `fix/npcap-admin-only-detection` | A per-user install cannot capture when Npcap is restricted to administrators, and the UI does not say why. |
+| `fix/capture-local-host-only-state` | Capture does not distinguish traffic with this PC from traffic the device exchanges with others. |
