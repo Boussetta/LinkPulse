@@ -3,6 +3,9 @@
 ; compile this with Inno Setup's ISCC.exe:
 ;   & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\LinkPulse.iss
 ; Produces build\installer\LinkPulseSetup.exe.
+; Code signing happens outside this script: packaging\sign-file.ps1 signs
+; linkpulse-tray.exe before compilation and LinkPulseSetup.exe afterwards (both the
+; release workflow and build-installer.ps1 call it).
 
 #define MyAppName "LinkPulse"
 #ifndef MyAppVersion

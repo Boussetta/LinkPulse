@@ -73,12 +73,17 @@ if (-not (Test-Path -LiteralPath $InnoCompiler)) {
     throw "Inno Setup compiler not found: $InnoCompiler"
 }
 
+# Signs only when WINDOWS_SIGNING_CERT_PFX_BASE64 is set; otherwise warns and continues.
+$signScript = Join-Path $PSScriptRoot "sign-file.ps1"
+& $signScript -Path (Join-Path $repoRoot "out\windows\linkpulse-tray.exe")
+
 Invoke-Checked $InnoCompiler @("/DMyAppVersion=$Version", "packaging\LinkPulse.iss")
 
 $installer = Join-Path $repoRoot "build\installer\LinkPulseSetup.exe"
 if (-not (Test-Path -LiteralPath $installer)) {
     throw "Installer was not created: $installer"
 }
+& $signScript -Path $installer
 
 Write-Host "`nInstaller created:" -ForegroundColor Green
 Write-Host $installer -ForegroundColor Green

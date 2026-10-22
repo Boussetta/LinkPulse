@@ -1,6 +1,99 @@
 #include "linkpulse/discovery.h"
 
+#include "linkpulse/log.h"
+
+#include <stdio.h>
 #include <string.h>
+
+/* Presentation-format IPv6 addresses always contain a colon; IPv4 ones never do. */
+static bool is_ipv4_text(const char *ip)
+{
+    return ip[0] != '\0' && strchr(ip, ':') == NULL;
+}
+
+/* Copies metadata that `dst` has not learned yet from another entry of the same device. */
+static void adopt_missing_metadata(lp_neighbor_t *dst, const lp_neighbor_t *src)
+{
+    if (dst->hostname[0] == '\0') {
+        snprintf(dst->hostname, sizeof(dst->hostname), "%s", src->hostname);
+    }
+    if (dst->vendor[0] == '\0') {
+        snprintf(dst->vendor, sizeof(dst->vendor), "%s", src->vendor);
+    }
+    if (dst->connection_type == LP_CONNECTION_UNKNOWN) {
+        dst->connection_type = src->connection_type;
+    }
+    if (src->device_confidence > dst->device_confidence) {
+        dst->device_type = src->device_type;
+        dst->device_confidence = src->device_confidence;
+    }
+}
+
+/* Clears every occurrence of a MAC that more than one IPv4 address answers with. */
+static void clear_proxy_arp_macs(lp_neighbor_list_t *list)
+{
+    for (size_t i = 0; i < list->count; ++i) {
+        const lp_neighbor_t *item = &list->items[i];
+        if (item->mac[0] == '\0' || !is_ipv4_text(item->ip)) {
+            continue;
+        }
+        size_t ipv4_count = 1;
+        for (size_t j = i + 1; j < list->count; ++j) {
+            if (is_ipv4_text(list->items[j].ip) && strcmp(list->items[j].mac, item->mac) == 0) {
+                ++ipv4_count;
+            }
+        }
+        if (ipv4_count < 2) {
+            continue;
+        }
+        LP_DEBUG("clearing ambiguous MAC %s shared by %llu IPv4 addresses (likely proxy ARP)",
+                 item->mac, (unsigned long long)ipv4_count);
+        char ambiguous_mac[LP_MAC_STR_MAX];
+        snprintf(ambiguous_mac, sizeof(ambiguous_mac), "%s", item->mac);
+        for (size_t j = 0; j < list->count; ++j) {
+            if (strcmp(list->items[j].mac, ambiguous_mac) == 0) {
+                list->items[j].mac[0] = '\0';
+            }
+        }
+    }
+}
+
+/* Proxy-ARP MACs are cleared first; remaining shared MACs are merged per device. */
+void lp_discovery_normalize_macs(lp_neighbor_list_t *list)
+{
+    if (list == NULL) {
+        return;
+    }
+    clear_proxy_arp_macs(list);
+
+    size_t write = 0;
+    for (size_t i = 0; i < list->count; ++i) {
+        const lp_neighbor_t item = list->items[i];
+        size_t kept = write;
+        if (item.mac[0] != '\0') {
+            for (size_t j = 0; j < write; ++j) {
+                if (strcmp(list->items[j].mac, item.mac) == 0) {
+                    kept = j;
+                    break;
+                }
+            }
+        }
+        if (kept == write) {
+            list->items[write++] = item;
+            continue;
+        }
+        lp_neighbor_t *device = &list->items[kept];
+        if (!is_ipv4_text(device->ip) && is_ipv4_text(item.ip)) {
+            /* Show the device under its IPv4 address, keeping what the IPv6 entry knew. */
+            const lp_neighbor_t previous = *device;
+            *device = item;
+            adopt_missing_metadata(device, &previous);
+        } else {
+            adopt_missing_metadata(device, &item);
+        }
+    }
+    list->count = write;
+}
 
 /* Clears retained neighbor identities so the next successful poll establishes a baseline. */
 void lp_discovery_init(lp_discovery_t *discovery)
@@ -48,6 +141,46 @@ static long find_known_index(const lp_neighbor_t *known, size_t known_count,
     return -1;
 }
 
+/* Removes one retained entry, keeping the remaining entries in insertion order. */
+static void remove_known_at(lp_discovery_t *discovery, size_t index)
+{
+    const size_t tail = discovery->known_count - index - 1;
+    memmove(&discovery->known[index], &discovery->known[index + 1],
+            tail * sizeof(discovery->known[0]));
+    memmove(&discovery->missing_polls[index], &discovery->missing_polls[index + 1],
+            tail * sizeof(discovery->missing_polls[0]));
+    --discovery->known_count;
+}
+
+/* Makes room for one new neighbor by evicting the longest-retained departed entry. */
+static bool reserve_known_slot(lp_discovery_t *discovery)
+{
+    if (discovery->known_count < LP_DISCOVERY_MAX_NEIGHBORS) {
+        return true;
+    }
+    for (size_t i = 0; i < discovery->known_count; ++i) {
+        if (!discovery->known[i].active) {
+            remove_known_at(discovery, i);
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Appends one event when the caller-provided buffer still has room, else counts it as dropped. */
+static void emit_event(lp_discovery_t *discovery, lp_discovery_event_t *events, size_t max_events,
+                       size_t *emitted, lp_discovery_event_type_t type,
+                       const lp_neighbor_t *neighbor)
+{
+    if (*emitted >= max_events) {
+        ++discovery->dropped_events;
+        return;
+    }
+    events[*emitted].type = type;
+    events[*emitted].neighbor = *neighbor;
+    ++*emitted;
+}
+
 /* Reconciles one platform snapshot with the baseline and emits bounded events. */
 lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *events,
                               size_t max_events, size_t *event_count)
@@ -56,76 +189,87 @@ lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *e
         return LP_ERR_INVALID_ARG;
     }
     *event_count = 0;
+    discovery->dropped_events = 0;
     if (discovery->sources.snapshot_fn == NULL) {
         return LP_ERR_UNSUPPORTED;
     }
 
-    lp_neighbor_list_t current;
-    const lp_status_t status = discovery->sources.snapshot_fn(&current);
+    /* Kept in the discovery state: a full snapshot is ~180 KB, too large for a thread stack. */
+    lp_neighbor_list_t *current = &discovery->scratch;
+    const lp_status_t status = discovery->sources.snapshot_fn(current);
     if (status != LP_OK) {
         return status;
     }
 
     const size_t old_known_count = discovery->known_count;
     bool seen[LP_DISCOVERY_MAX_NEIGHBORS] = {0};
+    size_t new_items[LP_DISCOVERY_MAX_NEIGHBORS];
+    size_t new_count = 0;
     size_t emitted = 0;
 
-    for (size_t i = 0; i < current.count; ++i) {
-        const long idx = find_known_index(discovery->known, old_known_count, &current.items[i]);
+    /* Match the snapshot against the retained baseline. Unmatched neighbors are
+       collected once each, so an identity duplicated in one snapshot joins once. */
+    for (size_t i = 0; i < current->count; ++i) {
+        current->items[i].active = true;
+        const long idx = find_known_index(discovery->known, old_known_count, &current->items[i]);
         if (idx >= 0) {
             seen[idx] = true;
-            discovery->missing_polls[idx] = 0;
-            if (discovery->has_baseline && !discovery->known[idx].active && emitted < max_events) {
-                events[emitted].type = LP_DISCOVERY_EVENT_JOINED;
-                events[emitted].neighbor = current.items[i];
-                ++emitted;
+            if (discovery->has_baseline && !discovery->known[idx].active) {
+                emit_event(discovery, events, max_events, &emitted, LP_DISCOVERY_EVENT_JOINED,
+                           &current->items[i]);
             }
-            current.items[i].active = true;
-            discovery->known[idx] = current.items[i];
+            discovery->known[idx] = current->items[i];
             continue;
         }
-        current.items[i].active = true;
-        if (discovery->has_baseline && emitted < max_events) {
-            events[emitted].type = LP_DISCOVERY_EVENT_JOINED;
-            events[emitted].neighbor = current.items[i];
-            ++emitted;
+        bool duplicate = false;
+        for (size_t j = 0; j < new_count && !duplicate; ++j) {
+            duplicate = neighbors_match(&current->items[new_items[j]], &current->items[i]);
         }
-        if (discovery->known_count < LP_DISCOVERY_MAX_NEIGHBORS) {
-            discovery->known[discovery->known_count++] = current.items[i];
-            discovery->missing_polls[discovery->known_count - 1] = 0;
+        if (!duplicate) {
+            new_items[new_count++] = i;
         }
     }
 
-    /* Compact the pre-existing region in place (write index never exceeds the
-       read index), then slide the newly appended entries down to follow it. */
+    /* Compact the retained region in place (write index never exceeds the read
+       index). Missing neighbors leave after a grace period and stay retained as
+       inactive entries, so a later return is reported as a join. */
     size_t write = 0;
     for (size_t i = 0; i < old_known_count; ++i) {
-        if (seen[i]) {
-            discovery->known[write++] = discovery->known[i];
-            discovery->missing_polls[write - 1] = 0;
-        } else {
-            if (discovery->missing_polls[i] + 1 < LP_DISCOVERY_MISSING_POLLS_BEFORE_LEFT) {
-                discovery->known[write] = discovery->known[i];
-                discovery->missing_polls[write] = discovery->missing_polls[i] + 1;
-                ++write;
+        uint8_t missing = 0;
+        if (!seen[i]) {
+            missing = discovery->missing_polls[i];
+            if (missing + 1 < LP_DISCOVERY_MISSING_POLLS_BEFORE_LEFT) {
+                ++missing;
             } else {
-                if (discovery->known[i].active && discovery->has_baseline && emitted < max_events) {
-                    events[emitted].type = LP_DISCOVERY_EVENT_LEFT;
-                    events[emitted].neighbor = discovery->known[i];
-                    ++emitted;
+                if (discovery->known[i].active && discovery->has_baseline) {
+                    emit_event(discovery, events, max_events, &emitted, LP_DISCOVERY_EVENT_LEFT,
+                               &discovery->known[i]);
                 }
                 discovery->known[i].active = false;
-                discovery->known[write] = discovery->known[i];
-                discovery->missing_polls[write] = discovery->missing_polls[i];
-                ++write;
             }
         }
-    }
-    for (size_t i = old_known_count; i < discovery->known_count; ++i) {
-        discovery->known[write++] = discovery->known[i];
-        discovery->missing_polls[write - 1] = 0;
+        discovery->known[write] = discovery->known[i];
+        discovery->missing_polls[write] = missing;
+        ++write;
     }
     discovery->known_count = write;
+
+    /* Store new neighbors, evicting departed entries when the table is full. A
+       neighbor that cannot be stored is not reported either; otherwise it would
+       be reported as joined again on every poll. */
+    for (size_t i = 0; i < new_count; ++i) {
+        if (!reserve_known_slot(discovery)) {
+            break;
+        }
+        const lp_neighbor_t *neighbor = &current->items[new_items[i]];
+        discovery->known[discovery->known_count] = *neighbor;
+        discovery->missing_polls[discovery->known_count] = 0;
+        ++discovery->known_count;
+        if (discovery->has_baseline) {
+            emit_event(discovery, events, max_events, &emitted, LP_DISCOVERY_EVENT_JOINED,
+                       neighbor);
+        }
+    }
     discovery->has_baseline = true;
     *event_count = emitted;
     return LP_OK;

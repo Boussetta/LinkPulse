@@ -7,6 +7,7 @@
 
 #define LP_NETWORK_MAP_COPYDATA_DEVICE_SELECTED 1
 #define LP_NETWORK_MAP_COPYDATA_ROUTER_SELECTED 2
+#define LP_NETWORK_MAP_COPYDATA_INTERNET_SELECTED 4
 
 /* Creates the hidden-until-shown network map popup. */
 HWND lp_network_map_create(HINSTANCE instance, HWND owner);

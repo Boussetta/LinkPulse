@@ -80,6 +80,9 @@ typedef lp_status_t (*lp_net_local_networks_fn)(lp_local_network_list_t *out);
 /* Refreshes best-effort name/type metadata for one already-known neighbor. */
 lp_status_t lp_net_refresh_neighbor_identity(lp_neighbor_t *neighbor);
 
+/* Makes in-flight and future neighbor-name lookups stop promptly; call once at shutdown. */
+void lp_net_cancel_name_lookups(void);
+
 typedef struct {
     lp_net_neighbor_snapshot_fn snapshot_fn;
     lp_net_local_networks_fn local_networks_fn;
@@ -100,19 +103,33 @@ typedef struct {
     lp_neighbor_t known[LP_DISCOVERY_MAX_NEIGHBORS];
     uint8_t missing_polls[LP_DISCOVERY_MAX_NEIGHBORS];
     size_t known_count;
+    /* Events the last poll could not write because max_events was reached. Their
+       state change is still committed, so they will not be reported later. */
+    size_t dropped_events;
     bool has_baseline;
+    /* Poll-time copy of the platform snapshot. It lives here rather than on the
+       polling thread's stack; lp_discovery_t should itself be static or heap-allocated. */
+    lp_neighbor_list_t scratch;
 } lp_discovery_t;
 
 /* Initializes an empty discovery baseline; no events are emitted yet. */
 void lp_discovery_init(lp_discovery_t *discovery);
 
 /* Replaces non-NULL provider callbacks while retaining the current baseline. */
-void lp_discovery_set_sources(lp_discovery_t *discovery,
-                              const lp_discovery_sources_t *sources);
+void lp_discovery_set_sources(lp_discovery_t *discovery, const lp_discovery_sources_t *sources);
 
-/* Polls current neighbors and writes at most max_events join/leave events. */
+/* Polls current neighbors and writes at most max_events join/leave events; any
+   further events are counted in discovery->dropped_events. */
 lp_status_t lp_discovery_poll(lp_discovery_t *discovery, lp_discovery_event_t *events,
                               size_t max_events, size_t *event_count);
+
+/* Normalizes MAC identities in one platform snapshot, in place.
+   - A MAC shared by two or more IPv4 addresses is treated as proxy ARP (the access
+     point answering for every client) and cleared, so those neighbors fall back to
+     IP identity.
+   - Otherwise, entries sharing a MAC are one dual-stack device and are merged into a
+     single entry that prefers the IPv4 address and keeps any learned metadata. */
+void lp_discovery_normalize_macs(lp_neighbor_list_t *list);
 
 /* Collects the current passive neighbor table into caller-provided storage. */
 lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out);

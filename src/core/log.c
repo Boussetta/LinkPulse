@@ -47,9 +47,9 @@ static void format_timestamp(char *out, size_t out_cap)
         return;
     }
 
-    snprintf(out, out_cap, "%04d-%02d-%02d %02d:%02d:%02d.%03ld",
-             local_now.tm_year + 1900, local_now.tm_mon + 1, local_now.tm_mday,
-             local_now.tm_hour, local_now.tm_min, local_now.tm_sec, milliseconds);
+    snprintf(out, out_cap, "%04d-%02d-%02d %02d:%02d:%02d.%03ld", local_now.tm_year + 1900,
+             local_now.tm_mon + 1, local_now.tm_mday, local_now.tm_hour, local_now.tm_min,
+             local_now.tm_sec, milliseconds);
 }
 
 /* Publishes the threshold atomically because workers can log concurrently. */
@@ -102,23 +102,32 @@ void lp_log(lp_log_level_t level, const char *fmt, ...)
     char stamp[32];
     format_timestamp(stamp, sizeof(stamp));
 
+    /* Format the whole record before taking the lock, so other threads only
+       spin for the duration of the writes. One byte is kept for the newline. */
+    char line[1024];
+    const size_t body_cap = sizeof(line) - 1;
+    size_t used = 0;
+    const int prefix = snprintf(line, body_cap, "[%s] %s ", stamp, level_tag(level));
+    if (prefix > 0) {
+        used = ((size_t)prefix < body_cap) ? (size_t)prefix : body_cap - 1;
+    }
     va_list args;
     va_start(args, fmt);
-    va_list file_args;
-    va_copy(file_args, args);
+    const int body = vsnprintf(line + used, body_cap - used, fmt, args);
+    va_end(args);
+    if (body > 0) {
+        used += ((size_t)body < body_cap - used) ? (size_t)body : body_cap - used - 1;
+    }
+    line[used++] = '\n';
+    line[used] = '\0';
+
     while (atomic_flag_test_and_set_explicit(&g_log_lock, memory_order_acquire)) {
     }
-    fprintf(stderr, "[%s] %s ", stamp, level_tag(level));
-    vfprintf(stderr, fmt, args);
-    fputc('\n', stderr);
+    fputs(line, stderr);
     fflush(stderr);
     if (g_file != NULL) {
-        fprintf(g_file, "[%s] %s ", stamp, level_tag(level));
-        vfprintf(g_file, fmt, file_args);
-        fputc('\n', g_file);
+        fputs(line, g_file);
         fflush(g_file);
     }
-    va_end(file_args);
     atomic_flag_clear_explicit(&g_log_lock, memory_order_release);
-    va_end(args);
 }

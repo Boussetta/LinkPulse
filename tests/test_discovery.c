@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define FAKE_STEP_COUNT 5
+#define FAKE_STEP_COUNT 6
 
 static lp_neighbor_list_t g_fake_snapshots[FAKE_STEP_COUNT];
 static size_t g_fake_snapshot_index;
@@ -44,11 +44,11 @@ static void test_baseline_and_neighbor_changes(void)
 
     /* The first neighbor keeps its identity while its IP address changes. */
     set_neighbor(&g_fake_snapshots[1].items[0], "192.168.1.20", "AA:BB:CC:DD:EE:01");
-    snprintf(g_fake_snapshots[1].items[0].hostname,
-             sizeof(g_fake_snapshots[1].items[0].hostname), "living-room-tv");
+    snprintf(g_fake_snapshots[1].items[0].hostname, sizeof(g_fake_snapshots[1].items[0].hostname),
+             "living-room-tv");
     g_fake_snapshots[1].items[0].connection_type = LP_CONNECTION_WIFI;
-    snprintf(g_fake_snapshots[1].items[0].vendor,
-             sizeof(g_fake_snapshots[1].items[0].vendor), "Epson");
+    snprintf(g_fake_snapshots[1].items[0].vendor, sizeof(g_fake_snapshots[1].items[0].vendor),
+             "Epson");
     g_fake_snapshots[1].items[0].device_type = LP_DEVICE_PRINTER;
     g_fake_snapshots[1].items[0].device_confidence = 95;
     set_neighbor(&g_fake_snapshots[1].items[1], "192.168.1.4", "AA:BB:CC:DD:EE:03");
@@ -59,7 +59,7 @@ static void test_baseline_and_neighbor_changes(void)
     g_fake_snapshots[3] = g_fake_snapshots[2];
     g_fake_snapshots[4] = g_fake_snapshots[2];
 
-    lp_discovery_t discovery;
+    static lp_discovery_t discovery; /* too large for the stack */
     const lp_discovery_sources_t sources = {fake_snapshot_fn, NULL};
     lp_discovery_init(&discovery);
     lp_discovery_set_sources(&discovery, &sources);
@@ -93,13 +93,14 @@ static void test_baseline_and_neighbor_changes(void)
     LP_CHECK(events[0].neighbor.device_type == LP_DEVICE_PRINTER);
     LP_CHECK(events[0].neighbor.device_confidence == 95);
     LP_CHECK(discovery.known_count == 3);
-    LP_CHECK(!discovery.known[0].active || !discovery.known[1].active || !discovery.known[2].active);
+    LP_CHECK(!discovery.known[0].active || !discovery.known[1].active ||
+             !discovery.known[2].active);
 }
 
 /* Verifies discovery reports an unconfigured provider instead of dereferencing it. */
 static void test_poll_rejects_missing_source(void)
 {
-    lp_discovery_t discovery;
+    static lp_discovery_t discovery;
     lp_discovery_event_t events[1];
     size_t event_count = 0;
     lp_discovery_init(&discovery);
@@ -108,10 +109,241 @@ static void test_poll_rejects_missing_source(void)
     LP_CHECK(event_count == 0);
 }
 
+static lp_discovery_t g_discovery;
+static lp_discovery_event_t g_events[2 * LP_DISCOVERY_MAX_NEIGHBORS];
+
+/* Starts a fresh discovery instance backed by the scripted snapshots. */
+static void start_discovery(void)
+{
+    const lp_discovery_sources_t sources = {fake_snapshot_fn, NULL};
+    lp_discovery_init(&g_discovery);
+    lp_discovery_set_sources(&g_discovery, &sources);
+}
+
+/* Polls once with a buffer large enough for every possible event. */
+static size_t poll_events(void)
+{
+    size_t event_count = 0;
+    LP_CHECK(lp_discovery_poll(&g_discovery, g_events, sizeof(g_events) / sizeof(g_events[0]),
+                               &event_count) == LP_OK);
+    return event_count;
+}
+
+/* Counts the events of one type from the last poll. */
+static size_t count_events(size_t event_count, lp_discovery_event_type_t type)
+{
+    size_t count = 0;
+    for (size_t i = 0; i < event_count; ++i) {
+        if (g_events[i].type == type) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+/* Fills one snapshot with a full table of distinct neighbors from one MAC block. */
+static void fill_snapshot(lp_neighbor_list_t *snapshot, unsigned block)
+{
+    for (unsigned i = 0; i < LP_DISCOVERY_MAX_NEIGHBORS; ++i) {
+        char ip[LP_IP_STR_MAX];
+        char mac[LP_MAC_STR_MAX];
+        snprintf(ip, sizeof(ip), "10.%u.%u.%u", block, i / 250u, 1u + i % 250u);
+        snprintf(mac, sizeof(mac), "02:00:00:%02X:%02X:%02X", block, i / 256u, i % 256u);
+        set_neighbor(&snapshot->items[i], ip, mac);
+    }
+    snapshot->count = LP_DISCOVERY_MAX_NEIGHBORS;
+}
+
+/* Verifies a full table neither repeats joins nor keeps departed neighbors forever. */
+static void test_full_table_churn_evicts_departed_neighbors(void)
+{
+    reset_fakes();
+    fill_snapshot(&g_fake_snapshots[0], 1);
+    for (size_t step = 1; step < FAKE_STEP_COUNT; ++step) {
+        fill_snapshot(&g_fake_snapshots[step], 2);
+    }
+    start_discovery();
+
+    LP_CHECK(poll_events() == 0);
+    /* The first block is still within its grace period, so the second block
+       cannot be stored yet and must not be reported as joined. */
+    LP_CHECK(poll_events() == 0);
+    LP_CHECK(poll_events() == 0);
+
+    const size_t event_count = poll_events();
+    LP_CHECK(count_events(event_count, LP_DISCOVERY_EVENT_LEFT) == LP_DISCOVERY_MAX_NEIGHBORS);
+    LP_CHECK(count_events(event_count, LP_DISCOVERY_EVENT_JOINED) == LP_DISCOVERY_MAX_NEIGHBORS);
+    LP_CHECK(g_discovery.known_count == LP_DISCOVERY_MAX_NEIGHBORS);
+
+    LP_CHECK(poll_events() == 0);
+    bool all_second_block = true;
+    for (size_t i = 0; i < g_discovery.known_count; ++i) {
+        all_second_block = all_second_block && g_discovery.known[i].active &&
+                           strncmp(g_discovery.known[i].mac, "02:00:00:02:", 12) == 0;
+    }
+    LP_CHECK(all_second_block);
+}
+
+/* Verifies a neighbor that left is reported as joined exactly once when it returns. */
+static void test_rejoin_after_left_joins_once(void)
+{
+    reset_fakes();
+    set_neighbor(&g_fake_snapshots[0].items[0], "192.168.1.9", "AA:BB:CC:DD:EE:09");
+    g_fake_snapshots[0].count = 1;
+    g_fake_snapshots[4] = g_fake_snapshots[0];
+    g_fake_snapshots[5] = g_fake_snapshots[0];
+    start_discovery();
+
+    LP_CHECK(poll_events() == 0);
+    LP_CHECK(poll_events() == 0);
+    LP_CHECK(poll_events() == 0);
+    size_t event_count = poll_events();
+    LP_CHECK(event_count == 1);
+    LP_CHECK(count_events(event_count, LP_DISCOVERY_EVENT_LEFT) == 1);
+
+    event_count = poll_events();
+    LP_CHECK(event_count == 1);
+    LP_CHECK(count_events(event_count, LP_DISCOVERY_EVENT_JOINED) == 1);
+    LP_CHECK_STR_EQ(g_events[0].neighbor.mac, "AA:BB:CC:DD:EE:09");
+    LP_CHECK(poll_events() == 0);
+    LP_CHECK(g_discovery.known_count == 1);
+}
+
+/* Verifies neighbors reported without a MAC are tracked by IP address. */
+static void test_mac_less_neighbor_uses_ip_identity(void)
+{
+    reset_fakes();
+    set_neighbor(&g_fake_snapshots[0].items[0], "fe80::5", "");
+    g_fake_snapshots[0].count = 1;
+    g_fake_snapshots[1] = g_fake_snapshots[0];
+    g_fake_snapshots[2] = g_fake_snapshots[0];
+    set_neighbor(&g_fake_snapshots[2].items[1], "fe80::6", "");
+    g_fake_snapshots[2].count = 2;
+    start_discovery();
+
+    LP_CHECK(poll_events() == 0);
+    LP_CHECK(poll_events() == 0);
+    const size_t event_count = poll_events();
+    LP_CHECK(event_count == 1);
+    LP_CHECK(count_events(event_count, LP_DISCOVERY_EVENT_JOINED) == 1);
+    LP_CHECK_STR_EQ(g_events[0].neighbor.ip, "fe80::6");
+    LP_CHECK(g_discovery.known_count == 2);
+}
+
+/* Verifies one identity listed twice in a snapshot is stored and reported once. */
+static void test_duplicate_mac_in_snapshot_joins_once(void)
+{
+    reset_fakes();
+    set_neighbor(&g_fake_snapshots[1].items[0], "192.168.1.7", "AA:BB:CC:DD:EE:07");
+    set_neighbor(&g_fake_snapshots[1].items[1], "192.168.1.8", "AA:BB:CC:DD:EE:07");
+    g_fake_snapshots[1].count = 2;
+    g_fake_snapshots[2] = g_fake_snapshots[1];
+    start_discovery();
+
+    LP_CHECK(poll_events() == 0);
+    const size_t event_count = poll_events();
+    LP_CHECK(event_count == 1);
+    LP_CHECK(count_events(event_count, LP_DISCOVERY_EVENT_JOINED) == 1);
+    LP_CHECK(g_discovery.known_count == 1);
+    LP_CHECK(poll_events() == 0);
+}
+
+/* Verifies events beyond max_events are counted, and the count resets on the next poll. */
+static void test_event_overflow_is_counted(void)
+{
+    reset_fakes();
+    for (unsigned i = 0; i < 5; ++i) {
+        char ip[LP_IP_STR_MAX];
+        char mac[LP_MAC_STR_MAX];
+        snprintf(ip, sizeof(ip), "192.168.2.%u", 10u + i);
+        snprintf(mac, sizeof(mac), "AA:BB:CC:00:00:%02X", i);
+        set_neighbor(&g_fake_snapshots[1].items[i], ip, mac);
+    }
+    g_fake_snapshots[1].count = 5;
+    g_fake_snapshots[2] = g_fake_snapshots[1];
+    start_discovery();
+
+    lp_discovery_event_t events[2];
+    size_t event_count = 0;
+    LP_CHECK(lp_discovery_poll(&g_discovery, events, 2, &event_count) == LP_OK);
+    LP_CHECK(event_count == 0);
+    LP_CHECK(g_discovery.dropped_events == 0);
+
+    LP_CHECK(lp_discovery_poll(&g_discovery, events, 2, &event_count) == LP_OK);
+    LP_CHECK(event_count == 2);
+    LP_CHECK(g_discovery.dropped_events == 3);
+    /* The dropped neighbors are still stored, so they are not reported again. */
+    LP_CHECK(g_discovery.known_count == 5);
+
+    LP_CHECK(lp_discovery_poll(&g_discovery, events, 2, &event_count) == LP_OK);
+    LP_CHECK(event_count == 0);
+    LP_CHECK(g_discovery.dropped_events == 0);
+}
+
+static lp_neighbor_list_t g_snapshot;
+
+/* Verifies one device's IPv4 and IPv6 entries merge into one IPv4-addressed entry. */
+static void test_normalize_merges_dual_stack_device(void)
+{
+    memset(&g_snapshot, 0, sizeof(g_snapshot));
+    set_neighbor(&g_snapshot.items[0], "fe80::1c2b", "AA:BB:CC:DD:EE:10");
+    snprintf(g_snapshot.items[0].hostname, sizeof(g_snapshot.items[0].hostname), "pixel");
+    set_neighbor(&g_snapshot.items[1], "192.168.1.30", "AA:BB:CC:DD:EE:11");
+    set_neighbor(&g_snapshot.items[2], "192.168.1.31", "AA:BB:CC:DD:EE:10");
+    set_neighbor(&g_snapshot.items[3], "2001:db8::31", "AA:BB:CC:DD:EE:10");
+    g_snapshot.count = 4;
+
+    lp_discovery_normalize_macs(&g_snapshot);
+    LP_CHECK(g_snapshot.count == 2);
+    LP_CHECK_STR_EQ(g_snapshot.items[0].ip, "192.168.1.31");
+    LP_CHECK_STR_EQ(g_snapshot.items[0].mac, "AA:BB:CC:DD:EE:10");
+    LP_CHECK_STR_EQ(g_snapshot.items[0].hostname, "pixel");
+    LP_CHECK_STR_EQ(g_snapshot.items[1].ip, "192.168.1.30");
+}
+
+/* Verifies a MAC answering for several IPv4 addresses is cleared on every entry. */
+static void test_normalize_clears_proxy_arp_mac(void)
+{
+    memset(&g_snapshot, 0, sizeof(g_snapshot));
+    set_neighbor(&g_snapshot.items[0], "fe80::99", "AA:BB:CC:DD:EE:99");
+    set_neighbor(&g_snapshot.items[1], "10.0.0.5", "AA:BB:CC:DD:EE:99");
+    set_neighbor(&g_snapshot.items[2], "10.0.0.6", "AA:BB:CC:DD:EE:99");
+    g_snapshot.count = 3;
+
+    lp_discovery_normalize_macs(&g_snapshot);
+    LP_CHECK(g_snapshot.count == 3);
+    for (size_t i = 0; i < g_snapshot.count; ++i) {
+        LP_CHECK_STR_EQ(g_snapshot.items[i].mac, "");
+    }
+}
+
+/* Verifies several IPv6 addresses of one device without IPv4 still merge into one entry. */
+static void test_normalize_merges_ipv6_only_device(void)
+{
+    memset(&g_snapshot, 0, sizeof(g_snapshot));
+    set_neighbor(&g_snapshot.items[0], "fe80::7", "AA:BB:CC:DD:EE:07");
+    set_neighbor(&g_snapshot.items[1], "2001:db8::7", "AA:BB:CC:DD:EE:07");
+    g_snapshot.items[1].connection_type = LP_CONNECTION_WIFI;
+    g_snapshot.count = 2;
+
+    lp_discovery_normalize_macs(&g_snapshot);
+    LP_CHECK(g_snapshot.count == 1);
+    LP_CHECK_STR_EQ(g_snapshot.items[0].ip, "fe80::7");
+    LP_CHECK(g_snapshot.items[0].connection_type == LP_CONNECTION_WIFI);
+}
+
 /* Runs discovery reconciliation and provider-validation scenarios. */
 int main(void)
 {
     test_baseline_and_neighbor_changes();
     test_poll_rejects_missing_source();
+    test_full_table_churn_evicts_departed_neighbors();
+    test_rejoin_after_left_joins_once();
+    test_mac_less_neighbor_uses_ip_identity();
+    test_duplicate_mac_in_snapshot_joins_once();
+    test_event_overflow_is_counted();
+    test_normalize_merges_dual_stack_device();
+    test_normalize_clears_proxy_arp_mac();
+    test_normalize_merges_ipv6_only_device();
     LP_TEST_RETURN();
 }

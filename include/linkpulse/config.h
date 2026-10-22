@@ -15,13 +15,25 @@ typedef struct {
     unsigned interval_ms;
 } lp_config_t;
 
+/* Accepted poll interval range. Faster polling only burns CPU; slower polling
+   makes the tray look frozen. */
+#define LP_CONFIG_INTERVAL_MIN_MS 100u
+#define LP_CONFIG_INTERVAL_MAX_MS 60000u
+
 /* Initializes every configuration field to the application default. */
 void lp_config_defaults(lp_config_t *config);
+
+/* Parses a decimal poll interval in milliseconds. Rejects signs, whitespace,
+   trailing characters, overflow, and values outside
+   [LP_CONFIG_INTERVAL_MIN_MS, LP_CONFIG_INTERVAL_MAX_MS]. Returns false and
+   leaves *out_ms untouched on rejection. */
+bool lp_config_parse_interval(const char *text, unsigned *out_ms);
 
 /* Parses "key=value" lines from an in-memory buffer (testable without real
    files). Blank lines and lines starting with '#' or ';' are ignored. Unknown
    keys and malformed values are ignored, leaving whatever *config already
-   held for that field -- so callers should apply lp_config_defaults() first. */
+   held for that field -- so callers should apply lp_config_defaults() first.
+   A leading UTF-8 byte order mark is skipped. */
 void lp_config_parse(lp_config_t *config, const char *text);
 
 /* Serializes `config` as "key=value" lines into `out` (size `cap`), always

@@ -22,11 +22,32 @@ jobs:
 
   mingw-cross:
     runs-on: ubuntu-latest
+    env:
+      WINEDEBUG: -all
     steps:
       - uses: actions/checkout@v4
-      - name: Install MinGW-w64
-        run: sudo apt-get update && sudo apt-get install -y mingw-w64
+      - name: Install MinGW-w64 and Wine
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64 wine wine64
       - name: Configure
-        run: cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw64.cmake
+        run: >
+          cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw64.cmake
+          -DCMAKE_CROSSCOMPILING_EMULATOR=wine
       - name: Build
         run: cmake --build build
+      - name: Initialize Wine prefix
+        run: wineboot --init
+      - name: Test under Wine
+        run: ctest --test-dir build --output-on-failure
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        # Pinned to the version bundled with Visual Studio 2022 Build Tools, which is
+        # what local `format` runs use; other versions wrap some lines differently.
+        run: pipx install clang-format==19.1.5
+      - name: Check formatting
+        run: >
+          git ls-files 'include/*.h' 'src/*.c' 'src/*.h' 'tests/*.c' 'tests/*.h'
+          | xargs clang-format --style=file --fallback-style=none --dry-run --Werror

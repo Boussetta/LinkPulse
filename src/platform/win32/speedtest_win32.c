@@ -32,8 +32,7 @@ static bool is_cancelled(const lp_speedtest_request_t *request)
     return request->cancel_flag != NULL && *request->cancel_flag != 0;
 }
 
-static void report(const lp_speedtest_request_t *request,
-                   const lp_speedtest_progress_t *progress)
+static void report(const lp_speedtest_request_t *request, const lp_speedtest_progress_t *progress)
 {
     if (request->on_progress != NULL) {
         request->on_progress(progress, request->user_data);
@@ -96,8 +95,7 @@ static DWORD response_status_code(HINTERNET request)
     DWORD code = 0;
     DWORD size = sizeof(code);
     if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                             WINHTTP_HEADER_NAME_BY_INDEX, &code, &size,
-                             WINHTTP_NO_HEADER_INDEX)) {
+                             WINHTTP_HEADER_NAME_BY_INDEX, &code, &size, WINHTTP_NO_HEADER_INDEX)) {
         return 0;
     }
     return code;
@@ -230,7 +228,8 @@ static lp_status_t measure_download(HINTERNET connection, const lp_speedtest_req
                 progress->phase_percent = elapsed_percent(elapsed_ns);
                 report(request, progress);
             }
-            if (elapsed_ns >= LP_SPEEDTEST_PHASE_NS) {
+            /* Check per chunk so a cancel does not wait out the whole phase. */
+            if (elapsed_ns >= LP_SPEEDTEST_PHASE_NS || is_cancelled(request)) {
                 stop = true;
                 break;
             }
@@ -295,8 +294,8 @@ static lp_status_t measure_upload(HINTERNET connection, const lp_speedtest_reque
         uint64_t remaining = LP_SPEEDTEST_UPLOAD_BYTES;
         bool write_failed = false;
         while (remaining > 0) {
-            const DWORD chunk = remaining < sizeof(buffer) ? (DWORD)remaining
-                                                           : (DWORD)sizeof(buffer);
+            const DWORD chunk =
+                remaining < sizeof(buffer) ? (DWORD)remaining : (DWORD)sizeof(buffer);
             DWORD written = 0;
             if (!WinHttpWriteData(response, buffer, chunk, &written) || written == 0) {
                 LP_WARN("speed test upload write failed: error=%lu", GetLastError());
@@ -314,7 +313,7 @@ static lp_status_t measure_upload(HINTERNET connection, const lp_speedtest_reque
                 progress->phase_percent = elapsed_percent(elapsed_ns);
                 report(request, progress);
             }
-            if (elapsed_ns >= LP_SPEEDTEST_PHASE_NS) {
+            if (elapsed_ns >= LP_SPEEDTEST_PHASE_NS || is_cancelled(request)) {
                 stop = true;
                 break;
             }

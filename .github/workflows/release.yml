@@ -34,13 +34,24 @@ jobs:
 
           $cmakeArgs = @("-S", ".", "-B", "build/release", "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DLINKPULSE_RELEASE_BUILD:BOOL=ON")
           if ($version) { $cmakeArgs += "-DLINKPULSE_VERSION:STRING=$version" }
+          # Optional publisher pin for the in-app updater (repository variable).
+          if ($env:LINKPULSE_UPDATE_SIGNER) { $cmakeArgs += "-DLINKPULSE_UPDATE_SIGNER:STRING=$env:LINKPULSE_UPDATE_SIGNER" }
           cmake @cmakeArgs
+        env:
+          LINKPULSE_UPDATE_SIGNER: ${{ vars.LINKPULSE_UPDATE_SIGNER }}
 
       - name: Build MSVC Release
         run: cmake --build build/release --config Release
 
       - name: Run MSVC Release tests
         run: ctest --test-dir build/release -C Release --output-on-failure
+
+      - name: Sign application binary
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_PFX_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+        run: ./packaging/sign-file.ps1 -Path "out\windows\linkpulse-tray.exe"
 
       - name: Install Inno Setup
         shell: pwsh
@@ -58,6 +69,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
+
+      - name: Sign installer
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_PFX_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+        run: ./packaging/sign-file.ps1 -Path "build\installer\LinkPulseSetup.exe"
 
       - name: Publish GitHub Release
         env:

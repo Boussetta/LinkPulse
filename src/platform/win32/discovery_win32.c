@@ -19,8 +19,57 @@
 #define LP_MDNS_PORT 5353
 #define LP_MDNS_TIMEOUT_MS 250
 #define LP_DNS_PACKET_MAX 1500
+/* Documented GetAdaptersAddresses pattern: start at 15 KB, retry when it grows. */
+#define LP_ADAPTER_BUFFER_INITIAL (15u * 1024u)
+#define LP_ADAPTER_BUFFER_ATTEMPTS 3
+/* Neighbor name resolution: a bounded worker pool, a per-poll time budget, and a
+   cache so names are not looked up again on every poll. */
+#define LP_NAME_WORKERS_MAX 8u
+#define LP_NAME_POLL_BUDGET_MS 3000ull
+#define LP_NAME_WAIT_SLICE_MS 50u
+#define LP_NAME_CACHE_SIZE 512u
+#define LP_NAME_CACHE_HIT_TTL_MS (30ull * 60ull * 1000ull)
+#define LP_NAME_CACHE_MISS_TTL_MS (10ull * 60ull * 1000ull)
+#define LP_NAME_PENDING_TTL_MS (60ull * 1000ull)
 
 static uint32_t g_active_probe_offset;
+
+/* Returns a heap-allocated adapter list (free with HeapFree), retrying when the
+   list grows between calls. Returns NULL with the last Win32 error in *result. */
+static IP_ADAPTER_ADDRESSES *get_adapter_addresses(ULONG family, ULONG flags, DWORD *result)
+{
+    ULONG buffer_size = LP_ADAPTER_BUFFER_INITIAL;
+    *result = ERROR_BUFFER_OVERFLOW;
+    for (int attempt = 0; attempt < LP_ADAPTER_BUFFER_ATTEMPTS; ++attempt) {
+        IP_ADAPTER_ADDRESSES *adapters =
+            (IP_ADAPTER_ADDRESSES *)HeapAlloc(GetProcessHeap(), 0, buffer_size);
+        if (adapters == NULL) {
+            *result = ERROR_NOT_ENOUGH_MEMORY;
+            return NULL;
+        }
+        *result = GetAdaptersAddresses(family, flags, NULL, adapters, &buffer_size);
+        if (*result == NO_ERROR) {
+            return adapters;
+        }
+        HeapFree(GetProcessHeap(), 0, adapters);
+        if (*result != ERROR_BUFFER_OVERFLOW) {
+            return NULL;
+        }
+    }
+    return NULL;
+}
+
+/* Converts a wide adapter string, always leaving out NUL-terminated even when
+   the conversion fails part-way (for example on a too-small buffer). */
+static void wide_to_ansi(const wchar_t *value, char *out, size_t out_cap)
+{
+    if (out_cap == 0) {
+        return;
+    }
+    if (WideCharToMultiByte(CP_ACP, 0, value, -1, out, (int)out_cap, NULL, NULL) == 0) {
+        out[out_cap - 1] = '\0';
+    }
+}
 
 /* Keeps neighbors with recent or active reachability evidence. Stale and
     permanent cache entries are excluded because they can outlive a device. */
@@ -70,6 +119,21 @@ static bool is_unicast_address(const SOCKADDR_INET *address)
     return false;
 }
 
+/* Removes control characters from a network-supplied hostname in place. Raw
+   mDNS bytes have no declared encoding, so ascii_only also drops non-ASCII. */
+static void sanitize_hostname(char *name, bool ascii_only)
+{
+    size_t write = 0;
+    for (size_t read = 0; name[read] != '\0'; ++read) {
+        const unsigned char c = (unsigned char)name[read];
+        if (c < 0x20u || c == 0x7Fu || (ascii_only && c > 0x7Fu)) {
+            continue;
+        }
+        name[write++] = (char)c;
+    }
+    name[write] = '\0';
+}
+
 static uint16_t dns_read_u16(const unsigned char *packet, size_t offset)
 {
     return (uint16_t)((packet[offset] << 8) | packet[offset + 1]);
@@ -90,7 +154,8 @@ static bool dns_skip_name(const unsigned char *packet, size_t packet_len, size_t
             return true;
         }
         if ((label_len & 0xC0u) == 0xC0u) {
-            if (*offset + 1 >= packet_len) return false;
+            if (*offset + 1 >= packet_len)
+                return false;
             *offset += 2;
             return true;
         }
@@ -102,8 +167,8 @@ static bool dns_skip_name(const unsigned char *packet, size_t packet_len, size_t
     return false;
 }
 
-static bool dns_read_name(const unsigned char *packet, size_t packet_len, size_t *offset,
-                          char *out, size_t out_cap)
+static bool dns_read_name(const unsigned char *packet, size_t packet_len, size_t *offset, char *out,
+                          size_t out_cap)
 {
     size_t cursor = *offset;
     size_t out_len = 0;
@@ -112,13 +177,20 @@ static bool dns_read_name(const unsigned char *packet, size_t packet_len, size_t
     for (int guard = 0; guard < 128 && cursor < packet_len; ++guard) {
         const unsigned char label_len = packet[cursor];
         if (label_len == 0) {
-            if (!jumped) *offset = cursor + 1;
+            if (!jumped)
+                *offset = cursor + 1;
             return out_len > 0;
         }
         if ((label_len & 0xC0u) == 0xC0u) {
-            if (cursor + 1 >= packet_len) return false;
+            if (cursor + 1 >= packet_len)
+                return false;
             const size_t target = (size_t)(((label_len & 0x3Fu) << 8) | packet[cursor + 1]);
-            if (!jumped) *offset = cursor + 2;
+            /* Compression pointers must point strictly backward; this also rules
+               out pointer loops. */
+            if (target >= cursor)
+                return false;
+            if (!jumped)
+                *offset = cursor + 2;
             cursor = target;
             jumped = true;
             continue;
@@ -151,10 +223,12 @@ static bool dns_write_qname(unsigned char *packet, size_t packet_cap, size_t *of
         packet[(*offset)++] = (unsigned char)label_len;
         memcpy(packet + *offset, label, label_len);
         *offset += label_len;
-        if (dot == NULL) break;
+        if (dot == NULL)
+            break;
         label = dot + 1;
     }
-    if (*offset >= packet_cap) return false;
+    if (*offset >= packet_cap)
+        return false;
     packet[(*offset)++] = 0;
     return true;
 }
@@ -227,25 +301,37 @@ static bool resolve_mdns_hostname_ipv4(const SOCKADDR_INET *address, bool target
     }
     const uint32_t record_count = (uint32_t)ancount + (uint32_t)nscount + (uint32_t)arcount;
     for (uint32_t i = 0; i < record_count; ++i) {
+        const size_t owner_offset = offset;
         if (!dns_skip_name(response, response_len, &offset) || offset + 10 > response_len) {
             return false;
         }
         const uint16_t type = dns_read_u16(response, offset);
-        (void)dns_read_u16(response, offset + 2);
+        const uint16_t record_class = dns_read_u16(response, offset + 2);
         (void)dns_read_u32(response, offset + 4);
         const uint16_t rdlength = dns_read_u16(response, offset + 8);
         offset += 10;
         if (offset + rdlength > response_len) {
             return false;
         }
-        if (type == 12) {
+        /* Only a PTR record for the queried address answers the query; mDNS
+           responders also volunteer unrelated records. The top class bit is the
+           mDNS cache-flush flag. */
+        if (type == 12 && (record_class & 0x7FFFu) == 1) {
+            char owner[LP_HOSTNAME_MAX];
+            size_t name_offset = owner_offset;
             size_t rdata_offset = offset;
-            if (dns_read_name(response, response_len, &rdata_offset, out, out_cap)) {
-                return true;
+            if (dns_read_name(response, response_len, &name_offset, owner, sizeof(owner)) &&
+                _stricmp(owner, reverse_name) == 0 &&
+                dns_read_name(response, response_len, &rdata_offset, out, out_cap)) {
+                sanitize_hostname(out, true);
+                if (out[0] != '\0') {
+                    return true;
+                }
             }
         }
         offset += rdlength;
     }
+    out[0] = '\0';
     return false;
 }
 
@@ -253,12 +339,13 @@ static bool resolve_mdns_hostname_ipv4(const SOCKADDR_INET *address, bool target
 static void resolve_hostname(const SOCKADDR_INET *address, char *out, size_t out_cap)
 {
     out[0] = '\0';
-    const int address_length = address->si_family == AF_INET ? sizeof(SOCKADDR_IN)
-                                                             : sizeof(SOCKADDR_IN6);
+    const int address_length =
+        address->si_family == AF_INET ? sizeof(SOCKADDR_IN) : sizeof(SOCKADDR_IN6);
     if (GetNameInfoA((const SOCKADDR *)address, address_length, out, (DWORD)out_cap, NULL, 0,
                      NI_NAMEREQD) != 0) {
         out[0] = '\0';
     }
+    sanitize_hostname(out, false);
 }
 
 /* Performs a case-insensitive substring check for hostname classification rules. */
@@ -313,9 +400,12 @@ static void classify_identity(const char *hostname, char *vendor, size_t vendor_
                contains_token(hostname, "chromecast")) {
         *device_type = LP_DEVICE_TELEVISION;
         *confidence = 80;
-    } else if (contains_token(hostname, "router") || contains_token(hostname, "gateway") ||
-               contains_token(hostname, "fritz")) {
+    } else if (contains_token(hostname, "fritz")) {
         snprintf(vendor, vendor_cap, "FRITZ!Box");
+        *device_type = LP_DEVICE_ROUTER;
+        *confidence = 90;
+    } else if (contains_token(hostname, "router") || contains_token(hostname, "gateway")) {
+        /* A generic name says nothing about the manufacturer. */
         *device_type = LP_DEVICE_ROUTER;
         *confidence = 90;
     }
@@ -326,12 +416,275 @@ static void classify_neighbor(lp_neighbor_t *neighbor)
 {
     classify_identity(neighbor->hostname, neighbor->vendor, sizeof(neighbor->vendor),
                       &neighbor->device_type, &neighbor->device_confidence);
-    if (neighbor->device_type == LP_DEVICE_UNKNOWN &&
-        is_locally_administered_mac(neighbor->mac)) {
+    if (neighbor->device_type == LP_DEVICE_UNKNOWN && is_locally_administered_mac(neighbor->mac)) {
         snprintf(neighbor->vendor, sizeof(neighbor->vendor), "Private Wi-Fi MAC");
         neighbor->device_type = LP_DEVICE_MOBILE;
         neighbor->device_confidence = 35;
     }
+}
+
+/* Resolves one address by reverse DNS, falling back to mDNS for IPv4. */
+static void resolve_address_name(const SOCKADDR_INET *address, bool targeted_mdns, char *out,
+                                 size_t out_cap)
+{
+    resolve_hostname(address, out, out_cap);
+    if (out[0] == '\0' && address->si_family == AF_INET) {
+        (void)resolve_mdns_hostname_ipv4(address, targeted_mdns, out, out_cap);
+    }
+}
+
+/* Name lookups (reverse DNS, then a 250 ms mDNS wait) used to run one neighbor
+   at a time inside every poll. Results are now cached per IP+MAC identity and
+   uncached neighbors are resolved by a bounded pool of worker threads. */
+typedef struct {
+    char ip[LP_IP_STR_MAX];
+    char mac[LP_MAC_STR_MAX];
+    char hostname[LP_HOSTNAME_MAX];
+    ULONGLONG expires_at;
+    bool pending; /* a worker is resolving it; do not queue it again */
+    bool used;
+} lp_name_cache_entry_t;
+
+static lp_name_cache_entry_t g_name_cache[LP_NAME_CACHE_SIZE];
+static SRWLOCK g_name_cache_lock = SRWLOCK_INIT;
+static volatile LONG g_name_lookups_cancelled;
+
+typedef enum {
+    LP_NAME_MISS = 0,
+    LP_NAME_PENDING,
+    LP_NAME_HIT
+} lp_name_lookup_t;
+
+/* Finds the entry for one identity; the caller holds g_name_cache_lock. */
+static lp_name_cache_entry_t *name_cache_find(const char *ip, const char *mac)
+{
+    for (size_t i = 0; i < LP_NAME_CACHE_SIZE; ++i) {
+        lp_name_cache_entry_t *entry = &g_name_cache[i];
+        if (entry->used && strcmp(entry->ip, ip) == 0 && strcmp(entry->mac, mac) == 0) {
+            return entry;
+        }
+    }
+    return NULL;
+}
+
+/* Returns the identity's entry, or reuses a free or soonest-expiring one; lock held exclusively. */
+static lp_name_cache_entry_t *name_cache_slot(const char *ip, const char *mac)
+{
+    lp_name_cache_entry_t *entry = name_cache_find(ip, mac);
+    if (entry != NULL) {
+        return entry;
+    }
+    entry = &g_name_cache[0];
+    for (size_t i = 0; i < LP_NAME_CACHE_SIZE && entry->used; ++i) {
+        if (!g_name_cache[i].used || g_name_cache[i].expires_at < entry->expires_at) {
+            entry = &g_name_cache[i];
+        }
+    }
+    memset(entry, 0, sizeof(*entry));
+    entry->used = true;
+    snprintf(entry->ip, sizeof(entry->ip), "%s", ip);
+    snprintf(entry->mac, sizeof(entry->mac), "%s", mac);
+    return entry;
+}
+
+/* Copies a cached name (possibly empty for a cached failure) into `hostname` on a hit. */
+static lp_name_lookup_t name_cache_lookup(const char *ip, const char *mac, char *hostname,
+                                          size_t hostname_cap)
+{
+    lp_name_lookup_t result = LP_NAME_MISS;
+    AcquireSRWLockShared(&g_name_cache_lock);
+    const lp_name_cache_entry_t *entry = name_cache_find(ip, mac);
+    if (entry != NULL && entry->expires_at > GetTickCount64()) {
+        if (entry->pending) {
+            result = LP_NAME_PENDING;
+        } else {
+            snprintf(hostname, hostname_cap, "%s", entry->hostname);
+            result = LP_NAME_HIT;
+        }
+    }
+    ReleaseSRWLockShared(&g_name_cache_lock);
+    return result;
+}
+
+/* Marks one identity as being resolved; returns false if another caller already did. */
+static bool name_cache_claim(const char *ip, const char *mac)
+{
+    bool claimed = false;
+    AcquireSRWLockExclusive(&g_name_cache_lock);
+    const ULONGLONG now = GetTickCount64();
+    const lp_name_cache_entry_t *existing = name_cache_find(ip, mac);
+    if (existing == NULL || existing->expires_at <= now) {
+        lp_name_cache_entry_t *entry = name_cache_slot(ip, mac);
+        entry->pending = true;
+        entry->hostname[0] = '\0';
+        entry->expires_at = now + LP_NAME_PENDING_TTL_MS;
+        claimed = true;
+    }
+    ReleaseSRWLockExclusive(&g_name_cache_lock);
+    return claimed;
+}
+
+/* Records a lookup result; failures are retried sooner than successes are refreshed. */
+static void name_cache_store(const char *ip, const char *mac, const char *hostname)
+{
+    AcquireSRWLockExclusive(&g_name_cache_lock);
+    lp_name_cache_entry_t *entry = name_cache_slot(ip, mac);
+    entry->pending = false;
+    snprintf(entry->hostname, sizeof(entry->hostname), "%s", hostname);
+    const ULONGLONG ttl =
+        hostname[0] != '\0' ? LP_NAME_CACHE_HIT_TTL_MS : LP_NAME_CACHE_MISS_TTL_MS;
+    entry->expires_at = GetTickCount64() + ttl;
+    ReleaseSRWLockExclusive(&g_name_cache_lock);
+}
+
+static bool name_lookups_cancelled(void)
+{
+    return InterlockedCompareExchange(&g_name_lookups_cancelled, 0, 0) != 0;
+}
+
+void lp_net_cancel_name_lookups(void)
+{
+    (void)InterlockedExchange(&g_name_lookups_cancelled, 1);
+}
+
+typedef struct {
+    SOCKADDR_INET address;
+    char ip[LP_IP_STR_MAX];
+    char mac[LP_MAC_STR_MAX];
+} lp_name_job_t;
+
+/* Heap-owned job list shared by the poll and its workers. Workers that outlive the
+   poll's time budget keep it alive through their reference and still publish their
+   result to the cache, where the next poll picks it up. */
+typedef struct {
+    volatile LONG refs;
+    volatile LONG next_job;
+    size_t job_count;
+    lp_name_job_t jobs[LP_DISCOVERY_MAX_NEIGHBORS];
+} lp_name_batch_t;
+
+/* Drops one reference and frees the batch when the last holder is done. */
+static void release_name_batch(lp_name_batch_t *batch)
+{
+    if (InterlockedDecrement(&batch->refs) == 0) {
+        HeapFree(GetProcessHeap(), 0, batch);
+    }
+}
+
+/* Resolves queued jobs until none are left or lookups are cancelled. */
+static void run_name_jobs(lp_name_batch_t *batch)
+{
+    WSADATA winsock_data;
+    if (WSAStartup(MAKEWORD(2, 2), &winsock_data) != 0) {
+        return;
+    }
+    while (!name_lookups_cancelled()) {
+        const LONG index = InterlockedIncrement(&batch->next_job) - 1;
+        if (index < 0 || (size_t)index >= batch->job_count) {
+            break;
+        }
+        const lp_name_job_t *job = &batch->jobs[index];
+        char hostname[LP_HOSTNAME_MAX] = {0};
+        resolve_address_name(&job->address, false, hostname, sizeof(hostname));
+        name_cache_store(job->ip, job->mac, hostname);
+    }
+    WSACleanup();
+}
+
+static DWORD WINAPI name_worker_proc(LPVOID param)
+{
+    lp_name_batch_t *batch = (lp_name_batch_t *)param;
+    run_name_jobs(batch);
+    release_name_batch(batch);
+    return 0;
+}
+
+/* Fills neighbor hostnames from the cache, resolving cache misses in parallel within a
+   fixed time budget. Names that arrive after the budget are used by the next poll. */
+static void resolve_neighbor_names(lp_neighbor_list_t *list, const SOCKADDR_INET *addresses)
+{
+    lp_name_batch_t *batch =
+        (lp_name_batch_t *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*batch));
+    if (batch == NULL) {
+        return;
+    }
+    batch->refs = 1;
+    size_t cached = 0;
+    for (size_t i = 0; i < list->count; ++i) {
+        lp_neighbor_t *neighbor = &list->items[i];
+        const lp_name_lookup_t lookup = name_cache_lookup(
+            neighbor->ip, neighbor->mac, neighbor->hostname, sizeof(neighbor->hostname));
+        if (lookup == LP_NAME_HIT) {
+            ++cached;
+            continue;
+        }
+        if (lookup == LP_NAME_PENDING || !name_cache_claim(neighbor->ip, neighbor->mac)) {
+            continue;
+        }
+        lp_name_job_t *job = &batch->jobs[batch->job_count++];
+        job->address = addresses[i];
+        snprintf(job->ip, sizeof(job->ip), "%s", neighbor->ip);
+        snprintf(job->mac, sizeof(job->mac), "%s", neighbor->mac);
+    }
+
+    if (batch->job_count > 0) {
+        HANDLE workers[LP_NAME_WORKERS_MAX];
+        DWORD worker_count = 0;
+        const size_t wanted =
+            batch->job_count < LP_NAME_WORKERS_MAX ? batch->job_count : LP_NAME_WORKERS_MAX;
+        for (size_t i = 0; i < wanted; ++i) {
+            (void)InterlockedIncrement(&batch->refs);
+            HANDLE worker = CreateThread(NULL, 0, name_worker_proc, batch, 0, NULL);
+            if (worker == NULL) {
+                release_name_batch(batch);
+                break;
+            }
+            workers[worker_count++] = worker;
+        }
+        if (worker_count == 0) {
+            /* No threads available: resolve inline, as discovery did before. */
+            run_name_jobs(batch);
+        }
+
+        const ULONGLONG deadline = GetTickCount64() + LP_NAME_POLL_BUDGET_MS;
+        while (worker_count > 0 && !name_lookups_cancelled()) {
+            const ULONGLONG now = GetTickCount64();
+            if (now >= deadline) {
+                break;
+            }
+            /* Short slices so a shutdown request is noticed promptly. */
+            const ULONGLONG left = deadline - now;
+            const DWORD slice = left < LP_NAME_WAIT_SLICE_MS ? (DWORD)left : LP_NAME_WAIT_SLICE_MS;
+            const DWORD wait = WaitForMultipleObjects(worker_count, workers, FALSE, slice);
+            if (wait == WAIT_TIMEOUT) {
+                continue;
+            }
+            if (wait >= WAIT_OBJECT_0 + worker_count) {
+                break;
+            }
+            const DWORD finished = wait - WAIT_OBJECT_0;
+            CloseHandle(workers[finished]);
+            workers[finished] = workers[--worker_count];
+        }
+        if (worker_count > 0) {
+            LP_DEBUG("name lookups still running after the poll budget: workers=%lu",
+                     (unsigned long)worker_count);
+        }
+        for (DWORD i = 0; i < worker_count; ++i) {
+            CloseHandle(workers[i]);
+        }
+
+        for (size_t i = 0; i < list->count; ++i) {
+            lp_neighbor_t *neighbor = &list->items[i];
+            if (neighbor->hostname[0] == '\0') {
+                (void)name_cache_lookup(neighbor->ip, neighbor->mac, neighbor->hostname,
+                                        sizeof(neighbor->hostname));
+            }
+        }
+    }
+    LP_DEBUG("neighbor names: cached=%llu queued=%llu", (unsigned long long)cached,
+             (unsigned long long)batch->job_count);
+    release_name_batch(batch);
 }
 
 lp_status_t lp_net_refresh_neighbor_identity(lp_neighbor_t *neighbor)
@@ -350,11 +703,9 @@ lp_status_t lp_net_refresh_neighbor_identity(lp_neighbor_t *neighbor)
     if (WSAStartup(MAKEWORD(2, 2), &winsock_data) != 0) {
         return LP_ERR_IO;
     }
-    resolve_hostname(&address, neighbor->hostname, sizeof(neighbor->hostname));
-    if (neighbor->hostname[0] == '\0') {
-        (void)resolve_mdns_hostname_ipv4(&address, true, neighbor->hostname,
-                                         sizeof(neighbor->hostname));
-    }
+    resolve_address_name(&address, true, neighbor->hostname, sizeof(neighbor->hostname));
+    /* An explicit refresh also updates what the next discovery poll will show. */
+    name_cache_store(neighbor->ip, neighbor->mac, neighbor->hostname);
     classify_neighbor(neighbor);
     WSACleanup();
     return LP_OK;
@@ -406,42 +757,8 @@ static long find_neighbor_ip(const lp_neighbor_list_t *list, const char *ip)
     return -1;
 }
 
-/* Some public/isolated Wi-Fi networks proxy-ARP: the access point answers for
-   every client with its own MAC, so distinct devices end up sharing one MAC
-   in our neighbor table. Treating that shared MAC as a stable identity would
-   merge those devices into one entry (or hide all but one), so any MAC seen
-   on more than one IP is blanked out and those neighbors fall back to
-   IP-based identity instead. */
-static void clear_ambiguous_macs(lp_neighbor_list_t *list)
-{
-    for (size_t i = 0; i < list->count; ++i) {
-        if (list->items[i].mac[0] == '\0') {
-            continue;
-        }
-        size_t sharing_count = 1;
-        for (size_t j = i + 1; j < list->count; ++j) {
-            if (strcmp(list->items[j].mac, list->items[i].mac) == 0) {
-                ++sharing_count;
-            }
-        }
-        if (sharing_count <= 1) {
-            continue;
-        }
-        LP_DEBUG("clearing ambiguous MAC %s shared by %llu addresses (likely proxy ARP)",
-                list->items[i].mac, (unsigned long long)sharing_count);
-        char ambiguous_mac[LP_MAC_STR_MAX];
-        snprintf(ambiguous_mac, sizeof(ambiguous_mac), "%s", list->items[i].mac);
-        for (size_t j = i; j < list->count; ++j) {
-            if (strcmp(list->items[j].mac, ambiguous_mac) == 0) {
-                list->items[j].mac[0] = '\0';
-            }
-        }
-    }
-}
-
 /* Matches active results against passive entries without duplicating devices. */
-static long find_neighbor_index(const lp_neighbor_list_t *list, const char *ip,
-                                const char *mac)
+static long find_neighbor_index(const lp_neighbor_list_t *list, const char *ip, const char *mac)
 {
     if (mac != NULL && mac[0] != '\0') {
         const long by_mac = find_neighbor_mac(list, mac);
@@ -461,8 +778,8 @@ static long find_neighbor_index(const lp_neighbor_list_t *list, const char *ip,
 }
 
 /* Adds one successful ARP response while preserving any richer passive data. */
-static void append_active_neighbor(lp_neighbor_list_t *out, const char *ip,
-                                    const char *mac, const NET_LUID *interface_luid)
+static void append_active_neighbor(lp_neighbor_list_t *out, const char *ip, const char *mac,
+                                   const NET_LUID *interface_luid)
 {
     const long existing = find_neighbor_index(out, ip, mac);
     if (existing >= 0 || out->count >= LP_DISCOVERY_MAX_NEIGHBORS) {
@@ -475,17 +792,10 @@ static void append_active_neighbor(lp_neighbor_list_t *out, const char *ip,
     snprintf(neighbor->mac, sizeof(neighbor->mac), "%s", mac);
     neighbor->connection_type = connection_type_for_interface(interface_luid);
     neighbor->hostname[0] = '\0';
-    SOCKADDR_INET address;
-    memset(&address, 0, sizeof(address));
-    address.Ipv4.sin_family = AF_INET;
-    InetPtonA(AF_INET, ip, &address.Ipv4.sin_addr);
-    resolve_hostname(&address, neighbor->hostname, sizeof(neighbor->hostname));
-    if (neighbor->hostname[0] == '\0') {
-        (void)resolve_mdns_hostname_ipv4(&address, false, neighbor->hostname,
-                                         sizeof(neighbor->hostname));
-    }
-    classify_neighbor(neighbor);
+    /* Names are resolved and the neighbor classified once the snapshot is complete. */
 }
+
+typedef struct lp_arp_probe_batch lp_arp_probe_batch_t;
 
 typedef struct {
     IPAddr destination;
@@ -493,36 +803,54 @@ typedef struct {
     UCHAR mac[6];
     ULONG mac_length;
     DWORD status;
+    /* Set once the result fields above are final; read them only after that. */
+    volatile LONG done;
+    lp_arp_probe_batch_t *batch;
 } lp_arp_probe_t;
+
+/* Heap-owned probe results. A probe that outlives the scan's wait keeps the batch
+   alive through its reference, so it never writes into a released stack frame. */
+struct lp_arp_probe_batch {
+    volatile LONG refs;
+    lp_arp_probe_t probes[LP_ACTIVE_SCAN_MAX_PROBES];
+};
+
+/* Drops one reference and frees the batch when the last holder is done. */
+static void release_probe_batch(lp_arp_probe_batch_t *batch)
+{
+    if (InterlockedDecrement(&batch->refs) == 0) {
+        HeapFree(GetProcessHeap(), 0, batch);
+    }
+}
 
 /* Runs one blocking ARP request away from the discovery worker's main loop. */
 static DWORD WINAPI active_probe_thread_proc(LPVOID param)
 {
     lp_arp_probe_t *probe = (lp_arp_probe_t *)param;
-    probe->mac_length = sizeof(probe->mac);
-    probe->status = SendARP(probe->destination, probe->source, (PULONG)probe->mac,
-                            &probe->mac_length);
+    UCHAR mac[6] = {0};
+    ULONG mac_length = sizeof(mac);
+    const DWORD status = SendARP(probe->destination, probe->source, (PULONG)mac, &mac_length);
+    memcpy(probe->mac, mac, sizeof(probe->mac));
+    probe->mac_length = mac_length;
+    probe->status = status;
+    (void)InterlockedExchange(&probe->done, 1);
+    release_probe_batch(probe->batch);
     return 0;
+}
+
+/* Reports whether a probe thread has published its final result. */
+static bool probe_finished(lp_arp_probe_t *probe)
+{
+    return InterlockedCompareExchange(&probe->done, 0, 0) != 0;
 }
 
 /* Probes bounded on-link IPv4 networks so idle devices need not be in the ARP cache. */
 static size_t probe_active_subnets(lp_neighbor_list_t *out)
 {
-    ULONG buffer_size = 0;
-    const ULONG flags = GAA_FLAG_INCLUDE_PREFIX;
-    DWORD result = GetAdaptersAddresses(AF_INET, flags, NULL, NULL, &buffer_size);
-    if (result != ERROR_BUFFER_OVERFLOW || buffer_size == 0) {
-        return 0;
-    }
-
+    DWORD result = NO_ERROR;
     IP_ADAPTER_ADDRESSES *adapters =
-        (IP_ADAPTER_ADDRESSES *)HeapAlloc(GetProcessHeap(), 0, buffer_size);
+        get_adapter_addresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, &result);
     if (adapters == NULL) {
-        return 0;
-    }
-    result = GetAdaptersAddresses(AF_INET, flags, NULL, adapters, &buffer_size);
-    if (result != NO_ERROR) {
-        HeapFree(GetProcessHeap(), 0, adapters);
         return 0;
     }
 
@@ -532,13 +860,12 @@ static size_t probe_active_subnets(lp_neighbor_list_t *out)
     size_t discovered_count = 0;
     size_t probes_sent = 0;
 
-    for (IP_ADAPTER_ADDRESSES *adapter = adapters; adapter != NULL;
-         adapter = adapter->Next) {
+    for (IP_ADAPTER_ADDRESSES *adapter = adapters; adapter != NULL; adapter = adapter->Next) {
         if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
             continue;
         }
-        for (IP_ADAPTER_UNICAST_ADDRESS *unicast = adapter->FirstUnicastAddress;
-             unicast != NULL; unicast = unicast->Next) {
+        for (IP_ADAPTER_UNICAST_ADDRESS *unicast = adapter->FirstUnicastAddress; unicast != NULL;
+             unicast = unicast->Next) {
             if (unicast->Address.lpSockaddr == NULL ||
                 unicast->Address.lpSockaddr->sa_family != AF_INET ||
                 unicast->OnLinkPrefixLength < LP_ACTIVE_SCAN_MAX_PREFIX) {
@@ -572,15 +899,21 @@ static size_t probe_active_subnets(lp_neighbor_list_t *out)
             }
             const uint32_t usable_count = host_count - 2;
             const uint32_t start = g_active_probe_offset % usable_count;
-            const uint32_t probes_this_subnet =
-                (usable_count < LP_ACTIVE_SCAN_MAX_PROBES) ? usable_count
-                                                           : LP_ACTIVE_SCAN_MAX_PROBES;
-            lp_arp_probe_t probes[LP_ACTIVE_SCAN_MAX_PROBES] = {0};
-            HANDLE probe_threads[LP_ACTIVE_SCAN_MAX_PROBES] = {0};
+            const uint32_t probes_this_subnet = (usable_count < LP_ACTIVE_SCAN_MAX_PROBES)
+                                                    ? usable_count
+                                                    : LP_ACTIVE_SCAN_MAX_PROBES;
+            lp_arp_probe_batch_t *batch = (lp_arp_probe_batch_t *)HeapAlloc(
+                GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(lp_arp_probe_batch_t));
+            if (batch == NULL) {
+                HeapFree(GetProcessHeap(), 0, adapters);
+                return discovered_count;
+            }
+            batch->refs = 1; /* Held by this scan until it stops reading results. */
+            lp_arp_probe_t *probes = batch->probes;
             size_t probe_count = 0;
-            for (uint32_t probe = 0; probe < probes_this_subnet &&
-                                       probes_sent < LP_ACTIVE_SCAN_MAX_PROBES &&
-                                       probe_count < LP_ACTIVE_SCAN_MAX_PROBES;
+            for (uint32_t probe = 0;
+                 probe < probes_this_subnet && probes_sent < LP_ACTIVE_SCAN_MAX_PROBES &&
+                 probe_count < LP_ACTIVE_SCAN_MAX_PROBES;
                  ++probe) {
                 const uint32_t host = 1 + ((start + probe) % usable_count);
                 const uint32_t candidate = network + host;
@@ -590,24 +923,35 @@ static size_t probe_active_subnets(lp_neighbor_list_t *out)
                 ++probes_sent;
                 probes[probe_count].destination = htonl(candidate);
                 probes[probe_count].source = local->sin_addr.S_un.S_addr;
+                probes[probe_count].batch = batch;
                 ++probe_count;
             }
 
+            /* Wait only on threads that were actually created: a NULL handle would
+               make WaitForMultipleObjects fail immediately. */
+            HANDLE probe_threads[LP_ACTIVE_SCAN_MAX_PROBES] = {0};
+            DWORD thread_count = 0;
             for (size_t i = 0; i < probe_count; ++i) {
-                probe_threads[i] = CreateThread(NULL, 0, active_probe_thread_proc, &probes[i], 0,
-                                                NULL);
-                if (probe_threads[i] == NULL) {
-                    probes[i].status = ERROR_NOT_ENOUGH_MEMORY;
+                (void)InterlockedIncrement(&batch->refs);
+                HANDLE thread =
+                    CreateThread(NULL, 0, active_probe_thread_proc, &probes[i], 0, NULL);
+                if (thread == NULL) {
+                    (void)InterlockedDecrement(&batch->refs);
+                    continue;
                 }
+                probe_threads[thread_count++] = thread;
             }
-            if (probe_count > 0) {
-                (void)WaitForMultipleObjects((DWORD)probe_count, probe_threads, TRUE, 5000);
+            if (thread_count > 0) {
+                (void)WaitForMultipleObjects(thread_count, probe_threads, TRUE, 5000);
+            }
+            for (DWORD i = 0; i < thread_count; ++i) {
+                CloseHandle(probe_threads[i]);
             }
             for (size_t i = 0; i < probe_count; ++i) {
-                if (probe_threads[i] != NULL) {
-                    CloseHandle(probe_threads[i]);
-                }
-                if (probes[i].status != NO_ERROR || probes[i].mac_length != sizeof(probes[i].mac)) {
+                /* A probe still running after the wait is left to finish on its own
+                   reference to the batch; its result is ignored. */
+                if (!probe_finished(&probes[i]) || probes[i].status != NO_ERROR ||
+                    probes[i].mac_length != sizeof(probes[i].mac)) {
                     continue;
                 }
                 char ip[LP_IP_STR_MAX] = {0};
@@ -624,10 +968,12 @@ static size_t probe_active_subnets(lp_neighbor_list_t *out)
                     ++discovered_count;
                 }
                 if (out->count >= LP_DISCOVERY_MAX_NEIGHBORS) {
+                    release_probe_batch(batch);
                     HeapFree(GetProcessHeap(), 0, adapters);
                     return discovered_count;
                 }
             }
+            release_probe_batch(batch);
             g_active_probe_offset = (uint32_t)((start + probe_count) % usable_count);
             if (probes_sent >= LP_ACTIVE_SCAN_MAX_PROBES) {
                 HeapFree(GetProcessHeap(), 0, adapters);
@@ -658,6 +1004,10 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
         }
         return LP_ERR_IO;
     }
+    /* Socket addresses for name resolution, parallel to out->items. Without it the
+       snapshot still succeeds, just without hostnames. */
+    SOCKADDR_INET *addresses = (SOCKADDR_INET *)HeapAlloc(
+        GetProcessHeap(), 0, LP_DISCOVERY_MAX_NEIGHBORS * sizeof(SOCKADDR_INET));
 
     for (ULONG i = 0; i < table->NumEntries && out->count < LP_DISCOVERY_MAX_NEIGHBORS; ++i) {
         const MIB_IPNET_ROW2 *row = &table->Table[i];
@@ -687,26 +1037,39 @@ lp_status_t lp_net_neighbor_snapshot(lp_neighbor_list_t *out)
                    sizeof(neighbor->mac));
         neighbor->connection_type = connection_type_for_interface(&row->InterfaceLuid);
         neighbor->hostname[0] = '\0';
-        if (winsock_ready) {
-            resolve_hostname(&row->Address, neighbor->hostname, sizeof(neighbor->hostname));
-            if (neighbor->hostname[0] == '\0' && row->Address.si_family == AF_INET) {
-                (void)resolve_mdns_hostname_ipv4(&row->Address, false, neighbor->hostname,
-                                                 sizeof(neighbor->hostname));
-            }
+        if (addresses != NULL) {
+            addresses[out->count] = row->Address;
         }
-        classify_neighbor(neighbor);
         ++out->count;
     }
 
     FreeMibTable(table);
+    const size_t passive_count = out->count;
     const size_t active_discovered = probe_active_subnets(out);
     if (active_discovered > 0) {
         LP_DEBUG("active discovery added %llu neighbor(s)", (unsigned long long)active_discovered);
     }
+    if (addresses != NULL) {
+        /* Active probing only adds IPv4 neighbors. */
+        for (size_t i = passive_count; i < out->count; ++i) {
+            memset(&addresses[i], 0, sizeof(addresses[i]));
+            addresses[i].Ipv4.sin_family = AF_INET;
+            (void)InetPtonA(AF_INET, out->items[i].ip, &addresses[i].Ipv4.sin_addr);
+        }
+        if (winsock_ready) {
+            resolve_neighbor_names(out, addresses);
+        }
+        HeapFree(GetProcessHeap(), 0, addresses);
+    }
+    for (size_t i = 0; i < out->count; ++i) {
+        classify_neighbor(&out->items[i]);
+    }
     if (winsock_ready) {
         WSACleanup();
     }
-    clear_ambiguous_macs(out);
+    /* Some public/isolated Wi-Fi networks proxy-ARP, so one MAC can stand for
+       several devices; dual-stack devices also list one MAC per address. */
+    lp_discovery_normalize_macs(out);
     return LP_OK;
 }
 
@@ -717,8 +1080,8 @@ static bool format_sockaddr(const SOCKADDR *address, char *out, size_t out_cap)
         return false;
     }
     if (address->sa_family == AF_INET) {
-        return InetNtopA(AF_INET, &((const SOCKADDR_IN *)address)->sin_addr, out,
-                         (DWORD)out_cap) != NULL;
+        return InetNtopA(AF_INET, &((const SOCKADDR_IN *)address)->sin_addr, out, (DWORD)out_cap) !=
+               NULL;
     }
     if (address->sa_family == AF_INET6) {
         return InetNtopA(AF_INET6, &((const SOCKADDR_IN6 *)address)->sin6_addr, out,
@@ -762,7 +1125,8 @@ static void get_default_gateway_mac(const char *gateway, char *mac, size_t mac_c
             continue;
         }
         char address[LP_IP_STR_MAX] = {0};
-        if (InetNtopA(AF_INET, (PVOID)&row->Address.Ipv4.sin_addr, address, sizeof(address)) != NULL &&
+        if (InetNtopA(AF_INET, (PVOID)&row->Address.Ipv4.sin_addr, address, sizeof(address)) !=
+                NULL &&
             strcmp(address, gateway) == 0) {
             format_mac(row->PhysicalAddress, row->PhysicalAddressLength, mac, mac_cap);
             break;
@@ -779,18 +1143,16 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
     }
     out->count = 0;
     DWORD hostname_size = LP_HOSTNAME_MAX;
-    (void)GetComputerNameExA(ComputerNamePhysicalDnsHostname, out->local_hostname,
-                             &hostname_size);
+    (void)GetComputerNameExA(ComputerNamePhysicalDnsHostname, out->local_hostname, &hostname_size);
 
     NET_LUID default_interface_luid;
     memset(&default_interface_luid, 0, sizeof(default_interface_luid));
     char default_gateway[LP_IP_STR_MAX] = {0};
-    const bool has_default_gateway = get_default_gateway(
-        &default_interface_luid, default_gateway, sizeof(default_gateway));
+    const bool has_default_gateway =
+        get_default_gateway(&default_interface_luid, default_gateway, sizeof(default_gateway));
     char default_gateway_mac[LP_MAC_STR_MAX] = {0};
     if (has_default_gateway) {
-        get_default_gateway_mac(default_gateway, default_gateway_mac,
-                                sizeof(default_gateway_mac));
+        get_default_gateway_mac(default_gateway, default_gateway_mac, sizeof(default_gateway_mac));
     }
     char default_gateway_hostname[LP_HOSTNAME_MAX] = {0};
     lp_device_type_t default_gateway_type = LP_DEVICE_UNKNOWN;
@@ -813,26 +1175,14 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
                       sizeof(default_gateway_vendor), &default_gateway_type,
                       &default_gateway_confidence);
 
-    ULONG buffer_size = 0;
-    const ULONG flags = GAA_FLAG_INCLUDE_PREFIX;
-    DWORD result = GetAdaptersAddresses(AF_UNSPEC, flags, NULL, NULL, &buffer_size);
-    if (result != ERROR_BUFFER_OVERFLOW || buffer_size == 0) {
-        return LP_ERR_IO;
-    }
-
+    DWORD result = NO_ERROR;
     IP_ADAPTER_ADDRESSES *adapters =
-        (IP_ADAPTER_ADDRESSES *)HeapAlloc(GetProcessHeap(), 0, buffer_size);
+        get_adapter_addresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, &result);
     if (adapters == NULL) {
-        return LP_ERR_NO_MEMORY;
-    }
-    result = GetAdaptersAddresses(AF_UNSPEC, flags, NULL, adapters, &buffer_size);
-    if (result != NO_ERROR) {
-        HeapFree(GetProcessHeap(), 0, adapters);
-        return LP_ERR_IO;
+        return (result == ERROR_NOT_ENOUGH_MEMORY) ? LP_ERR_NO_MEMORY : LP_ERR_IO;
     }
 
-    for (IP_ADAPTER_ADDRESSES *adapter = adapters; adapter != NULL;
-         adapter = adapter->Next) {
+    for (IP_ADAPTER_ADDRESSES *adapter = adapters; adapter != NULL; adapter = adapter->Next) {
         char gateway[LP_IP_STR_MAX] = {0};
         const bool is_default_adapter =
             has_default_gateway && adapter->Luid.Value == default_interface_luid.Value;
@@ -841,8 +1191,7 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
         }
 
         for (IP_ADAPTER_UNICAST_ADDRESS *unicast = adapter->FirstUnicastAddress;
-             unicast != NULL && out->count < LP_DISCOVERY_MAX_NETWORKS;
-             unicast = unicast->Next) {
+             unicast != NULL && out->count < LP_DISCOVERY_MAX_NETWORKS; unicast = unicast->Next) {
             char address[LP_IP_STR_MAX] = {0};
             if (!format_sockaddr(unicast->Address.lpSockaddr, address, sizeof(address))) {
                 continue;
@@ -861,8 +1210,8 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
                 network->gateway_device_type = default_gateway_type;
                 network->gateway_confidence = default_gateway_confidence;
             }
-            if (out->local_ip[0] == '\0' &&
-                unicast->Address.lpSockaddr->sa_family == AF_INET && is_default_adapter) {
+            if (out->local_ip[0] == '\0' && unicast->Address.lpSockaddr->sa_family == AF_INET &&
+                is_default_adapter) {
                 snprintf(out->local_ip, sizeof(out->local_ip), "%s", address);
                 out->local_connection_type = connection_type_for_interface(&adapter->Luid);
             }

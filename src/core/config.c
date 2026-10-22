@@ -1,5 +1,6 @@
 #include "linkpulse/config.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,11 +8,32 @@
 /* Establishes the safe baseline used before file or command-line overrides. */
 void lp_config_defaults(lp_config_t *config)
 {
+    if (config == NULL) {
+        return;
+    }
     config->mode = LP_IFACE_SELECT_AUTO;
     config->iface_name[0] = '\0';
     config->include_virtual = false;
     config->use_bits = false;
     config->interval_ms = 1000;
+}
+
+bool lp_config_parse_interval(const char *text, unsigned *out_ms)
+{
+    /* strtoul accepts leading whitespace and a sign, and wraps "-1" to
+       ULONG_MAX, so only plain digit strings reach it. */
+    if (text == NULL || out_ms == NULL || text[0] < '0' || text[0] > '9') {
+        return false;
+    }
+    char *end = NULL;
+    errno = 0;
+    const unsigned long parsed = strtoul(text, &end, 10);
+    if (errno == ERANGE || *end != '\0' || parsed < LP_CONFIG_INTERVAL_MIN_MS ||
+        parsed > LP_CONFIG_INTERVAL_MAX_MS) {
+        return false;
+    }
+    *out_ms = (unsigned)parsed;
+    return true;
 }
 
 /* Converts the enum used in memory to the stable config-file spelling. */
@@ -86,12 +108,7 @@ static void apply_line(lp_config_t *config, char *line)
             config->use_bits = false;
         }
     } else if (strcmp(key, "interval_ms") == 0) {
-        char *end = NULL;
-        const unsigned long parsed = strtoul(value, &end, 10);
-        const unsigned as_u = (unsigned)parsed;
-        if (end != value && *end == '\0' && parsed > 0 && (unsigned long)as_u == parsed) {
-            config->interval_ms = as_u;
-        }
+        (void)lp_config_parse_interval(value, &config->interval_ms);
     }
 }
 
@@ -100,6 +117,13 @@ void lp_config_parse(lp_config_t *config, const char *text)
 {
     if (config == NULL || text == NULL) {
         return;
+    }
+
+    /* Editors such as Notepad may prepend a UTF-8 BOM, which would otherwise
+       become part of the first key. */
+    if ((unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB &&
+        (unsigned char)text[2] == 0xBF) {
+        text += 3;
     }
 
     char line[512];

@@ -13,6 +13,8 @@
 #include "linkpulse/sampler.h"
 #include "linkpulse/update.h"
 
+#include "dpi_win32.h"
+#include "isp_view_win32.h"
 #include "network_map_win32.h"
 #include "speed_meter_win32.h"
 
@@ -29,6 +31,8 @@
 #define WM_LP_DISCOVERY_RESULT (WM_APP + 3)
 #define WM_LP_SPEED_METER_OPEN (WM_APP + 4)
 #define WM_LP_NETWORK_MAP_OPEN (WM_APP + 5)
+#define WM_LP_ISP_VIEW_OPEN (WM_APP + 9)
+#define WM_LP_ISP_RESULT (WM_APP + 10)
 #define LP_TRAY_TIMER_ID 1
 #define LP_TRAY_ICON_UID 1
 #define LP_UPDATE_VERSION_MAX 32
@@ -44,9 +48,10 @@
 #define IDM_UPDATE 2005
 #define IDM_SUPPORT 2006
 
-/* Enough points to fill the icon at the largest realistic SM_CXSMICON (24px at
-   125% scaling); render_icon only ever reads the last `size` of them. */
-#define LP_TRAY_GRAPH_POINTS 32
+/* Enough points to fill the icon at the largest realistic SM_CXSMICON (64px at
+   400% scaling, now that the process is DPI aware); render_icon only ever reads
+   the last `size` of them. */
+#define LP_TRAY_GRAPH_POINTS 64
 
 /* Cross-thread shared state, guarded by `lock`. Everything else below (nid,
    icon handles, timer/thread handles) is only ever touched by the UI thread. */
@@ -64,6 +69,7 @@ typedef struct {
     bool update_available;
     char update_version[LP_UPDATE_VERSION_MAX];
     bool isp_available;
+    bool isp_lookup_failed; /* the latest lookup failed and none has succeeded since */
     lp_isp_info_t isp_info;
     char last_gateway_mac[LP_MAC_STR_MAX];
     bool last_gateway_mac_set;
@@ -82,12 +88,15 @@ typedef struct {
     HANDLE isp_refresh_event;
     lp_discovery_event_t discovery_events[LP_DISCOVERY_MAX_EVENTS];
     size_t discovery_event_count;
+    /* Join/leave events that did not fit in discovery_events; summarized in one toast. */
+    size_t discovery_dropped_count;
     lp_neighbor_list_t map_neighbors;
     lp_local_network_list_t map_networks;
 
     HWND hwnd;
     HWND network_map_hwnd;
     HWND speed_meter_hwnd;
+    HWND isp_view_hwnd;
     char pending_speed_meter_ip[LP_IP_STR_MAX];
     NOTIFYICONDATAA nid;
     HICON current_icon;
@@ -259,8 +268,7 @@ static DWORD WINAPI update_thread_proc(LPVOID param)
             LP_INFO("update available: version=%s", latest_version);
             bool notify = false;
             EnterCriticalSection(&state->lock);
-            notify = !state->update_available ||
-                     strcmp(state->update_version, latest_version) != 0;
+            notify = !state->update_available || strcmp(state->update_version, latest_version) != 0;
             snprintf(state->update_version, sizeof(state->update_version), "%s", latest_version);
             state->update_available = true;
             LeaveCriticalSection(&state->lock);
@@ -306,14 +314,22 @@ static DWORD WINAPI isp_thread_proc(LPVOID param)
             EnterCriticalSection(&state->lock);
             state->isp_info = info;
             state->isp_available = true;
+            state->isp_lookup_failed = false;
             LeaveCriticalSection(&state->lock);
         } else {
             LP_WARN("ISP lookup failed: %s", lp_status_str(status));
+            EnterCriticalSection(&state->lock);
+            state->isp_lookup_failed = true;
+            LeaveCriticalSection(&state->lock);
+        }
+        /* Lets an open ISP view pick up the new result or failure. */
+        if (InterlockedCompareExchange(&state->stop_requested, 0, 0) == 0) {
+            PostMessageA(state->hwnd, WM_LP_ISP_RESULT, 0, 0);
         }
 
         const HANDLE wait_handles[2] = {state->update_stop_event, state->isp_refresh_event};
-        const DWORD wait_result = WaitForMultipleObjects(2, wait_handles, FALSE,
-                                                          LP_ISP_LOOKUP_INTERVAL_MS);
+        const DWORD wait_result =
+            WaitForMultipleObjects(2, wait_handles, FALSE, LP_ISP_LOOKUP_INTERVAL_MS);
         if (wait_result == WAIT_OBJECT_0) {
             break; /* stop event */
         }
@@ -366,7 +382,7 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                         strcmp(state->last_gateway_mac, gateway_mac) != 0)) {
                 LP_INFO("gateway changed to %s; refreshing ISP lookup", gateway_mac);
                 snprintf(state->last_gateway_mac, sizeof(state->last_gateway_mac), "%s",
-                        gateway_mac);
+                         gateway_mac);
                 state->last_gateway_mac_set = true;
                 if (state->isp_refresh_event != NULL) {
                     SetEvent(state->isp_refresh_event);
@@ -387,13 +403,18 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                      (unsigned long long)active_count,
                      (unsigned long long)state->discovery.known_count,
                      (unsigned long long)event_count);
+            const size_t dropped_count = state->discovery.dropped_events;
+            if (dropped_count > 0) {
+                LP_WARN("discovery poll produced more events than fit: dropped=%llu",
+                        (unsigned long long)dropped_count);
+            }
             for (size_t i = 0; i < event_count; ++i) {
                 LP_INFO("discovery event: type=%s ip=%s mac=%s hostname=%s",
                         events[i].type == LP_DISCOVERY_EVENT_JOINED ? "joined" : "left",
                         events[i].neighbor.ip[0] != '\0' ? events[i].neighbor.ip : "(unknown)",
                         events[i].neighbor.mac[0] != '\0' ? events[i].neighbor.mac : "(unknown)",
                         events[i].neighbor.hostname[0] != '\0' ? events[i].neighbor.hostname
-                                                                 : "(unknown)");
+                                                               : "(unknown)");
             }
             EnterCriticalSection(&state->lock);
             const lp_network_context_t network_context = {
@@ -401,7 +422,7 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                 state->isp_available ? &state->isp_info : NULL};
             state->map_neighbors.count = 0;
             for (size_t i = 0; i < state->discovery.known_count &&
-                                state->map_neighbors.count < LP_DISCOVERY_MAX_NEIGHBORS;
+                               state->map_neighbors.count < LP_DISCOVERY_MAX_NEIGHBORS;
                  ++i) {
                 if (state->discovery.known[i].active) {
                     lp_neighbor_t neighbor = state->discovery.known[i];
@@ -414,11 +435,19 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                 networks.isp_info = state->isp_info;
             }
             state->map_networks = networks;
-            if (event_count > 0) {
-                memcpy(state->discovery_events, events, event_count * sizeof(events[0]));
+            /* Append rather than overwrite: the UI thread may not have drained the
+               previous poll's events yet. Whatever does not fit is summarized. */
+            const size_t queued = state->discovery_event_count;
+            const size_t room = LP_DISCOVERY_MAX_EVENTS - queued;
+            const size_t appended = event_count < room ? event_count : room;
+            if (appended > 0) {
+                memcpy(&state->discovery_events[queued], events, appended * sizeof(events[0]));
             }
-            state->discovery_event_count = event_count;
+            state->discovery_event_count = queued + appended;
+            state->discovery_dropped_count += dropped_count + (event_count - appended);
             LeaveCriticalSection(&state->lock);
+            /* One disk write per poll, outside the tray lock, instead of one per device. */
+            lp_win32_device_store_flush(state->device_store);
             if (event_count > 0 ||
                 (state->network_map_hwnd != NULL && IsWindowVisible(state->network_map_hwnd))) {
                 PostMessageA(state->hwnd, WM_LP_DISCOVERY_RESULT, 0, 0);
@@ -445,12 +474,17 @@ static DWORD WINAPI download_thread_proc(LPVOID param)
     if (lp_update_download_latest(installer_path, sizeof(installer_path)) != LP_OK) {
         MessageBoxA(NULL, "Could not download the LinkPulse update.", "LinkPulse update",
                     MB_OK | MB_ICONERROR);
-    } else if ((INT_PTR)ShellExecuteA(NULL, "open", installer_path, NULL, NULL, SW_SHOWNORMAL) <= 32) {
-        DeleteFileA(installer_path);
-        MessageBoxA(state->hwnd, "Could not launch the LinkPulse installer.", "LinkPulse update",
-                    MB_OK | MB_ICONERROR);
     } else {
-        LP_INFO("update installer launched: %s", installer_path);
+        const lp_status_t launched = lp_update_launch_installer(installer_path);
+        if (launched == LP_ERR_IO) {
+            MessageBoxA(state->hwnd, "Could not launch the LinkPulse installer.",
+                        "LinkPulse update", MB_OK | MB_ICONERROR);
+        } else if (launched == LP_ERR_UNSUPPORTED) {
+            MessageBoxA(state->hwnd,
+                        "The downloaded installer has no valid signature, so it was not run. "
+                        "The release page was opened in your browser instead.",
+                        "LinkPulse update", MB_OK | MB_ICONWARNING);
+        }
     }
     return 0;
 }
@@ -498,15 +532,27 @@ static void show_discovery_notifications(lp_tray_state_t *state)
 {
     lp_discovery_event_t events[LP_DISCOVERY_MAX_EVENTS];
     size_t event_count;
+    size_t dropped_count;
     EnterCriticalSection(&state->lock);
     event_count = state->discovery_event_count;
     memcpy(events, state->discovery_events, event_count * sizeof(events[0]));
     state->discovery_event_count = 0;
+    dropped_count = state->discovery_dropped_count;
+    state->discovery_dropped_count = 0;
     LeaveCriticalSection(&state->lock);
+
+    if (dropped_count > 0) {
+        char summary[128];
+        snprintf(summary, sizeof(summary), "%llu more device%s joined or left the network.",
+                 (unsigned long long)dropped_count, dropped_count == 1 ? "" : "s");
+        if (!lp_win32_show_toast("Network devices changed", summary)) {
+            LP_WARN("failed to show network discovery summary notification");
+        }
+    }
 
     for (size_t i = 0; i < event_count; ++i) {
         const bool joined = events[i].type == LP_DISCOVERY_EVENT_JOINED;
-        const char *name = events[i].neighbor.label[0] != '\0'   ? events[i].neighbor.label
+        const char *name = events[i].neighbor.label[0] != '\0'      ? events[i].neighbor.label
                            : events[i].neighbor.hostname[0] != '\0' ? events[i].neighbor.hostname
                                                                     : NULL;
         char message[512];
@@ -515,8 +561,8 @@ static void show_discovery_notifications(lp_tray_state_t *state)
                      joined ? "Connected" : "Disconnected", name, events[i].neighbor.ip,
                      events[i].neighbor.mac);
         } else if (name != NULL) {
-            snprintf(message, sizeof(message), "%s\n%s\nIP: %s", joined ? "Connected" : "Disconnected",
-                     name, events[i].neighbor.ip);
+            snprintf(message, sizeof(message), "%s\n%s\nIP: %s",
+                     joined ? "Connected" : "Disconnected", name, events[i].neighbor.ip);
         } else if (events[i].neighbor.mac[0] != '\0') {
             snprintf(message, sizeof(message), "%s\nIP: %s\nMAC: %s",
                      joined ? "Connected" : "Disconnected", events[i].neighbor.ip,
@@ -538,8 +584,9 @@ static void show_network_map(lp_tray_state_t *state)
     if (state->network_map_hwnd == NULL) {
         return;
     }
-    lp_neighbor_list_t neighbors;
-    lp_local_network_list_t networks;
+    /* UI thread only; static because a full neighbor list is ~180 KB. */
+    static lp_neighbor_list_t neighbors;
+    static lp_local_network_list_t networks;
     EnterCriticalSection(&state->lock);
     neighbors = state->map_neighbors;
     networks = state->map_networks;
@@ -557,6 +604,26 @@ static void toggle_network_map(lp_tray_state_t *state)
         return;
     }
     show_network_map(state);
+}
+
+/* Pushes the latest ISP lookup result to the ISP view. `activate` opens, positions, and focuses
+   it (explicit user opens); otherwise it only repaints. */
+static void show_isp_view(lp_tray_state_t *state, bool activate)
+{
+    if (state->isp_view_hwnd == NULL) {
+        return;
+    }
+    lp_isp_info_t info;
+    EnterCriticalSection(&state->lock);
+    const bool available = state->isp_available;
+    const bool failed = state->isp_lookup_failed;
+    info = state->isp_info;
+    LeaveCriticalSection(&state->lock);
+    if (activate) {
+        lp_isp_view_show(state->isp_view_hwnd, available ? &info : NULL, failed);
+    } else {
+        lp_isp_view_update(state->isp_view_hwnd, available ? &info : NULL, failed);
+    }
 }
 
 /* Opens the speed meter layer for the gateway the map reported as clicked. */
@@ -600,8 +667,7 @@ typedef struct {
 } lp_device_refresh_request_t;
 
 static void network_context_from_snapshot(const lp_local_network_list_t *networks,
-                                          const lp_isp_info_t *isp,
-                                          lp_network_context_t *out)
+                                          const lp_isp_info_t *isp, lp_network_context_t *out)
 {
     memset(out, 0, sizeof(*out));
     out->gateway_mac = "";
@@ -656,18 +722,26 @@ static DWORD WINAPI device_refresh_thread_proc(LPVOID param)
         return 0;
     }
 
+    /* Shutdown may have given up waiting for this thread; the device store and window must
+       then not be touched again. */
     EnterCriticalSection(&state->lock);
-    for (size_t i = 0; i < state->map_neighbors.count; ++i) {
-        if (strcmp(state->map_neighbors.items[i].ip, neighbor.ip) == 0) {
-            state->map_neighbors.items[i] = neighbor;
-            break;
+    const bool stopping = InterlockedCompareExchange(&state->stop_requested, 0, 0) != 0;
+    if (!stopping) {
+        for (size_t i = 0; i < state->map_neighbors.count; ++i) {
+            if (strcmp(state->map_neighbors.items[i].ip, neighbor.ip) == 0) {
+                state->map_neighbors.items[i] = neighbor;
+                break;
+            }
         }
+        lp_network_context_t network_context;
+        network_context_from_snapshot(&networks, isp_available ? &isp : NULL, &network_context);
+        lp_win32_device_store_observe(state->device_store, &network_context, &neighbor);
     }
-    lp_network_context_t network_context;
-    network_context_from_snapshot(&networks, isp_available ? &isp : NULL, &network_context);
-    lp_win32_device_store_observe(state->device_store, &network_context, &neighbor);
     LeaveCriticalSection(&state->lock);
-    PostMessageA(state->hwnd, WM_LP_DISCOVERY_RESULT, 0, 0);
+    if (!stopping) {
+        lp_win32_device_store_flush(state->device_store);
+        PostMessageA(state->hwnd, WM_LP_DISCOVERY_RESULT, 0, 0);
+    }
     free(request);
     return 0;
 }
@@ -691,7 +765,8 @@ static void refresh_selected_device_identity(lp_tray_state_t *state, const char 
     }
     request->state = state;
     snprintf(request->ip, sizeof(request->ip), "%s", ip);
-    state->device_refresh_thread = CreateThread(NULL, 0, device_refresh_thread_proc, request, 0, NULL);
+    state->device_refresh_thread =
+        CreateThread(NULL, 0, device_refresh_thread_proc, request, 0, NULL);
     if (state->device_refresh_thread == NULL) {
         free(request);
         return;
@@ -762,9 +837,9 @@ static void show_context_menu(lp_tray_state_t *state)
         break;
     case IDM_SUPPORT: {
         /* Opt-in only: never shown automatically, no telemetry, just a link. */
-        const INT_PTR rc = (INT_PTR)ShellExecuteA(state->hwnd, "open",
-                                                "https://github.com/sponsors/Boussetta", NULL,
-                                                NULL, SW_SHOWNORMAL);
+        const INT_PTR rc =
+            (INT_PTR)ShellExecuteA(state->hwnd, "open", "https://github.com/sponsors/Boussetta",
+                                   NULL, NULL, SW_SHOWNORMAL);
         if (rc <= 32) {
             MessageBoxA(state->hwnd, "Could not open the LinkPulse support page.", "LinkPulse",
                         MB_OK | MB_ICONERROR);
@@ -866,8 +941,7 @@ static void measure_sponsor_item(MEASUREITEMSTRUCT *item)
 static void draw_sponsor_item(const DRAWITEMSTRUCT *item)
 {
     const bool selected = (item->itemState & ODS_SELECTED) != 0;
-    FillRect(item->hDC, &item->rcItem,
-            GetSysColorBrush(selected ? COLOR_HIGHLIGHT : COLOR_MENU));
+    FillRect(item->hDC, &item->rcItem, GetSysColorBrush(selected ? COLOR_HIGHLIGHT : COLOR_MENU));
 
     HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
     HFONT previous_font = (HFONT)SelectObject(item->hDC, font);
@@ -880,7 +954,7 @@ static void draw_sponsor_item(const DRAWITEMSTRUCT *item)
        not) menu text color instead of also being tinted pink. */
     SetTextColor(item->hDC, RGB(0xEA, 0x4A, 0xAA));
     DrawTextW(item->hDC, LP_SPONSOR_ITEM_TEXT, LP_SPONSOR_HEART_LEN, &text_rect,
-             DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+              DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
 
     SIZE heart_extent;
     GetTextExtentPoint32W(item->hDC, LP_SPONSOR_ITEM_TEXT, LP_SPONSOR_HEART_LEN, &heart_extent);
@@ -888,8 +962,8 @@ static void draw_sponsor_item(const DRAWITEMSTRUCT *item)
 
     SetTextColor(item->hDC, GetSysColor(selected ? COLOR_HIGHLIGHTTEXT : COLOR_MENUTEXT));
     DrawTextW(item->hDC, LP_SPONSOR_ITEM_TEXT + LP_SPONSOR_HEART_LEN,
-             (int)(sizeof(LP_SPONSOR_ITEM_TEXT) / sizeof(wchar_t)) - 1 - LP_SPONSOR_HEART_LEN,
-             &text_rect, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+              (int)(sizeof(LP_SPONSOR_ITEM_TEXT) / sizeof(wchar_t)) - 1 - LP_SPONSOR_HEART_LEN,
+              &text_rect, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
 
     SelectObject(item->hDC, previous_font);
 }
@@ -956,13 +1030,19 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
     case WM_LP_DISCOVERY_RESULT:
         show_discovery_notifications(state);
         if (state->network_map_hwnd != NULL && IsWindowVisible(state->network_map_hwnd)) {
-            lp_neighbor_list_t neighbors;
-            lp_local_network_list_t networks;
+            /* UI thread only; static because a full neighbor list is ~180 KB. */
+            static lp_neighbor_list_t neighbors;
+            static lp_local_network_list_t networks;
             EnterCriticalSection(&state->lock);
             neighbors = state->map_neighbors;
             networks = state->map_networks;
             LeaveCriticalSection(&state->lock);
             lp_network_map_show(state->network_map_hwnd, &neighbors, &networks);
+        }
+        return 0;
+    case WM_LP_ISP_RESULT:
+        if (state->isp_view_hwnd != NULL && IsWindowVisible(state->isp_view_hwnd)) {
+            show_isp_view(state, false);
         }
         return 0;
     case WM_COPYDATA: {
@@ -979,10 +1059,9 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
                SendMessage, and activating a window from there re-enters the
                map's own deactivate handling. */
             const size_t data_size = copy_data->cbData < sizeof(state->pending_speed_meter_ip)
-                                          ? copy_data->cbData
-                                          : sizeof(state->pending_speed_meter_ip);
-            const char *terminator =
-                (const char *)memchr(copy_data->lpData, '\0', data_size);
+                                         ? copy_data->cbData
+                                         : sizeof(state->pending_speed_meter_ip);
+            const char *terminator = (const char *)memchr(copy_data->lpData, '\0', data_size);
             if (terminator == NULL) {
                 return FALSE;
             }
@@ -996,16 +1075,31 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             PostMessageA(hwnd, WM_LP_NETWORK_MAP_OPEN, 0, 0);
             return TRUE;
         }
+        if (copy_data->dwData == LP_NETWORK_MAP_COPYDATA_INTERNET_SELECTED) {
+            /* Posted for the same re-entrancy reason as the router selection above. */
+            PostMessageA(hwnd, WM_LP_ISP_VIEW_OPEN, 0, 0);
+            return TRUE;
+        }
+        if (copy_data->dwData == LP_ISP_VIEW_COPYDATA_BACK) {
+            PostMessageA(hwnd, WM_LP_NETWORK_MAP_OPEN, 0, 0);
+            return TRUE;
+        }
         return FALSE;
     }
     case WM_LP_SPEED_METER_OPEN:
         show_speed_meter(state, state->pending_speed_meter_ip);
+        return 0;
+    case WM_LP_ISP_VIEW_OPEN:
+        show_isp_view(state, true);
         return 0;
     case WM_LP_NETWORK_MAP_OPEN:
         /* Map first: it inherits the foreground from the still-visible meter. */
         show_network_map(state);
         if (state->speed_meter_hwnd != NULL) {
             ShowWindow(state->speed_meter_hwnd, SW_HIDE);
+        }
+        if (state->isp_view_hwnd != NULL) {
+            ShowWindow(state->isp_view_hwnd, SW_HIDE);
         }
         return 0;
     case WM_DESTROY: {
@@ -1032,11 +1126,19 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             DestroyWindow(state->speed_meter_hwnd);
             state->speed_meter_hwnd = NULL;
         }
+        if (state->isp_view_hwnd != NULL) {
+            DestroyWindow(state->isp_view_hwnd);
+            state->isp_view_hwnd = NULL;
+        }
         if (state->current_icon != NULL) {
             DestroyIcon(state->current_icon);
             state->current_icon = NULL;
         }
         InterlockedExchange(&state->stop_requested, 1);
+        lp_net_cancel_name_lookups();
+        /* The device store is only closed once every thread that uses it has been joined;
+           otherwise it is leaked, like the lock, rather than freed under a running worker. */
+        bool can_close_device_store = true;
         if (state->thread != NULL) {
             WaitForSingleObject(state->thread, INFINITE);
             CloseHandle(state->thread);
@@ -1052,10 +1154,12 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
                         (unsigned)LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
                 can_close_update_stop_event = false;
                 can_delete_lock = false;
+                can_close_device_store = false;
             } else if (wait_result != WAIT_OBJECT_0) {
                 LP_WARN("waiting for discovery thread failed during shutdown");
                 can_close_update_stop_event = false;
                 can_delete_lock = false;
+                can_close_device_store = false;
             }
             CloseHandle(state->discovery_thread);
             state->discovery_thread = NULL;
@@ -1112,6 +1216,11 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
                 LP_WARN("device-refresh thread did not exit within %u ms; continuing shutdown",
                         (unsigned)LP_UPDATE_THREAD_SHUTDOWN_TIMEOUT_MS);
                 can_delete_lock = false;
+                can_close_device_store = false;
+            } else if (wait_result != WAIT_OBJECT_0) {
+                LP_WARN("waiting for device-refresh thread failed during shutdown");
+                can_delete_lock = false;
+                can_close_device_store = false;
             }
             CloseHandle(state->device_refresh_thread);
             state->device_refresh_thread = NULL;
@@ -1124,8 +1233,12 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
             CloseHandle(state->isp_refresh_event);
             state->isp_refresh_event = NULL;
         }
-        lp_win32_device_store_close(state->device_store);
-        state->device_store = NULL;
+        if (can_close_device_store) {
+            lp_win32_device_store_close(state->device_store);
+            state->device_store = NULL;
+        } else {
+            LP_WARN("leaving the device store open: a worker thread may still be using it");
+        }
         if (can_delete_lock) {
             DeleteCriticalSection(&state->lock);
         }
@@ -1141,6 +1254,9 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
 int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned interval_ms)
 {
     LP_INFO("initializing tray runtime");
+    /* Before any window exists: popups and the tray icon then render at the monitor's real DPI
+       instead of being bitmap-stretched by Windows. */
+    lp_ui_enable_dpi_awareness();
     lp_win32_set_app_user_model_id();
     HANDLE single_instance_mutex = CreateMutexA(NULL, FALSE, "Local\\LinkPulse_SingleInstance");
     if (single_instance_mutex == NULL || GetLastError() == ERROR_ALREADY_EXISTS) {
@@ -1199,6 +1315,10 @@ int lp_tray_run(const lp_sampler_config_t *config, bool use_bits, unsigned inter
     g_tray.speed_meter_hwnd = lp_speed_meter_create(instance, g_tray.hwnd);
     if (g_tray.speed_meter_hwnd == NULL) {
         LP_WARN("failed to create speed meter window");
+    }
+    g_tray.isp_view_hwnd = lp_isp_view_create(instance, g_tray.hwnd);
+    if (g_tray.isp_view_hwnd == NULL) {
+        LP_WARN("failed to create ISP view window");
     }
 
     g_tray.nid.cbSize = sizeof(g_tray.nid);

@@ -221,18 +221,13 @@ int main(int argc, char **argv)
                 return 2;
             }
             const char *value = argv[++i];
-            char *end = NULL;
-            const unsigned long parsed = strtoul(value, &end, 10);
-            if (value[0] == '\0' || *end != '\0') {
-                fprintf(stderr, "--interval must be a whole number of milliseconds, got '%s'\n",
-                        value);
+            if (!lp_config_parse_interval(value, &interval_ms)) {
+                fprintf(stderr,
+                        "--interval must be a whole number of milliseconds from %u to %u, "
+                        "got '%s'\n",
+                        LP_CONFIG_INTERVAL_MIN_MS, LP_CONFIG_INTERVAL_MAX_MS, value);
                 return 2;
             }
-            if (parsed == 0) {
-                fprintf(stderr, "--interval must be a positive number of milliseconds\n");
-                return 2;
-            }
-            interval_ms = (unsigned)parsed;
         } else {
             fprintf(stderr, "unknown option: %s\n\n", argv[i]);
             print_usage();
@@ -244,10 +239,10 @@ int main(int argc, char **argv)
 
     if (want_tray) {
         LP_INFO("starting tray mode: selection=%d iface=%s virtual=%s bits=%s interval_ms=%u",
-            sampler_config.mode,
-            sampler_config.iface_name[0] != '\0' ? sampler_config.iface_name : "(default)",
-            sampler_config.include_virtual ? "yes" : "no", use_bits ? "yes" : "no",
-            interval_ms);
+                sampler_config.mode,
+                sampler_config.iface_name[0] != '\0' ? sampler_config.iface_name : "(default)",
+                sampler_config.include_virtual ? "yes" : "no", use_bits ? "yes" : "no",
+                interval_ms);
         return lp_tray_run(&sampler_config, use_bits, interval_ms);
     }
 

@@ -1,5 +1,7 @@
 #include "linkpulse/sampler.h"
 
+#include "linkpulse/log.h"
+
 #include <stdio.h>
 #include <string.h>
 
@@ -81,13 +83,13 @@ static lp_sampler_target_t *find_target(lp_sampler_t *sampler, const char *name)
    a brand-new interface, or a counter that just decreased (reset/replaced
    adapter), contributes 0 for that direction only, this poll only -- it does
    not suppress the other direction if that one is still counting up normally. */
-static void accumulate_target_delta(lp_sampler_t *sampler, const char *name, uint64_t current_rx,
+static bool accumulate_target_delta(lp_sampler_t *sampler, const char *name, uint64_t current_rx,
                                     uint64_t current_tx, uint64_t *delta_rx, uint64_t *delta_tx)
 {
     lp_sampler_target_t *entry = find_target(sampler, name);
     if (entry == NULL) {
         if (sampler->target_count >= LP_SAMPLER_MAX_TRACKED_IFACES) {
-            return; /* table full: can't track this one's rate this poll */
+            return false; /* table full: can't track this one's rate this poll */
         }
         entry = &sampler->targets[sampler->target_count++];
         memset(entry, 0, sizeof(*entry));
@@ -106,6 +108,17 @@ static void accumulate_target_delta(lp_sampler_t *sampler, const char *name, uin
     entry->rx_bytes = current_rx;
     entry->tx_bytes = current_tx;
     entry->initialized = true;
+    return true;
+}
+
+/* Applies the ALL-mode filters. Packet-filter rows are skipped even when
+   virtual adapters are included: they repeat their base adapter's counters. */
+static bool all_mode_counts(const lp_sampler_t *sampler, const lp_iface_t *iface)
+{
+    if (iface->is_loopback || iface->is_filter) {
+        return false;
+    }
+    return !iface->is_virtual || sampler->config.include_virtual;
 }
 
 /* Drops tracked interfaces not seen this poll (vanished, or -- for AUTO/MANUAL,
@@ -139,18 +152,36 @@ static lp_status_t resolve_deltas(lp_sampler_t *sampler, const lp_iface_list_t *
     *delta_tx = 0;
 
     if (sampler->config.mode == LP_IFACE_SELECT_ALL) {
+        /* Evict vanished interfaces before admitting new ones, so an adapter
+           that went away frees its slot for one that appeared in the same poll. */
         for (size_t i = 0; i < list->count; ++i) {
-            const lp_iface_t *iface = &list->items[i];
-            if (iface->is_loopback) {
-                continue;
+            if (all_mode_counts(sampler, &list->items[i])) {
+                lp_sampler_target_t *entry = find_target(sampler, list->items[i].name);
+                if (entry != NULL) {
+                    entry->seen_this_poll = true;
+                }
             }
-            if (iface->is_virtual && !sampler->config.include_virtual) {
-                continue;
-            }
-            accumulate_target_delta(sampler, iface->name, iface->rx_bytes, iface->tx_bytes,
-                                    delta_rx, delta_tx);
         }
         evict_untracked_targets(sampler);
+
+        unsigned untracked = 0;
+        for (size_t i = 0; i < list->count; ++i) {
+            const lp_iface_t *iface = &list->items[i];
+            if (all_mode_counts(sampler, iface) &&
+                !accumulate_target_delta(sampler, iface->name, iface->rx_bytes, iface->tx_bytes,
+                                         delta_rx, delta_tx)) {
+                ++untracked;
+            }
+        }
+        for (size_t i = 0; i < sampler->target_count; ++i) {
+            sampler->targets[i].seen_this_poll = false;
+        }
+        if (untracked > 0 && !sampler->overflow_reported) {
+            LP_WARN("sampler: %u interface(s) exceed the %d-entry tracking table; their traffic "
+                    "is not counted",
+                    untracked, LP_SAMPLER_MAX_TRACKED_IFACES);
+        }
+        sampler->overflow_reported = untracked > 0;
         return LP_OK;
     }
 
@@ -192,6 +223,17 @@ lp_status_t lp_sampler_poll(lp_sampler_t *sampler, lp_rate_sample_t *out)
         return snapshot_status;
     }
 
+    const uint64_t now = sampler->sources.clock_fn();
+    if (sampler->has_last_poll && now == sampler->last_poll_timestamp_ns) {
+        /* No time has passed, so no rate can be computed. Leave the counter
+           baselines alone so these bytes are counted by the next sample. */
+        lp_iface_list_free(&list);
+        const size_t newest =
+            (sampler->history_head + sampler->history_count - 1) % LP_SAMPLER_HISTORY_CAP;
+        *out = sampler->history[newest];
+        return LP_OK;
+    }
+
     uint64_t delta_rx = 0;
     uint64_t delta_tx = 0;
     const lp_status_t resolve_status = resolve_deltas(sampler, &list, &delta_rx, &delta_tx);
@@ -204,12 +246,12 @@ lp_status_t lp_sampler_poll(lp_sampler_t *sampler, lp_rate_sample_t *out)
         return resolve_status;
     }
 
-    const uint64_t now = sampler->sources.clock_fn();
     const uint64_t elapsed_ns = now - sampler->last_poll_timestamp_ns;
 
     const lp_rate_sample_t sample = {bytes_per_sec(delta_rx, elapsed_ns),
                                      bytes_per_sec(delta_tx, elapsed_ns), now};
     sampler->last_poll_timestamp_ns = now;
+    sampler->has_last_poll = true;
 
     push_history(sampler, &sample);
     *out = sample;

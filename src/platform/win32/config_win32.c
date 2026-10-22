@@ -3,30 +3,32 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <wchar.h>
 
 #include <windows.h>
 
-/* %APPDATA%\LinkPulse\config.ini; returns false if %APPDATA% is unset (should
-   not happen in a normal interactive session, but this is not a hard error --
-   callers just fall back to defaults). */
-static bool config_path(char *out, size_t cap)
+/* %APPDATA%\LinkPulse\config.ini, built with wide APIs so profile paths outside
+   the ANSI code page survive. Returns false if %APPDATA% is unset (should not
+   happen in a normal interactive session, but this is not a hard error --
+   callers just fall back to defaults). Creates the directory when asked. */
+static bool config_path(wchar_t *out, size_t cap, bool create_dir)
 {
-    char appdata[MAX_PATH];
-    const DWORD len = GetEnvironmentVariableA("APPDATA", appdata, sizeof(appdata));
-    if (len == 0 || len >= sizeof(appdata)) {
+    wchar_t appdata[MAX_PATH];
+    const DWORD len = GetEnvironmentVariableW(L"APPDATA", appdata, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) {
         return false;
     }
 
-    char dir[MAX_PATH + 32];
-    int written = snprintf(dir, sizeof(dir), "%s\\LinkPulse", appdata);
-    if (written < 0 || (size_t)written >= sizeof(dir)) {
+    wchar_t dir[MAX_PATH + 32];
+    int written = swprintf(dir, sizeof(dir) / sizeof(dir[0]), L"%ls\\LinkPulse", appdata);
+    if (written < 0 || (size_t)written >= sizeof(dir) / sizeof(dir[0])) {
         return false; /* %APPDATA% too long to safely append our subdirectory to */
     }
-    if (!CreateDirectoryA(dir, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
+    if (create_dir && !CreateDirectoryW(dir, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
         return false;
     }
 
-    written = snprintf(out, cap, "%s\\LinkPulse\\config.ini", appdata);
+    written = swprintf(out, cap, L"%ls\\config.ini", dir);
     return written >= 0 && (size_t)written < cap;
 }
 
@@ -36,22 +38,16 @@ lp_status_t lp_config_load(lp_config_t *config)
     LP_DEBUG("loading configuration");
     lp_config_defaults(config);
 
-    char appdata[MAX_PATH];
-    const DWORD appdata_len = GetEnvironmentVariableA("APPDATA", appdata, sizeof(appdata));
-    if (appdata_len == 0 || appdata_len >= sizeof(appdata)) {
+    wchar_t path[MAX_PATH + 32];
+    if (!config_path(path, sizeof(path) / sizeof(path[0]), false)) {
         return LP_OK; /* no %APPDATA%: defaults are still a valid, working config */
     }
 
-    char path[MAX_PATH];
-    const int written = snprintf(path, sizeof(path), "%s\\LinkPulse\\config.ini", appdata);
-    if (written < 0 || (size_t)written >= sizeof(path)) {
-        return LP_OK;
-    }
-
-    FILE *file = fopen(path, "rb");
+    FILE *file = _wfopen(path, L"rb");
     if (file == NULL) {
-        const DWORD attrs = GetFileAttributesA(path);
-        if (attrs == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND) {
+        const DWORD attrs = GetFileAttributesW(path);
+        if (attrs == INVALID_FILE_ATTRIBUTES &&
+            (GetLastError() == ERROR_FILE_NOT_FOUND || GetLastError() == ERROR_PATH_NOT_FOUND)) {
             LP_DEBUG("configuration file not found; using defaults");
             return LP_OK; /* first run: no config file yet */
         }
@@ -75,28 +71,51 @@ lp_status_t lp_config_load(lp_config_t *config)
     return LP_OK;
 }
 
-/* Creates the per-user directory and atomically writes the serialized settings stream. */
+/* Writes `len` bytes to a new file at `path` and forces them to disk. */
+static bool write_file_durably(const wchar_t *path, const char *data, size_t len)
+{
+    HANDLE file =
+        CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    DWORD written = 0;
+    const bool ok = WriteFile(file, data, (DWORD)len, &written, NULL) && written == (DWORD)len &&
+                    FlushFileBuffers(file);
+    CloseHandle(file);
+    return ok;
+}
+
+/* Creates the per-user directory and replaces the settings file atomically: the
+   new contents go to a temporary sibling that is flushed to disk and then
+   renamed over the old file, so a crash mid-save leaves either the previous or
+   the new settings, never a truncated file. */
 lp_status_t lp_config_save(const lp_config_t *config)
 {
     LP_DEBUG("saving configuration");
-    char path[MAX_PATH + 32];
-    if (!config_path(path, sizeof(path))) {
+    wchar_t path[MAX_PATH + 32];
+    if (!config_path(path, sizeof(path) / sizeof(path[0]), true)) {
+        return LP_ERR_IO;
+    }
+    wchar_t temp_path[MAX_PATH + 48];
+    const int temp_len =
+        swprintf(temp_path, sizeof(temp_path) / sizeof(temp_path[0]), L"%ls.tmp", path);
+    if (temp_len < 0 || (size_t)temp_len >= sizeof(temp_path) / sizeof(temp_path[0])) {
         return LP_ERR_IO;
     }
 
     char text[4096];
     const size_t len = lp_config_serialize(config, text, sizeof(text));
 
-    FILE *file = fopen(path, "wb");
-    if (file == NULL) {
+    if (!write_file_durably(temp_path, text, len)) {
+        (void)DeleteFileW(temp_path);
         return LP_ERR_IO;
     }
-    const size_t written = fwrite(text, 1, len, file);
-    const bool had_error = (ferror(file) != 0);
-    fclose(file);
-    const lp_status_t status = (had_error || written != len) ? LP_ERR_IO : LP_OK;
-    if (status == LP_OK) {
-        LP_DEBUG("configuration saved");
+    if (!MoveFileExW(temp_path, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        LP_WARN("could not replace configuration file: error %lu", GetLastError());
+        (void)DeleteFileW(temp_path);
+        return LP_ERR_IO;
     }
-    return status;
+    LP_DEBUG("configuration saved");
+    return LP_OK;
 }

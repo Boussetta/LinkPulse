@@ -15,10 +15,10 @@
 #include <objbase.h>
 #include <unknwn.h>
 
-DEFINE_GUID(CLSID_LinkPulseToastActivator,
-            0x7f2d2e64, 0x9b2a, 0x4b2d, 0x8b, 0x4d, 0x71, 0x4c, 0x5a, 0x83, 0x2e, 0x11);
-DEFINE_GUID(IID_LinkPulseNotificationActivationCallback,
-            0x53e31837, 0x6600, 0x4a81, 0x93, 0x95, 0x75, 0xcf, 0xfe, 0x74, 0x6f, 0x94);
+DEFINE_GUID(CLSID_LinkPulseToastActivator, 0x7f2d2e64, 0x9b2a, 0x4b2d, 0x8b, 0x4d, 0x71, 0x4c, 0x5a,
+            0x83, 0x2e, 0x11);
+DEFINE_GUID(IID_LinkPulseNotificationActivationCallback, 0x53e31837, 0x6600, 0x4a81, 0x93, 0x95,
+            0x75, 0xcf, 0xfe, 0x74, 0x6f, 0x94);
 
 #ifndef NOTIFICATION_USER_INPUT_DATA_DEFINED
 #define NOTIFICATION_USER_INPUT_DATA_DEFINED
@@ -31,11 +31,11 @@ typedef struct {
 typedef struct LP_NOTIFICATION_ACTIVATION_CALLBACK LP_NOTIFICATION_ACTIVATION_CALLBACK;
 typedef struct LP_NOTIFICATION_ACTIVATION_CALLBACK_VTBL {
     HRESULT(STDMETHODCALLTYPE *QueryInterface)(LP_NOTIFICATION_ACTIVATION_CALLBACK *, REFIID,
-                                                void **);
+                                               void **);
     ULONG(STDMETHODCALLTYPE *AddRef)(LP_NOTIFICATION_ACTIVATION_CALLBACK *);
     ULONG(STDMETHODCALLTYPE *Release)(LP_NOTIFICATION_ACTIVATION_CALLBACK *);
-    HRESULT(STDMETHODCALLTYPE *Activate)(LP_NOTIFICATION_ACTIVATION_CALLBACK *, LPCWSTR,
-                                         LPCWSTR, const LP_NOTIFICATION_USER_INPUT_DATA *, ULONG);
+    HRESULT(STDMETHODCALLTYPE *Activate)(LP_NOTIFICATION_ACTIVATION_CALLBACK *, LPCWSTR, LPCWSTR,
+                                         const LP_NOTIFICATION_USER_INPUT_DATA *, ULONG);
 } LP_NOTIFICATION_ACTIVATION_CALLBACK_VTBL;
 
 struct LP_NOTIFICATION_ACTIVATION_CALLBACK {
@@ -44,10 +44,13 @@ struct LP_NOTIFICATION_ACTIVATION_CALLBACK {
 };
 
 static DWORD activator_thread_id = 0;
+/* Joined before the activator process exits; process exit would otherwise kill it mid-download. */
+static HANDLE activation_download_thread = NULL;
+static LONG activation_download_started = 0;
 
 /* Exposes the COM interfaces implemented by the toast callback object. */
 static HRESULT STDMETHODCALLTYPE callback_query_interface(LP_NOTIFICATION_ACTIVATION_CALLBACK *self,
-                                                            REFIID iid, void **object)
+                                                          REFIID iid, void **object)
 {
     if (object == NULL) {
         return E_POINTER;
@@ -89,9 +92,8 @@ static DWORD WINAPI activation_download_thread_proc(LPVOID param)
         return 1;
     }
     LP_INFO("toast update downloaded to %s", installer_path);
-    if ((INT_PTR)ShellExecuteA(NULL, "open", installer_path, NULL, NULL, SW_SHOWNORMAL) <= 32) {
-        DeleteFileA(installer_path);
-        LP_ERROR("toast installer launch failed");
+    if (lp_update_launch_installer(installer_path) != LP_OK) {
+        LP_ERROR("toast installer was not launched");
         return 1;
     }
     return 0;
@@ -122,12 +124,15 @@ static HRESULT STDMETHODCALLTYPE callback_activate(LP_NOTIFICATION_ACTIVATION_CA
     LP_INFO("toast activation received: args=%ls", invoked_args != NULL ? invoked_args : L"(null)");
     HRESULT result = S_OK;
     if (invoked_args != NULL && lstrcmpW(invoked_args, L"linkpulse://download-update") == 0) {
-        HANDLE download_thread =
-            CreateThread(NULL, 0, activation_download_thread_proc, NULL, 0, NULL);
-        if (download_thread == NULL) {
-            result = E_FAIL;
+        /* COM may deliver activations concurrently; only the first one downloads. */
+        if (InterlockedCompareExchange(&activation_download_started, 1, 0) != 0) {
+            LP_INFO("toast update download already in progress");
         } else {
-            CloseHandle(download_thread);
+            activation_download_thread =
+                CreateThread(NULL, 0, activation_download_thread_proc, NULL, 0, NULL);
+            if (activation_download_thread == NULL) {
+                result = E_FAIL;
+            }
         }
     }
 
@@ -157,7 +162,7 @@ struct LP_ACTIVATOR_FACTORY {
 
 /* Exposes the IClassFactory interfaces required by COM local-server registration. */
 static HRESULT STDMETHODCALLTYPE factory_query_interface(LP_ACTIVATOR_FACTORY *self, REFIID iid,
-                                                          void **object)
+                                                         void **object)
 {
     if (object == NULL) {
         return E_POINTER;
@@ -184,8 +189,8 @@ static ULONG STDMETHODCALLTYPE factory_release(LP_ACTIVATOR_FACTORY *self)
 }
 
 /* Creates a callback object for the COM toast activation request. */
-static HRESULT STDMETHODCALLTYPE factory_create_instance(LP_ACTIVATOR_FACTORY *self, IUnknown *outer,
-                                                           REFIID iid, void **object)
+static HRESULT STDMETHODCALLTYPE factory_create_instance(LP_ACTIVATOR_FACTORY *self,
+                                                         IUnknown *outer, REFIID iid, void **object)
 {
     (void)self;
     if (outer != NULL) {
@@ -211,9 +216,9 @@ static HRESULT STDMETHODCALLTYPE factory_lock_server(LP_ACTIVATOR_FACTORY *self,
     return S_OK;
 }
 
-static const LP_ACTIVATOR_FACTORY_VTBL factory_vtbl = {
-    factory_query_interface, factory_add_ref, factory_release, factory_create_instance,
-    factory_lock_server};
+static const LP_ACTIVATOR_FACTORY_VTBL factory_vtbl = {factory_query_interface, factory_add_ref,
+                                                       factory_release, factory_create_instance,
+                                                       factory_lock_server};
 
 /* Registers the COM class factory and services toast activations until WM_QUIT. */
 int lp_win32_run_toast_activator(void)
@@ -243,6 +248,13 @@ int lp_win32_run_toast_activator(void)
 
     activator_thread_id = 0;
     CoRevokeClassObject(cookie);
+    if (activation_download_thread != NULL) {
+        /* WinHTTP timeouts bound the download, so this wait cannot hang indefinitely. */
+        LP_INFO("waiting for toast update download before exiting");
+        WaitForSingleObject(activation_download_thread, INFINITE);
+        CloseHandle(activation_download_thread);
+        activation_download_thread = NULL;
+    }
     CoUninitialize();
     return 0;
 }
