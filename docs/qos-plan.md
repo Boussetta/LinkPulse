@@ -66,16 +66,39 @@ Every item below came from reading the code; the highest-impact ones were re-che
 | --- | --- |
 | `chore/ci-mingw-tests` | The MinGW job builds but never runs the test suite. |
 
-## Deferred
+## Phase 2
 
-These need design work or hardware to test against, so they are tracked here rather than
-fixed in this pass:
+Phase 2 covers the items deferred from the first pass, the release signing gap that the
+installer verification exposed, and two user-reported UI problems. The same branching model
+applies.
 
-- Per-monitor DPI awareness: declaring it requires scaling every hard-coded layout and font.
-- Discovery events beyond `max_events` are lost; needs an overflow signal in the API.
-- Neighbor name resolution runs serially (up to 250 ms per unresolved neighbor).
-- Dual-stack devices have their MAC treated as ambiguous across IPv4 and IPv6 entries.
-- Large `lp_neighbor_list_t` values on the stack in `lp_discovery_poll`.
-- Running `format-check` in CI once the tree is formatted.
-- The per-user installer and Npcap's administrator-only mode.
-- Showing a separate state when capture sees only traffic between this PC and the device.
+### 7. User-reported UI problems
+
+| Branch | Fixes |
+| --- | --- |
+| `fix/speed-test-survives-gateway-view` | A running speed test and its result are lost when the user leaves the gateway view. |
+| `feat/isp-details-view` | ISP details are drawn as text over the network map icons instead of in their own view. |
+| `fix/per-monitor-dpi-awareness` | The process is DPI-unaware, so every window is bitmap-stretched above 100% scaling. |
+
+### 8. Discovery
+
+| Branch | Fixes |
+| --- | --- |
+| `fix/discovery-event-overflow` | Events beyond `max_events` are lost while their state is still committed. |
+| `fix/discovery-poll-heap-scratch` | Large `lp_neighbor_list_t` values live on the stack during a poll. |
+| `fix/dual-stack-mac-identity` | A MAC shared by a device's IPv4 and IPv6 entries is treated as ambiguous. |
+| `fix/serial-name-resolution` | Neighbor names are resolved one at a time, up to 250 ms each, with no cache. |
+
+### 9. Release, installer and capture
+
+| Branch | Fixes |
+| --- | --- |
+| `chore/release-code-signing` | Release binaries are unsigned, so the update signature check always falls back to the release page. |
+| `fix/npcap-admin-only-detection` | A per-user install cannot capture when Npcap is restricted to administrators, and the UI does not say why. |
+| `fix/capture-local-host-only-state` | Capture does not distinguish traffic with this PC from traffic the device exchanges with others. |
+
+### 10. Formatting
+
+| Branch | Fixes |
+| --- | --- |
+| `chore/clang-format-tree` | The tree does not match `.clang-format`, so CI cannot run `format-check`. Applied last, after every other branch is merged, to avoid conflicts. |
