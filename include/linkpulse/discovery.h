@@ -104,6 +104,9 @@ typedef struct {
        state change is still committed, so they will not be reported later. */
     size_t dropped_events;
     bool has_baseline;
+    /* Poll-time copy of the platform snapshot. It lives here rather than on the
+       polling thread's stack; lp_discovery_t should itself be static or heap-allocated. */
+    lp_neighbor_list_t scratch;
 } lp_discovery_t;
 
 /* Initializes an empty discovery baseline; no events are emitted yet. */

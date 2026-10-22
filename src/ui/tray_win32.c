@@ -570,8 +570,9 @@ static void show_network_map(lp_tray_state_t *state)
     if (state->network_map_hwnd == NULL) {
         return;
     }
-    lp_neighbor_list_t neighbors;
-    lp_local_network_list_t networks;
+    /* UI thread only; static because a full neighbor list is ~180 KB. */
+    static lp_neighbor_list_t neighbors;
+    static lp_local_network_list_t networks;
     EnterCriticalSection(&state->lock);
     neighbors = state->map_neighbors;
     networks = state->map_networks;
@@ -989,8 +990,9 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
     case WM_LP_DISCOVERY_RESULT:
         show_discovery_notifications(state);
         if (state->network_map_hwnd != NULL && IsWindowVisible(state->network_map_hwnd)) {
-            lp_neighbor_list_t neighbors;
-            lp_local_network_list_t networks;
+            /* UI thread only; static because a full neighbor list is ~180 KB. */
+            static lp_neighbor_list_t neighbors;
+            static lp_local_network_list_t networks;
             EnterCriticalSection(&state->lock);
             neighbors = state->map_neighbors;
             networks = state->map_networks;
