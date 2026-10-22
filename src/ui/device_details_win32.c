@@ -183,6 +183,8 @@ static void paint_device_details(HWND window, HDC target_dc)
         activity_status_text = "Npcap needs administrator rights";
     } else if (!state->capture.available) {
         activity_status_text = "Packet capture unavailable";
+    } else if (state->capture.sees_only_local_host) {
+        activity_status_text = "Capture sees only traffic with this PC";
     } else if (state->capture.device_visible) {
         activity_status_text = "Visible device traffic";
     } else {
@@ -208,11 +210,18 @@ static void paint_device_details(HWND window, HDC target_dc)
                  "Npcap is restricted to administrators. Run LinkPulse as administrator, or "
                  "reinstall Npcap without \"Restrict Npcap driver's access to Administrators "
                  "only\".");
+    } else if (state->capture.sees_only_local_host) {
+        snprintf(capture_detail, sizeof(capture_detail),
+                 "Captured %u packets, all exchanged with this PC: %llu B received, %llu B "
+                 "sent. This adapter cannot see the device's traffic with other hosts.",
+                 state->capture.packet_count, (unsigned long long)state->capture.rx_bytes,
+                 (unsigned long long)state->capture.tx_bytes);
     } else if (state->capture.device_visible) {
         snprintf(capture_detail, sizeof(capture_detail),
-                 "Captured %u packets: %llu B received, "
+                 "Captured %u packets (%u with this PC): %llu B received, "
                  "%llu B sent.",
-                 state->capture.packet_count, (unsigned long long)state->capture.rx_bytes,
+                 state->capture.packet_count, state->capture.local_packets,
+                 (unsigned long long)state->capture.rx_bytes,
                  (unsigned long long)state->capture.tx_bytes);
     } else if (state->capture.detail[0] != '\0') {
         snprintf(capture_detail, sizeof(capture_detail),

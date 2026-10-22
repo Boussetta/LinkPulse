@@ -163,6 +163,52 @@ static bool default_route_capture_name(char *out, size_t out_cap)
     return found;
 }
 
+#define LP_CAPTURE_MAX_LOCAL_ADDRESSES 32
+
+/* Collects this PC's IPv4/IPv6 unicast addresses so packets exchanged with it can be told apart
+   from the device's traffic with other hosts. Returns the number stored (0 on failure). */
+static size_t local_unicast_addresses(lp_capture_address_t *out, size_t out_cap)
+{
+    ULONG size = 15u * 1024u;
+    IP_ADAPTER_ADDRESSES *adapters = NULL;
+    ULONG result = ERROR_BUFFER_OVERFLOW;
+    const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    for (int attempt = 0; attempt < 3 && result == ERROR_BUFFER_OVERFLOW; ++attempt) {
+        free(adapters);
+        adapters = malloc(size);
+        if (adapters == NULL) {
+            return 0;
+        }
+        result = GetAdaptersAddresses(AF_UNSPEC, flags, NULL, adapters, &size);
+    }
+    if (result != NO_ERROR) {
+        free(adapters);
+        return 0;
+    }
+    size_t count = 0;
+    for (IP_ADAPTER_ADDRESSES *adapter = adapters; adapter != NULL && count < out_cap;
+         adapter = adapter->Next) {
+        for (IP_ADAPTER_UNICAST_ADDRESS *unicast = adapter->FirstUnicastAddress;
+             unicast != NULL && count < out_cap; unicast = unicast->Next) {
+            const struct sockaddr *address = unicast->Address.lpSockaddr;
+            if (address == NULL) {
+                continue;
+            }
+            memset(&out[count], 0, sizeof(out[count]));
+            if (address->sa_family == AF_INET) {
+                memcpy(out[count].bytes, &((const struct sockaddr_in *)address)->sin_addr, 4);
+                ++count;
+            } else if (address->sa_family == AF_INET6) {
+                out[count].is_ipv6 = true;
+                memcpy(out[count].bytes, &((const struct sockaddr_in6 *)address)->sin6_addr, 16);
+                ++count;
+            }
+        }
+    }
+    free(adapters);
+    return count;
+}
+
 /* Parses the device's IP (dropping any IPv6 zone suffix) into `address` and `filter_ip`. */
 static bool parse_device_address(const char *device_ip, lp_capture_address_t *address,
                                  char *filter_ip, size_t filter_ip_cap)
@@ -325,6 +371,10 @@ lp_status_t lp_win32_capture_device_activity(const char *device_ip, unsigned dur
         return LP_ERR_IO;
     }
 
+    lp_capture_address_t local_addresses[LP_CAPTURE_MAX_LOCAL_ADDRESSES];
+    const size_t local_count =
+        local_unicast_addresses(local_addresses, LP_CAPTURE_MAX_LOCAL_ADDRESSES);
+
     const DWORD until = GetTickCount() + duration_ms;
     while ((LONG)(GetTickCount() - until) < 0) {
         if (is_cancelled(cancel)) {
@@ -345,8 +395,9 @@ lp_status_t lp_win32_capture_device_activity(const char *device_ip, unsigned dur
         if (result != 1 || header == NULL || packet == NULL) {
             continue;
         }
+        lp_capture_address_t peer;
         const lp_capture_direction_t direction =
-            lp_capture_classify_frame(link_type, packet, header->caplen, &device);
+            lp_capture_classify_frame_peer(link_type, packet, header->caplen, &device, &peer);
         if (direction == LP_CAPTURE_FRAME_FROM_DEVICE) {
             out->tx_bytes += header->len;
         } else if (direction == LP_CAPTURE_FRAME_TO_DEVICE) {
@@ -355,16 +406,24 @@ lp_status_t lp_win32_capture_device_activity(const char *device_ip, unsigned dur
             continue;
         }
         ++out->packet_count;
+        if (lp_capture_address_in(&peer, local_addresses, local_count)) {
+            ++out->local_packets;
+        }
     }
 
     api.free_code(&program);
     api.close_handle(handle);
     FreeLibrary(api.module);
     out->device_visible = out->packet_count != 0;
+    out->sees_only_local_host = out->device_visible && out->local_packets == out->packet_count;
     if (status == LP_OK) {
-        snprintf(out->detail, sizeof(out->detail), "%s",
-                 out->device_visible ? "Visible traffic captured"
-                                     : "No selected-device traffic visible");
+        const char *summary = "No selected-device traffic visible";
+        if (out->sees_only_local_host) {
+            summary = "Capture sees only traffic with this PC";
+        } else if (out->device_visible) {
+            summary = "Visible traffic captured";
+        }
+        snprintf(out->detail, sizeof(out->detail), "%s", summary);
     }
     return status;
 }

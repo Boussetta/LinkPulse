@@ -18,6 +18,10 @@ typedef struct {
     uint64_t rx_bytes;
     uint64_t tx_bytes;
     uint32_t packet_count; /* IP packets to or from the device, not distinct flows */
+    uint32_t local_packets; /* the subset whose other endpoint is this PC */
+    /* Every captured packet was exchanged with this PC: the adapter is not seeing the device's
+       traffic with other hosts, which is the normal case on a Wi-Fi client. */
+    bool sees_only_local_host;
     char detail[128];
 } lp_capture_activity_t;
 
@@ -38,6 +42,17 @@ typedef enum {
 lp_capture_direction_t lp_capture_classify_frame(int link_type, const uint8_t *frame,
                                                  size_t caplen,
                                                  const lp_capture_address_t *device);
+
+/* Same as lp_capture_classify_frame; when the frame belongs to the device, also stores the other
+   endpoint's address in `peer` (which may be NULL). */
+lp_capture_direction_t lp_capture_classify_frame_peer(int link_type, const uint8_t *frame,
+                                                      size_t caplen,
+                                                      const lp_capture_address_t *device,
+                                                      lp_capture_address_t *peer);
+
+/* True if `address` equals one of the `count` entries in `set` (same family and bytes). */
+bool lp_capture_address_in(const lp_capture_address_t *address, const lp_capture_address_t *set,
+                           size_t count);
 
 /* Captures visible metadata for one device for a bounded proof-of-concept run.
    Npcap is loaded dynamically from the system directory; no SDK or link-time dependency is

@@ -158,8 +158,65 @@ static void test_non_ip_and_unknown_links_are_ignored(void)
                                        &device) == LP_CAPTURE_FRAME_IGNORED);
 }
 
+static void test_peer_is_the_other_endpoint(void)
+{
+    uint8_t frame[128];
+    const lp_capture_address_t device = ipv4_device();
+    lp_capture_address_t peer;
+
+    size_t length = build_ipv4(frame, DEVICE_V4, PEER_V4, false, 5);
+    LP_CHECK(lp_capture_classify_frame_peer(LP_CAPTURE_LINKTYPE_ETHERNET, frame, length, &device,
+                                            &peer) == LP_CAPTURE_FRAME_FROM_DEVICE);
+    LP_CHECK(!peer.is_ipv6 && memcmp(peer.bytes, PEER_V4, 4) == 0);
+
+    length = build_ipv4(frame, PEER_V4, DEVICE_V4, false, 5);
+    memset(&peer, 0xAB, sizeof(peer));
+    LP_CHECK(lp_capture_classify_frame_peer(LP_CAPTURE_LINKTYPE_ETHERNET, frame, length, &device,
+                                            &peer) == LP_CAPTURE_FRAME_TO_DEVICE);
+    LP_CHECK(!peer.is_ipv6 && memcmp(peer.bytes, PEER_V4, 4) == 0);
+
+    const lp_capture_address_t v6 = ipv6_device();
+    length = build_ipv6(frame, PEER_V6, DEVICE_V6);
+    LP_CHECK(lp_capture_classify_frame_peer(LP_CAPTURE_LINKTYPE_ETHERNET, frame, length, &v6,
+                                            &peer) == LP_CAPTURE_FRAME_TO_DEVICE);
+    LP_CHECK(peer.is_ipv6 && memcmp(peer.bytes, PEER_V6, 16) == 0);
+
+    /* A NULL peer is allowed. */
+    LP_CHECK(lp_capture_classify_frame_peer(LP_CAPTURE_LINKTYPE_ETHERNET, frame, length, &v6,
+                                            NULL) == LP_CAPTURE_FRAME_TO_DEVICE);
+}
+
+static void test_address_set_membership(void)
+{
+    lp_capture_address_t set[2];
+    memset(set, 0, sizeof(set));
+    memcpy(set[0].bytes, PEER_V4, 4);
+    set[1].is_ipv6 = true;
+    memcpy(set[1].bytes, PEER_V6, 16);
+
+    lp_capture_address_t probe;
+    memset(&probe, 0, sizeof(probe));
+    memcpy(probe.bytes, PEER_V4, 4);
+    LP_CHECK(lp_capture_address_in(&probe, set, 2));
+
+    memcpy(probe.bytes, DEVICE_V4, 4);
+    LP_CHECK(!lp_capture_address_in(&probe, set, 2));
+
+    /* Same leading bytes but a different family must not match. */
+    probe.is_ipv6 = true;
+    memcpy(probe.bytes, PEER_V6, 16);
+    LP_CHECK(lp_capture_address_in(&probe, set, 2));
+    LP_CHECK(!lp_capture_address_in(&probe, set, 1));
+
+    LP_CHECK(!lp_capture_address_in(&probe, set, 0));
+    LP_CHECK(!lp_capture_address_in(NULL, set, 2));
+    LP_CHECK(!lp_capture_address_in(&probe, NULL, 2));
+}
+
 int main(void)
 {
+    test_peer_is_the_other_endpoint();
+    test_address_set_membership();
     test_ipv4_direction_uses_full_addresses();
     test_vlan_tagged_frame_is_parsed();
     test_ipv6_frames_match_ipv6_devices_only();

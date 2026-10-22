@@ -147,6 +147,11 @@ the access-denied error, and sets `lp_capture_activity_t.restricted_to_admins`. 
 then shows "Npcap needs administrator rights" instead of a generic failure. LinkPulse never
 requests elevation itself.
 
+Each captured packet is also checked against this PC's own unicast addresses
+(`local_packets`). When every packet was exchanged with this PC, `sees_only_local_host` is set
+and device details shows "Capture sees only traffic with this PC". That is the expected result on
+a Wi-Fi client, and it must not be presented as the device's overall activity.
+
 Installing Npcap alone is not sufficient for this use case. A supported monitor-mode adapter or a
 capture point on the gateway/bridge is required to observe other devices reliably.
 
