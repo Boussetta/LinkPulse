@@ -135,7 +135,8 @@ int main(int argc, char **argv)
             sampler_config.include_virtual ? "yes" : "no", config.use_bits ? "yes" : "no",
             config.interval_ms);
 
-    const int result = lp_tray_run(&sampler_config, config.use_bits, config.interval_ms);
+    const int result = lp_tray_run(&sampler_config, config.use_bits, config.interval_ms,
+                                   config.packet_capture);
     lp_win32_log_stop();
     return result;
 }

@@ -13,6 +13,7 @@ typedef struct {
     HFONT small_font;
     HBRUSH background_brush;
     lp_neighbor_t neighbor;
+    lp_device_capture_state_t capture_state;
     lp_capture_activity_t capture;
 } lp_device_details_state_t;
 
@@ -173,9 +174,18 @@ static void paint_device_details(HWND window, HDC target_dc)
     DeleteObject(panel_brush);
     RECT activity_status_rect = {40, activity_panel.top + 18, activity_panel.right - 16,
                                  activity_panel.top + 44};
-    const char *activity_status_text = !state->capture.available ? "Packet capture unavailable"
-                                       : state->capture.device_visible ? "Visible device traffic"
-                                                                       : "No peer traffic visible";
+    const char *activity_status_text;
+    if (state->capture_state == LP_DEVICE_CAPTURE_OFF) {
+        activity_status_text = "Packet capture is off";
+    } else if (state->capture_state == LP_DEVICE_CAPTURE_RUNNING) {
+        activity_status_text = "Capturing...";
+    } else if (!state->capture.available) {
+        activity_status_text = "Packet capture unavailable";
+    } else if (state->capture.device_visible) {
+        activity_status_text = "Visible device traffic";
+    } else {
+        activity_status_text = "No peer traffic visible";
+    }
     draw_text(dc, state->label_font, text, activity_status_text, activity_status_rect,
               DT_LEFT | DT_VCENTER);
     RECT activity_detail = {40, activity_panel.top + 48, activity_panel.right - 24,
@@ -184,7 +194,14 @@ static void paint_device_details(HWND window, HDC target_dc)
     SetTextColor(dc, muted);
     SetBkMode(dc, TRANSPARENT);
     char capture_detail[256];
-    if (state->capture.device_visible) {
+    if (state->capture_state == LP_DEVICE_CAPTURE_OFF) {
+        snprintf(capture_detail, sizeof(capture_detail),
+                 "Turn on \"Capture device traffic\" in the tray menu to sample this device "
+                 "with Npcap. Only packet headers are read; payloads are never stored.");
+    } else if (state->capture_state == LP_DEVICE_CAPTURE_RUNNING) {
+        snprintf(capture_detail, sizeof(capture_detail),
+                 "Sampling the selected device's traffic for a few seconds.");
+    } else if (state->capture.device_visible) {
         snprintf(capture_detail, sizeof(capture_detail),
                  "Captured %u packets: %llu B received, "
                  "%llu B sent.",
@@ -322,6 +339,7 @@ HWND lp_device_details_create(HINSTANCE instance, HWND owner)
 }
 
 void lp_device_details_show(HWND window, const lp_neighbor_t *neighbor,
+                            lp_device_capture_state_t capture_state,
                             const lp_capture_activity_t *capture)
 {
     if (window == NULL || neighbor == NULL)
@@ -330,7 +348,8 @@ void lp_device_details_show(HWND window, const lp_neighbor_t *neighbor,
     if (state == NULL)
         return;
     state->neighbor = *neighbor;
-    if (capture != NULL) {
+    state->capture_state = capture_state;
+    if (capture_state == LP_DEVICE_CAPTURE_DONE && capture != NULL) {
         state->capture = *capture;
     } else {
         memset(&state->capture, 0, sizeof(state->capture));
