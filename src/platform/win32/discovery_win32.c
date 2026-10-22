@@ -110,6 +110,21 @@ static bool is_unicast_address(const SOCKADDR_INET *address)
     return false;
 }
 
+/* Removes control characters from a network-supplied hostname in place. Raw
+   mDNS bytes have no declared encoding, so ascii_only also drops non-ASCII. */
+static void sanitize_hostname(char *name, bool ascii_only)
+{
+    size_t write = 0;
+    for (size_t read = 0; name[read] != '\0'; ++read) {
+        const unsigned char c = (unsigned char)name[read];
+        if (c < 0x20u || c == 0x7Fu || (ascii_only && c > 0x7Fu)) {
+            continue;
+        }
+        name[write++] = (char)c;
+    }
+    name[write] = '\0';
+}
+
 static uint16_t dns_read_u16(const unsigned char *packet, size_t offset)
 {
     return (uint16_t)((packet[offset] << 8) | packet[offset + 1]);
@@ -158,6 +173,9 @@ static bool dns_read_name(const unsigned char *packet, size_t packet_len, size_t
         if ((label_len & 0xC0u) == 0xC0u) {
             if (cursor + 1 >= packet_len) return false;
             const size_t target = (size_t)(((label_len & 0x3Fu) << 8) | packet[cursor + 1]);
+            /* Compression pointers must point strictly backward; this also rules
+               out pointer loops. */
+            if (target >= cursor) return false;
             if (!jumped) *offset = cursor + 2;
             cursor = target;
             jumped = true;
@@ -267,25 +285,37 @@ static bool resolve_mdns_hostname_ipv4(const SOCKADDR_INET *address, bool target
     }
     const uint32_t record_count = (uint32_t)ancount + (uint32_t)nscount + (uint32_t)arcount;
     for (uint32_t i = 0; i < record_count; ++i) {
+        const size_t owner_offset = offset;
         if (!dns_skip_name(response, response_len, &offset) || offset + 10 > response_len) {
             return false;
         }
         const uint16_t type = dns_read_u16(response, offset);
-        (void)dns_read_u16(response, offset + 2);
+        const uint16_t record_class = dns_read_u16(response, offset + 2);
         (void)dns_read_u32(response, offset + 4);
         const uint16_t rdlength = dns_read_u16(response, offset + 8);
         offset += 10;
         if (offset + rdlength > response_len) {
             return false;
         }
-        if (type == 12) {
+        /* Only a PTR record for the queried address answers the query; mDNS
+           responders also volunteer unrelated records. The top class bit is the
+           mDNS cache-flush flag. */
+        if (type == 12 && (record_class & 0x7FFFu) == 1) {
+            char owner[LP_HOSTNAME_MAX];
+            size_t name_offset = owner_offset;
             size_t rdata_offset = offset;
-            if (dns_read_name(response, response_len, &rdata_offset, out, out_cap)) {
-                return true;
+            if (dns_read_name(response, response_len, &name_offset, owner, sizeof(owner)) &&
+                _stricmp(owner, reverse_name) == 0 &&
+                dns_read_name(response, response_len, &rdata_offset, out, out_cap)) {
+                sanitize_hostname(out, true);
+                if (out[0] != '\0') {
+                    return true;
+                }
             }
         }
         offset += rdlength;
     }
+    out[0] = '\0';
     return false;
 }
 
@@ -299,6 +329,7 @@ static void resolve_hostname(const SOCKADDR_INET *address, char *out, size_t out
                      NI_NAMEREQD) != 0) {
         out[0] = '\0';
     }
+    sanitize_hostname(out, false);
 }
 
 /* Performs a case-insensitive substring check for hostname classification rules. */
