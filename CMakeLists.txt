@@ -66,6 +66,7 @@ endif()
 # --- core: portable C11 only, no OS headers ------------------------------------
 add_library(lp_core STATIC
   src/core/activity.c
+  src/core/capture.c
   src/core/config.c
   src/core/discovery.c
   src/core/format.c

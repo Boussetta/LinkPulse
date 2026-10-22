@@ -188,7 +188,7 @@ static void paint_device_details(HWND window, HDC target_dc)
         snprintf(capture_detail, sizeof(capture_detail),
                  "Captured %u packets: %llu B received, "
                  "%llu B sent.",
-                 state->capture.flow_count, (unsigned long long)state->capture.rx_bytes,
+                 state->capture.packet_count, (unsigned long long)state->capture.rx_bytes,
                  (unsigned long long)state->capture.tx_bytes);
     } else if (state->capture.detail[0] != '\0') {
         snprintf(capture_detail, sizeof(capture_detail),
