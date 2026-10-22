@@ -775,8 +775,7 @@ static void show_device_details(lp_tray_state_t *state, const char *device_ip, b
             }
         }
         if (activate) {
-            lp_device_details_show(state->device_details_hwnd, &neighbor, capture_state,
-                                   &capture);
+            lp_device_details_show(state->device_details_hwnd, &neighbor, capture_state, &capture);
         } else {
             lp_device_details_update(state->device_details_hwnd, &neighbor, capture_state,
                                      &capture);
@@ -879,8 +878,7 @@ static DWORD WINAPI device_refresh_thread_proc(LPVOID param)
                 }
             }
             lp_network_context_t network_context;
-            network_context_from_snapshot(&networks, isp_available ? &isp : NULL,
-                                          &network_context);
+            network_context_from_snapshot(&networks, isp_available ? &isp : NULL, &network_context);
             lp_win32_device_store_observe(state->device_store, &network_context, &neighbor);
         }
     }
@@ -910,8 +908,7 @@ static void start_device_refresh(lp_tray_state_t *state, const char *ip)
         free(request);
         return;
     }
-    snprintf(state->device_refresh_running_ip, sizeof(state->device_refresh_running_ip), "%s",
-             ip);
+    snprintf(state->device_refresh_running_ip, sizeof(state->device_refresh_running_ip), "%s", ip);
 }
 
 /* Refreshes identity and (when opted in) captures traffic for the selected device. If a refresh

@@ -26,7 +26,7 @@ void lp_this_pc_show(HWND window, const char *hostname, const lp_local_network_l
 
 /* Updates the snapshot and repaints without moving, showing, or activating the popup. */
 void lp_this_pc_update(HWND window, const char *hostname, const lp_local_network_list_t *networks,
-                       const uint64_t *rx_history, const uint64_t *tx_history,
-                       size_t history_count, bool use_bits);
+                       const uint64_t *rx_history, const uint64_t *tx_history, size_t history_count,
+                       bool use_bits);
 
 #endif /* LINKPULSE_THIS_PC_WIN32_H */

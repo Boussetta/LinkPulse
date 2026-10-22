@@ -1,5 +1,7 @@
 #include "this_pc_win32.h"
 
+#include "dpi_win32.h"
+
 #include "linkpulse/format.h"
 #include "linkpulse/log.h"
 
@@ -38,10 +40,10 @@ static bool is_taskbar_light_theme(void)
 {
     DWORD value = 1;
     DWORD size = sizeof(value);
-    return RegGetValueA(
-               HKEY_CURRENT_USER,
-               "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-               "SystemUsesLightTheme", RRF_RT_REG_DWORD, NULL, &value, &size) != ERROR_SUCCESS ||
+    return RegGetValueA(HKEY_CURRENT_USER,
+                        "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                        "SystemUsesLightTheme", RRF_RT_REG_DWORD, NULL, &value,
+                        &size) != ERROR_SUCCESS ||
            value != 0;
 }
 
@@ -186,8 +188,8 @@ static const char *connection_type_label(lp_connection_type_t type)
 }
 
 /* Draws one "label ........ value" row and returns the y just below it. */
-static int draw_info_row(HDC dc, HFONT label_font, HFONT value_font, COLORREF muted,
-                         COLORREF text, const char *label, const char *value, RECT client, int y)
+static int draw_info_row(HDC dc, HFONT label_font, HFONT value_font, COLORREF muted, COLORREF text,
+                         const char *label, const char *value, RECT client, int y)
 {
     RECT label_rect = {32, y, client.right / 2, y + LP_THIS_PC_INFO_ROW_HEIGHT};
     RECT value_rect = {client.right / 2, y, client.right - 32, y + LP_THIS_PC_INFO_ROW_HEIGHT};
@@ -203,11 +205,13 @@ static void paint_this_pc(HWND window, HDC target_dc)
         return;
     }
 
-    RECT client;
-    GetClientRect(window, &client);
+    const UINT dpi = lp_ui_window_dpi(window);
+    RECT physical;
+    GetClientRect(window, &physical);
+    const RECT client = lp_ui_layout_client_rect(window, dpi);
 
     HDC dc = CreateCompatibleDC(target_dc);
-    HBITMAP bitmap = CreateCompatibleBitmap(target_dc, client.right, client.bottom);
+    HBITMAP bitmap = CreateCompatibleBitmap(target_dc, physical.right, physical.bottom);
     if (dc == NULL || bitmap == NULL) {
         if (bitmap != NULL) {
             DeleteObject(bitmap);
@@ -218,6 +222,7 @@ static void paint_this_pc(HWND window, HDC target_dc)
         return;
     }
     HBITMAP old_bitmap = (HBITMAP)SelectObject(dc, bitmap);
+    lp_ui_begin_scaled_paint(dc, dpi);
     FillRect(dc, &client, state->background_brush);
 
     const bool light = is_taskbar_light_theme();
@@ -276,10 +281,10 @@ static void paint_this_pc(HWND window, HDC target_dc)
     const lp_local_network_list_t *networks = &state->networks;
     const bool is_wifi = networks->local_connection_type == LP_CONNECTION_WIFI;
     int row_y = divider_y + 14;
-    row_y = draw_info_row(dc, state->label_font, state->label_font, muted, text, "Adapter",
-                          networks->local_adapter_name[0] != '\0' ? networks->local_adapter_name
-                                                                    : "--",
-                          client, row_y);
+    row_y =
+        draw_info_row(dc, state->label_font, state->label_font, muted, text, "Adapter",
+                      networks->local_adapter_name[0] != '\0' ? networks->local_adapter_name : "--",
+                      client, row_y);
     row_y = draw_info_row(dc, state->label_font, state->label_font, muted, text, "Connection type",
                           connection_type_label(networks->local_connection_type), client, row_y);
     if (is_wifi) {
@@ -299,9 +304,9 @@ static void paint_this_pc(HWND window, HDC target_dc)
     }
     row_y = draw_info_row(dc, state->label_font, state->label_font, muted, text, "IPv4 address",
                           local_ip, client, row_y);
-    row_y = draw_info_row(
-        dc, state->label_font, state->label_font, muted, text, "IPv6 address",
-        networks->local_ipv6[0] != '\0' ? networks->local_ipv6 : "--", client, row_y);
+    row_y =
+        draw_info_row(dc, state->label_font, state->label_font, muted, text, "IPv6 address",
+                      networks->local_ipv6[0] != '\0' ? networks->local_ipv6 : "--", client, row_y);
     const char *dns_name =
         networks->local_dns_suffix[0] != '\0' ? networks->local_dns_suffix : hostname;
     row_y = draw_info_row(dc, state->label_font, state->label_font, muted, text, "DNS name",
@@ -315,7 +320,8 @@ static void paint_this_pc(HWND window, HDC target_dc)
     SelectObject(dc, old_brush);
     DeleteObject(frame_pen);
 
-    BitBlt(target_dc, 0, 0, client.right, client.bottom, dc, 0, 0, SRCCOPY);
+    lp_ui_end_scaled_paint(dc, dpi);
+    BitBlt(target_dc, 0, 0, physical.right, physical.bottom, dc, 0, 0, SRCCOPY);
     SelectObject(dc, old_bitmap);
     DeleteObject(bitmap);
     DeleteDC(dc);
@@ -366,11 +372,15 @@ static LRESULT CALLBACK this_pc_wndproc(HWND window, UINT message, WPARAM wparam
             go_back(window);
         }
         return 0;
+    case WM_DPICHANGED:
+        lp_ui_handle_dpi_changed(window, wparam, LP_THIS_PC_WIDTH, LP_THIS_PC_HEIGHT);
+        return 0;
     case WM_LBUTTONUP: {
-        const int x = (short)LOWORD(lparam);
-        const int y = (short)HIWORD(lparam);
-        RECT client;
-        GetClientRect(window, &client);
+        const UINT dpi = lp_ui_window_dpi(window);
+        const POINT point = lp_ui_layout_point(lparam, dpi);
+        const int x = point.x;
+        const int y = point.y;
+        const RECT client = lp_ui_layout_client_rect(window, dpi);
         if (x >= client.right - 58 && y <= 58) {
             ShowWindow(window, SW_HIDE);
             return 0;
@@ -466,8 +476,8 @@ static bool store_snapshot(HWND window, const char *hostname,
 }
 
 void lp_this_pc_update(HWND window, const char *hostname, const lp_local_network_list_t *networks,
-                       const uint64_t *rx_history, const uint64_t *tx_history,
-                       size_t history_count, bool use_bits)
+                       const uint64_t *rx_history, const uint64_t *tx_history, size_t history_count,
+                       bool use_bits)
 {
     if (store_snapshot(window, hostname, networks, rx_history, tx_history, history_count,
                        use_bits)) {
@@ -487,14 +497,13 @@ void lp_this_pc_show(HWND window, const char *hostname, const lp_local_network_l
     POINT cursor;
     GetCursorPos(&cursor);
     HMONITOR monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO monitor_info;
-    memset(&monitor_info, 0, sizeof(monitor_info));
-    monitor_info.cbSize = sizeof(monitor_info);
-    GetMonitorInfoA(monitor, &monitor_info);
-    const int x = monitor_info.rcWork.right - LP_THIS_PC_WIDTH - 12;
-    const int y = monitor_info.rcWork.bottom - LP_THIS_PC_HEIGHT - 8;
-    SetWindowPos(window, HWND_TOPMOST, x, y, LP_THIS_PC_WIDTH, LP_THIS_PC_HEIGHT,
-                SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    UINT dpi = LP_UI_DEFAULT_DPI;
+    const RECT rect = lp_ui_popup_rect(monitor, LP_THIS_PC_WIDTH, LP_THIS_PC_HEIGHT, &dpi);
+    const int width = rect.right - rect.left;
+    const int height = rect.bottom - rect.top;
+    SetWindowPos(window, HWND_TOPMOST, rect.left, rect.top, width, height,
+                 SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    lp_ui_apply_popup_region(window, width, height, dpi);
     SetForegroundWindow(window);
     InvalidateRect(window, NULL, FALSE);
 }

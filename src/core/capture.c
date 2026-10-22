@@ -40,8 +40,7 @@ static lp_capture_direction_t classify_addresses(const uint8_t *source, const ui
     return LP_CAPTURE_FRAME_IGNORED;
 }
 
-lp_capture_direction_t lp_capture_classify_frame(int link_type, const uint8_t *frame,
-                                                 size_t caplen,
+lp_capture_direction_t lp_capture_classify_frame(int link_type, const uint8_t *frame, size_t caplen,
                                                  const lp_capture_address_t *device)
 {
     return lp_capture_classify_frame_peer(link_type, frame, caplen, device, NULL);

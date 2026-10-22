@@ -1143,8 +1143,7 @@ static void query_wifi_details(const char *adapter_guid, lp_local_network_list_t
 {
     HANDLE client = NULL;
     DWORD negotiated_version = 0;
-    if (WlanOpenHandle(2, NULL, &negotiated_version, &client) != ERROR_SUCCESS ||
-        client == NULL) {
+    if (WlanOpenHandle(2, NULL, &negotiated_version, &client) != ERROR_SUCCESS || client == NULL) {
         return;
     }
     PWLAN_INTERFACE_INFO_LIST interface_list = NULL;
@@ -1251,16 +1250,14 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
         if (is_default_adapter) {
             out->local_connection_type = connection_type_for_interface(&adapter->Luid);
             if (adapter->FriendlyName != NULL) {
-                WideCharToMultiByte(CP_ACP, 0, adapter->FriendlyName, -1,
-                                    out->local_adapter_name, sizeof(out->local_adapter_name), NULL,
-                                    NULL);
+                wide_to_ansi(adapter->FriendlyName, out->local_adapter_name,
+                             sizeof(out->local_adapter_name));
             }
             if (adapter->DnsSuffix != NULL && adapter->DnsSuffix[0] != L'\0') {
-                WideCharToMultiByte(CP_ACP, 0, adapter->DnsSuffix, -1, out->local_dns_suffix,
-                                    sizeof(out->local_dns_suffix), NULL, NULL);
+                wide_to_ansi(adapter->DnsSuffix, out->local_dns_suffix,
+                             sizeof(out->local_dns_suffix));
             }
-            if (out->local_connection_type == LP_CONNECTION_WIFI &&
-                adapter->AdapterName != NULL) {
+            if (out->local_connection_type == LP_CONNECTION_WIFI && adapter->AdapterName != NULL) {
                 query_wifi_details(adapter->AdapterName, out);
             }
         }
@@ -1289,9 +1286,8 @@ lp_status_t lp_net_local_networks(lp_local_network_list_t *out)
                 if (out->local_ip[0] == '\0') {
                     snprintf(out->local_ip, sizeof(out->local_ip), "%s", address);
                 }
-            } else if (is_default_adapter &&
-                      unicast->Address.lpSockaddr->sa_family == AF_INET6 &&
-                      out->local_ipv6[0] == '\0') {
+            } else if (is_default_adapter && unicast->Address.lpSockaddr->sa_family == AF_INET6 &&
+                       out->local_ipv6[0] == '\0') {
                 snprintf(out->local_ipv6, sizeof(out->local_ipv6), "%s", address);
             }
         }
