@@ -34,3 +34,52 @@ void lp_format_rate(uint64_t bytes_per_sec, bool use_bits, char *out, size_t out
         snprintf(out, out_cap, "%.1f %s%s/s", value, prefixes[prefix_index], unit_base);
     }
 }
+
+/* Escapes one UTF-8 string for XML, counting the full length even when the buffer is short. */
+size_t lp_format_xml_escape(const char *in, char *out, size_t out_cap)
+{
+    if (out != NULL && out_cap > 0) {
+        out[0] = '\0';
+    }
+    if (in == NULL) {
+        return 0;
+    }
+
+    size_t length = 0;
+    for (const unsigned char *p = (const unsigned char *)in; *p != '\0'; ++p) {
+        const char *entity = NULL;
+        switch (*p) {
+        case '&':
+            entity = "&amp;";
+            break;
+        case '<':
+            entity = "&lt;";
+            break;
+        case '>':
+            entity = "&gt;";
+            break;
+        case '"':
+            entity = "&quot;";
+            break;
+        case '\'':
+            entity = "&apos;";
+            break;
+        default:
+            break;
+        }
+        /* Control characters are invalid in XML 1.0 and never meaningful in a toast. */
+        if (entity == NULL && (*p < 0x20 || *p == 0x7f)) {
+            continue;
+        }
+
+        const char single[2] = {(char)*p, '\0'};
+        for (const char *piece = (entity != NULL) ? entity : single; *piece != '\0';
+             ++piece, ++length) {
+            if (out != NULL && length + 1 < out_cap) {
+                out[length] = *piece;
+                out[length + 1] = '\0';
+            }
+        }
+    }
+    return length;
+}
