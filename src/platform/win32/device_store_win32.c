@@ -63,8 +63,8 @@ typedef struct {
    than trusting each caller to hold the same external lock. */
 typedef struct {
     SRWLOCK lock;
-    WCHAR
-        path[LP_DEVICE_STORE_PATH_MAX]; /* wide: profile paths may be outside the ANSI code page */
+    /* Wide: profile paths may be outside the ANSI code page. */
+    WCHAR path[LP_DEVICE_STORE_PATH_MAX];
     lp_network_record_t *networks;
     size_t network_count;
     size_t network_capacity;
