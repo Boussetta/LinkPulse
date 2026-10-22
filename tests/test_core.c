@@ -184,21 +184,72 @@ static void test_log_level_and_filtering(void)
 
     fclose(visible_capture);
 
+    /* Separate streams for stderr and the file sink, so each output path is
+       checked on its own and a broken sink cannot hide behind stderr. */
+    FILE *stderr_capture = lp_tmpfile();
     FILE *file_capture = lp_tmpfile();
-    LP_CHECK(file_capture != NULL);
-    if (file_capture == NULL) {
+    LP_CHECK(stderr_capture != NULL && file_capture != NULL);
+    if (stderr_capture == NULL || file_capture == NULL) {
+        if (stderr_capture != NULL) {
+            fclose(stderr_capture);
+        }
+        if (file_capture != NULL) {
+            fclose(file_capture);
+        }
         return;
     }
 
     lp_log_set_file(file_capture);
-    with_captured_stderr(file_capture, log_file_message);
+    with_captured_stderr(stderr_capture, log_file_message);
     lp_log_set_file(NULL);
+
     rewind(file_capture);
     read_stream(file_capture, buffer, sizeof(buffer));
     LP_CHECK(strstr(buffer, "INFO ") != NULL);
-    LP_CHECK(strstr(buffer, "file info message") != NULL);
+    LP_CHECK(strstr(buffer, "file info message\n") != NULL);
     LP_CHECK(buffer[0] == '[' && buffer[5] == '-');
+    LP_CHECK(strchr(buffer, '\n') == buffer + strlen(buffer) - 1); /* exactly one record */
+
+    rewind(stderr_capture);
+    read_stream(stderr_capture, buffer, sizeof(buffer));
+    LP_CHECK(strstr(buffer, "file info message") != NULL); /* stderr still gets it too */
+
+    /* Once the sink is removed, nothing more reaches the old file. */
+    fseek(file_capture, 0, SEEK_END);
+    const long size_after_detach = ftell(file_capture);
+    with_captured_stderr(stderr_capture, log_file_message);
+    fseek(file_capture, 0, SEEK_END);
+    LP_CHECK(ftell(file_capture) == size_after_detach);
+    fclose(stderr_capture);
     fclose(file_capture);
+}
+
+/* Logs one message longer than the formatting buffer. */
+static void log_oversized_message(void)
+{
+    char long_text[2048];
+    memset(long_text, 'x', sizeof(long_text) - 1);
+    long_text[sizeof(long_text) - 1] = '\0';
+    lp_log_set_level(LP_LOG_INFO);
+    LP_INFO("%s", long_text);
+}
+
+/* Verifies an oversized message is truncated but still ends its line. */
+static void test_log_truncates_oversized_message(void)
+{
+    FILE *capture = lp_tmpfile();
+    LP_CHECK(capture != NULL);
+    if (capture == NULL) {
+        return;
+    }
+    with_captured_stderr(capture, log_oversized_message);
+    rewind(capture);
+    char buffer[4096];
+    read_stream(capture, buffer, sizeof(buffer));
+    const size_t length = strlen(buffer);
+    LP_CHECK(length > 0 && length < 2048);
+    LP_CHECK(length > 0 && buffer[length - 1] == '\n');
+    fclose(capture);
 }
 
 static uint64_t mbps_to_bytes_per_sec(uint64_t mbps)
@@ -277,6 +328,7 @@ int main(void)
     test_iface_list_find();
     test_iface_list_free_is_idempotent();
     test_log_level_and_filtering();
+    test_log_truncates_oversized_message();
     test_speedtest_quality_unknown_and_partial();
     test_speedtest_quality_threshold_boundaries();
     test_speedtest_quality_uses_weakest_dimension();
