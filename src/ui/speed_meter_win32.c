@@ -27,14 +27,22 @@
 
 #define WM_LP_SPEED_PROGRESS (WM_APP + 10)
 
+/* One speed test, shared by the meter and the worker running it. Each side
+   holds a reference and the last to release it frees the run, so neither side
+   ever waits for the other: the UI can abandon a run that is stuck in a
+   network call, and the worker never touches the window's state. */
 typedef struct {
-    CRITICAL_SECTION lock;
-    lp_speedtest_progress_t progress;
+    volatile LONG refs;
     volatile long cancel;
     volatile LONG running;
-    volatile LONG destroying;
-    HANDLE thread;
-    HANDLE destroy_wait;
+    volatile LONG detached; /* the meter dropped its reference; stop posting to it */
+    CRITICAL_SECTION lock;
+    lp_speedtest_progress_t progress;
+    HWND window;
+} lp_speed_run_t;
+
+typedef struct {
+    lp_speed_run_t *run; /* current test, or NULL; owned by the UI thread */
 
     HFONT title_font;
     HFONT value_font;
@@ -53,46 +61,65 @@ static lp_speed_meter_state_t *state_of(HWND window)
     return (lp_speed_meter_state_t *)GetWindowLongPtrA(window, GWLP_USERDATA);
 }
 
-static void stop_test(lp_speed_meter_state_t *state);
+/* Drops one reference and frees the run once neither side needs it. */
+static void release_run(lp_speed_run_t *run)
+{
+    if (run != NULL && InterlockedDecrement(&run->refs) == 0) {
+        DeleteCriticalSection(&run->lock);
+        HeapFree(GetProcessHeap(), 0, run);
+    }
+}
+
+/* True while the current run is in progress and has not been cancelled. */
+static bool run_is_active(const lp_speed_meter_state_t *state)
+{
+    lp_speed_run_t *run = state->run;
+    return run != NULL && InterlockedCompareExchange(&run->running, 0, 0) != 0 &&
+           run->cancel == 0;
+}
+
+/* Copies the current run's progress, or a blank one when no test has run. */
+static void read_progress(const lp_speed_meter_state_t *state, lp_speedtest_progress_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    lp_speed_run_t *run = state->run;
+    if (run != NULL) {
+        EnterCriticalSection(&run->lock);
+        *out = run->progress;
+        LeaveCriticalSection(&run->lock);
+    }
+}
+
+/* Cancels the current run and lets its worker finish on its own; never blocks. */
+static void detach_run(lp_speed_meter_state_t *state)
+{
+    lp_speed_run_t *run = state->run;
+    if (run == NULL) {
+        return;
+    }
+    state->run = NULL;
+    run->cancel = 1;
+    InterlockedExchange(&run->detached, 1);
+    release_run(run);
+}
 
 static void free_state(lp_speed_meter_state_t *state)
 {
+    detach_run(state);
     DeleteObject(state->title_font);
     DeleteObject(state->value_font);
     DeleteObject(state->label_font);
     DeleteObject(state->small_font);
     DeleteObject(state->background_brush);
-    DeleteCriticalSection(&state->lock);
     HeapFree(GetProcessHeap(), 0, state);
 }
 
-static VOID CALLBACK on_destroy_wait_complete(PVOID context, BOOLEAN timed_out)
-{
-    (void)timed_out;
-    lp_speed_meter_state_t *state = (lp_speed_meter_state_t *)context;
-    InterlockedExchange(&state->running, 0);
-    if (state->thread != NULL) {
-        CloseHandle(state->thread);
-        state->thread = NULL;
-    }
-    state->destroy_wait = NULL;
-    free_state(state);
-}
-
-static DWORD WINAPI destroy_wait_thread_proc(LPVOID param)
-{
-    lp_speed_meter_state_t *state = (lp_speed_meter_state_t *)param;
-    if (state->thread != NULL) {
-        WaitForSingleObject(state->thread, INFINITE);
-    }
-    on_destroy_wait_complete(state, FALSE);
-    return 0;
-}
-
-/* Asks the worker to abort; it may take until the current chunk to notice. */
+/* Asks the worker to abort; it notices before its next chunk. */
 static void cancel_test(lp_speed_meter_state_t *state)
 {
-    state->cancel = 1;
+    if (state->run != NULL) {
+        state->run->cancel = 1;
+    }
 }
 
 /* Reads the taskbar theme setting so the meter matches the map and tray icon. */
@@ -292,10 +319,8 @@ static void paint_meter(HWND window, HDC target_dc)
     FillRect(dc, &client, state->background_brush);
 
     lp_speedtest_progress_t progress;
-    EnterCriticalSection(&state->lock);
-    progress = state->progress;
-    LeaveCriticalSection(&state->lock);
-    const bool running = InterlockedCompareExchange(&state->running, 0, 0) != 0;
+    read_progress(state, &progress);
+    const bool running = run_is_active(state);
 
     const bool light = is_taskbar_light_theme();
     const COLORREF text = light ? RGB(30, 35, 42) : RGB(240, 243, 247);
@@ -450,75 +475,66 @@ static void paint_meter(HWND window, HDC target_dc)
 /* Worker-thread callback: publishes a snapshot and wakes the UI thread. */
 static void on_speedtest_progress(const lp_speedtest_progress_t *progress, void *user_data)
 {
-    HWND window = (HWND)user_data;
-    lp_speed_meter_state_t *state = state_of(window);
-    if (state == NULL) {
-        return;
+    lp_speed_run_t *run = (lp_speed_run_t *)user_data;
+    EnterCriticalSection(&run->lock);
+    run->progress = *progress;
+    LeaveCriticalSection(&run->lock);
+    if (InterlockedCompareExchange(&run->detached, 0, 0) == 0) {
+        PostMessageA(run->window, WM_LP_SPEED_PROGRESS, 0, (LPARAM)run);
     }
-    EnterCriticalSection(&state->lock);
-    state->progress = *progress;
-    LeaveCriticalSection(&state->lock);
-    PostMessageA(window, WM_LP_SPEED_PROGRESS, 0, 0);
 }
 
 static DWORD WINAPI speedtest_thread_proc(LPVOID param)
 {
-    HWND window = (HWND)param;
-    lp_speed_meter_state_t *state = state_of(window);
-    if (state == NULL) {
-        return 0;
-    }
+    lp_speed_run_t *run = (lp_speed_run_t *)param;
     lp_speedtest_request_t request;
     memset(&request, 0, sizeof(request));
     request.on_progress = on_speedtest_progress;
-    request.user_data = window;
-    request.cancel_flag = &state->cancel;
+    request.user_data = run;
+    request.cancel_flag = &run->cancel;
 
     lp_speedtest_progress_t result;
     (void)lp_speedtest_run(&request, &result);
 
-    EnterCriticalSection(&state->lock);
-    state->progress = result;
-    LeaveCriticalSection(&state->lock);
-    InterlockedExchange(&state->running, 0);
-    if (InterlockedCompareExchange(&state->destroying, 0, 0) == 0) {
-        PostMessageA(window, WM_LP_SPEED_PROGRESS, 0, 0);
+    EnterCriticalSection(&run->lock);
+    run->progress = result;
+    LeaveCriticalSection(&run->lock);
+    InterlockedExchange(&run->running, 0);
+    if (InterlockedCompareExchange(&run->detached, 0, 0) == 0) {
+        PostMessageA(run->window, WM_LP_SPEED_PROGRESS, 0, (LPARAM)run);
     }
+    release_run(run);
     return 0;
 }
 
+/* Starts a fresh run. A cancelled run that is still winding down is detached
+   rather than awaited, so the UI thread never blocks on the network. */
 static void start_test(HWND window, lp_speed_meter_state_t *state)
 {
-    if (InterlockedCompareExchange(&state->running, 1, 0) != 0) {
+    if (run_is_active(state)) {
         return;
     }
-    if (state->thread != NULL) {
-        WaitForSingleObject(state->thread, INFINITE);
-        CloseHandle(state->thread);
-        state->thread = NULL;
+    detach_run(state);
+
+    lp_speed_run_t *run =
+        (lp_speed_run_t *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*run));
+    if (run == NULL) {
+        return;
     }
-    state->cancel = 0;
-    EnterCriticalSection(&state->lock);
-    memset(&state->progress, 0, sizeof(state->progress));
-    LeaveCriticalSection(&state->lock);
+    InitializeCriticalSection(&run->lock);
+    run->refs = 2; /* the meter and the worker */
+    run->running = 1;
+    run->window = window;
+
+    HANDLE thread = CreateThread(NULL, 0, speedtest_thread_proc, run, 0, NULL);
+    if (thread == NULL) {
+        DeleteCriticalSection(&run->lock);
+        HeapFree(GetProcessHeap(), 0, run);
+        return;
+    }
+    CloseHandle(thread);
+    state->run = run;
     InvalidateRect(window, NULL, FALSE);
-
-    state->thread = CreateThread(NULL, 0, speedtest_thread_proc, window, 0, NULL);
-    if (state->thread == NULL) {
-        InterlockedExchange(&state->running, 0);
-    }
-}
-
-/* Signals the worker to abort and blocks until it has actually stopped. */
-static void stop_test(lp_speed_meter_state_t *state)
-{
-    state->cancel = 1;
-    if (state->thread != NULL) {
-        WaitForSingleObject(state->thread, INFINITE);
-        CloseHandle(state->thread);
-        state->thread = NULL;
-    }
-    InterlockedExchange(&state->running, 0);
 }
 
 static LRESULT CALLBACK speed_meter_wndproc(HWND window, UINT message, WPARAM wparam,
@@ -531,7 +547,6 @@ static LRESULT CALLBACK speed_meter_wndproc(HWND window, UINT message, WPARAM wp
         if (state == NULL) {
             return -1;
         }
-        InitializeCriticalSection(&state->lock);
         state->title_font = CreateFontA(22, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
                                         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                         CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
@@ -559,9 +574,14 @@ static LRESULT CALLBACK speed_meter_wndproc(HWND window, UINT message, WPARAM wp
         EndPaint(window, &paint);
         return 0;
     }
-    case WM_LP_SPEED_PROGRESS:
-        InvalidateRect(window, NULL, FALSE);
+    case WM_LP_SPEED_PROGRESS: {
+        /* Only compared, never dereferenced: a detached run may already be freed. */
+        const lp_speed_meter_state_t *state = state_of(window);
+        if (state != NULL && (LPARAM)state->run == lparam) {
+            InvalidateRect(window, NULL, FALSE);
+        }
         return 0;
+    }
     case WM_KEYDOWN:
         if (wparam == VK_ESCAPE) {
             lp_speed_meter_state_t *state = state_of(window);
@@ -591,7 +611,7 @@ static LRESULT CALLBACK speed_meter_wndproc(HWND window, UINT message, WPARAM wp
         }
         const RECT button = button_rect(&client);
         if (x >= button.left && x <= button.right && y >= button.top && y <= button.bottom) {
-            if (InterlockedCompareExchange(&state->running, 0, 0) != 0) {
+            if (run_is_active(state)) {
                 cancel_test(state);
             } else {
                 start_test(window, state);
@@ -613,27 +633,10 @@ static LRESULT CALLBACK speed_meter_wndproc(HWND window, UINT message, WPARAM wp
     case WM_DESTROY: {
         lp_speed_meter_state_t *state = state_of(window);
         if (state != NULL) {
+            /* The worker only holds a reference to its run, never to this state,
+               so the state can go immediately while the run winds down. */
             SetWindowLongPtrA(window, GWLP_USERDATA, 0);
-            state->cancel = 1;
-            InterlockedExchange(&state->destroying, 1);
-            if (state->thread != NULL) {
-                if (WaitForSingleObject(state->thread, 0) == WAIT_OBJECT_0) {
-                    on_destroy_wait_complete(state, FALSE);
-                } else if (RegisterWaitForSingleObject(&state->destroy_wait, state->thread,
-                                                       on_destroy_wait_complete, state, INFINITE,
-                                                       WT_EXECUTEONLYONCE) == 0) {
-                    HANDLE wait_thread =
-                        CreateThread(NULL, 0, destroy_wait_thread_proc, state, 0, NULL);
-                    if (wait_thread != NULL) {
-                        CloseHandle(wait_thread);
-                    } else {
-                        WaitForSingleObject(state->thread, INFINITE);
-                        on_destroy_wait_complete(state, FALSE);
-                    }
-                }
-            } else {
-                free_state(state);
-            }
+            free_state(state);
         }
         return 0;
     }
@@ -677,10 +680,7 @@ void lp_speed_meter_show(HWND window, const char *router_label, const char *rout
     if (state == NULL) {
         return;
     }
-    stop_test(state);
-    EnterCriticalSection(&state->lock);
-    memset(&state->progress, 0, sizeof(state->progress));
-    LeaveCriticalSection(&state->lock);
+    detach_run(state); /* a fresh view: any previous test is abandoned, not awaited */
     snprintf(state->router_label, sizeof(state->router_label), "%s",
              router_label != NULL && router_label[0] != '\0' ? router_label : "Gateway");
     snprintf(state->router_ip, sizeof(state->router_ip), "%s", router_ip != NULL ? router_ip : "");

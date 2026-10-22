@@ -230,7 +230,8 @@ static lp_status_t measure_download(HINTERNET connection, const lp_speedtest_req
                 progress->phase_percent = elapsed_percent(elapsed_ns);
                 report(request, progress);
             }
-            if (elapsed_ns >= LP_SPEEDTEST_PHASE_NS) {
+            /* Check per chunk so a cancel does not wait out the whole phase. */
+            if (elapsed_ns >= LP_SPEEDTEST_PHASE_NS || is_cancelled(request)) {
                 stop = true;
                 break;
             }
@@ -314,7 +315,7 @@ static lp_status_t measure_upload(HINTERNET connection, const lp_speedtest_reque
                 progress->phase_percent = elapsed_percent(elapsed_ns);
                 report(request, progress);
             }
-            if (elapsed_ns >= LP_SPEEDTEST_PHASE_NS) {
+            if (elapsed_ns >= LP_SPEEDTEST_PHASE_NS || is_cancelled(request)) {
                 stop = true;
                 break;
             }
