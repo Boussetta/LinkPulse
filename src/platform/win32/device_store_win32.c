@@ -63,7 +63,8 @@ typedef struct {
    than trusting each caller to hold the same external lock. */
 typedef struct {
     SRWLOCK lock;
-    WCHAR path[LP_DEVICE_STORE_PATH_MAX]; /* wide: profile paths may be outside the ANSI code page */
+    /* Wide: profile paths may be outside the ANSI code page. */
+    WCHAR path[LP_DEVICE_STORE_PATH_MAX];
     lp_network_record_t *networks;
     size_t network_count;
     size_t network_capacity;
@@ -103,8 +104,8 @@ static bool wide_to_utf8(const WCHAR *value, char *out, size_t cap)
 static bool store_path(WCHAR *out, size_t cap)
 {
     WCHAR local_app_data[MAX_PATH];
-    const DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", local_app_data,
-                                                  ARRAYSIZE(local_app_data));
+    const DWORD length =
+        GetEnvironmentVariableW(L"LOCALAPPDATA", local_app_data, ARRAYSIZE(local_app_data));
     if (length == 0 || length >= ARRAYSIZE(local_app_data)) {
         return false;
     }
@@ -121,27 +122,42 @@ static bool store_path(WCHAR *out, size_t cap)
 
 static lp_device_type_t type_from_text(const char *value)
 {
-    if (strcmp(value, "laptop") == 0) return LP_DEVICE_LAPTOP;
-    if (strcmp(value, "mobile") == 0) return LP_DEVICE_MOBILE;
-    if (strcmp(value, "smartwatch") == 0) return LP_DEVICE_SMARTWATCH;
-    if (strcmp(value, "printer") == 0) return LP_DEVICE_PRINTER;
-    if (strcmp(value, "television") == 0) return LP_DEVICE_TELEVISION;
-    if (strcmp(value, "router") == 0) return LP_DEVICE_ROUTER;
-    if (strcmp(value, "desktop") == 0) return LP_DEVICE_DESKTOP;
+    if (strcmp(value, "laptop") == 0)
+        return LP_DEVICE_LAPTOP;
+    if (strcmp(value, "mobile") == 0)
+        return LP_DEVICE_MOBILE;
+    if (strcmp(value, "smartwatch") == 0)
+        return LP_DEVICE_SMARTWATCH;
+    if (strcmp(value, "printer") == 0)
+        return LP_DEVICE_PRINTER;
+    if (strcmp(value, "television") == 0)
+        return LP_DEVICE_TELEVISION;
+    if (strcmp(value, "router") == 0)
+        return LP_DEVICE_ROUTER;
+    if (strcmp(value, "desktop") == 0)
+        return LP_DEVICE_DESKTOP;
     return LP_DEVICE_UNKNOWN;
 }
 
 static const char *type_to_text(lp_device_type_t type)
 {
     switch (type) {
-    case LP_DEVICE_LAPTOP: return "laptop";
-    case LP_DEVICE_MOBILE: return "mobile";
-    case LP_DEVICE_SMARTWATCH: return "smartwatch";
-    case LP_DEVICE_PRINTER: return "printer";
-    case LP_DEVICE_TELEVISION: return "television";
-    case LP_DEVICE_ROUTER: return "router";
-    case LP_DEVICE_DESKTOP: return "desktop";
-    default: return "unknown";
+    case LP_DEVICE_LAPTOP:
+        return "laptop";
+    case LP_DEVICE_MOBILE:
+        return "mobile";
+    case LP_DEVICE_SMARTWATCH:
+        return "smartwatch";
+    case LP_DEVICE_PRINTER:
+        return "printer";
+    case LP_DEVICE_TELEVISION:
+        return "television";
+    case LP_DEVICE_ROUTER:
+        return "router";
+    case LP_DEVICE_DESKTOP:
+        return "desktop";
+    default:
+        return "unknown";
     }
 }
 
@@ -163,7 +179,8 @@ static lp_network_record_t *find_network(lp_device_store_t *store, const char *g
 
 /* Grows without a fixed cap: occasional travel between networks (home, work,
    a relative's house) must never silently stop being tracked. */
-static lp_network_record_t *find_or_create_network(lp_device_store_t *store, const char *gateway_mac)
+static lp_network_record_t *find_or_create_network(lp_device_store_t *store,
+                                                   const char *gateway_mac)
 {
     lp_network_record_t *existing = find_network(store, gateway_mac);
     if (existing != NULL) {
@@ -201,7 +218,8 @@ static lp_device_record_t *find_or_create_device(lp_network_record_t *network, c
         return existing;
     }
     if (network->device_count >= network->device_capacity) {
-        const size_t new_capacity = network->device_capacity == 0 ? 8 : network->device_capacity * 2;
+        const size_t new_capacity =
+            network->device_capacity == 0 ? 8 : network->device_capacity * 2;
         lp_device_record_t *grown = realloc(network->devices, new_capacity * sizeof(*grown));
         if (grown == NULL) {
             return NULL;
@@ -217,7 +235,8 @@ static lp_device_record_t *find_or_create_device(lp_network_record_t *network, c
 
 static void apply_record(const lp_device_record_t *record, lp_neighbor_t *neighbor)
 {
-    if (record->label[0] != '\0') copy_text(neighbor->label, sizeof(neighbor->label), record->label);
+    if (record->label[0] != '\0')
+        copy_text(neighbor->label, sizeof(neighbor->label), record->label);
     /* Falls back to a previously learned name/vendor when this poll's live
        resolution came back empty (e.g. a transient reverse-DNS failure). */
     if (neighbor->hostname[0] == '\0' && record->hostname[0] != '\0') {
@@ -226,8 +245,10 @@ static void apply_record(const lp_device_record_t *record, lp_neighbor_t *neighb
     if (neighbor->vendor[0] == '\0' && record->vendor[0] != '\0') {
         copy_text(neighbor->vendor, sizeof(neighbor->vendor), record->vendor);
     }
-    if (record->icon[0] != '\0') copy_text(neighbor->icon, sizeof(neighbor->icon), record->icon);
-    if (record->trusted) neighbor->trusted = true;
+    if (record->icon[0] != '\0')
+        copy_text(neighbor->icon, sizeof(neighbor->icon), record->icon);
+    if (record->trusted)
+        neighbor->trusted = true;
     if (record->has_device_type) {
         neighbor->device_type = record->device_type;
         neighbor->has_device_type_override = true;
@@ -246,7 +267,8 @@ static void read_device_attributes(IXmlReader *reader, lp_device_record_t *recor
         const WCHAR *value = NULL;
         if (FAILED(IXmlReader_GetQualifiedName(reader, &name, NULL)) ||
             FAILED(IXmlReader_GetValue(reader, &value, NULL))) {
-            if (IXmlReader_MoveToNextAttribute(reader) != S_OK) break;
+            if (IXmlReader_MoveToNextAttribute(reader) != S_OK)
+                break;
             continue;
         }
         char name_utf8[64];
@@ -255,14 +277,20 @@ static void read_device_attributes(IXmlReader *reader, lp_device_record_t *recor
             !wide_to_utf8(value, value_utf8, sizeof(value_utf8))) {
             /* Skip an oversized or unconvertible attribute, but still advance
                the cursor; re-reading it would drop every later attribute. */
-            if (IXmlReader_MoveToNextAttribute(reader) != S_OK) break;
+            if (IXmlReader_MoveToNextAttribute(reader) != S_OK)
+                break;
             continue;
         }
-        if (strcmp(name_utf8, "mac") == 0) copy_text(record->mac, sizeof(record->mac), value_utf8);
-        else if (strcmp(name_utf8, "label") == 0) copy_text(record->label, sizeof(record->label), value_utf8);
-        else if (strcmp(name_utf8, "hostname") == 0) copy_text(record->hostname, sizeof(record->hostname), value_utf8);
-        else if (strcmp(name_utf8, "vendor") == 0) copy_text(record->vendor, sizeof(record->vendor), value_utf8);
-        else if (strcmp(name_utf8, "icon") == 0) copy_text(record->icon, sizeof(record->icon), value_utf8);
+        if (strcmp(name_utf8, "mac") == 0)
+            copy_text(record->mac, sizeof(record->mac), value_utf8);
+        else if (strcmp(name_utf8, "label") == 0)
+            copy_text(record->label, sizeof(record->label), value_utf8);
+        else if (strcmp(name_utf8, "hostname") == 0)
+            copy_text(record->hostname, sizeof(record->hostname), value_utf8);
+        else if (strcmp(name_utf8, "vendor") == 0)
+            copy_text(record->vendor, sizeof(record->vendor), value_utf8);
+        else if (strcmp(name_utf8, "icon") == 0)
+            copy_text(record->icon, sizeof(record->icon), value_utf8);
         else if (strcmp(name_utf8, "type") == 0) {
             record->device_type = type_from_text(value_utf8);
             record->has_device_type = record->device_type != LP_DEVICE_UNKNOWN;
@@ -290,14 +318,16 @@ static void read_network_attributes(IXmlReader *reader, lp_network_record_t *net
         const WCHAR *value = NULL;
         if (FAILED(IXmlReader_GetQualifiedName(reader, &name, NULL)) ||
             FAILED(IXmlReader_GetValue(reader, &value, NULL))) {
-            if (IXmlReader_MoveToNextAttribute(reader) != S_OK) break;
+            if (IXmlReader_MoveToNextAttribute(reader) != S_OK)
+                break;
             continue;
         }
         char name_utf8[64];
         char value_utf8[LP_HOSTNAME_MAX];
         if (!wide_to_utf8(name, name_utf8, sizeof(name_utf8)) ||
             !wide_to_utf8(value, value_utf8, sizeof(value_utf8))) {
-            if (IXmlReader_MoveToNextAttribute(reader) != S_OK) break;
+            if (IXmlReader_MoveToNextAttribute(reader) != S_OK)
+                break;
             continue;
         }
         if (strcmp(name_utf8, "gateway-hostname") == 0)
@@ -370,15 +400,18 @@ static void load_store(lp_device_store_t *store, bool *migrated)
     IStream *stream = NULL;
     if (FAILED(SHCreateStreamOnFileEx(store->path, STGM_READ | STGM_SHARE_DENY_NONE, 0, FALSE, NULL,
                                       &stream))) {
-        if (uninitialize) CoUninitialize();
+        if (uninitialize)
+            CoUninitialize();
         return;
     }
     IXmlReader *reader = NULL;
     if (FAILED(CreateXmlReader(&IID_IXmlReader, (void **)&reader, NULL)) ||
         FAILED(IXmlReader_SetInput(reader, (IUnknown *)stream))) {
-        if (reader != NULL) IXmlReader_Release(reader);
+        if (reader != NULL)
+            IXmlReader_Release(reader);
         IStream_Release(stream);
-        if (uninitialize) CoUninitialize();
+        if (uninitialize)
+            CoUninitialize();
         return;
     }
 
@@ -398,11 +431,14 @@ static void load_store(lp_device_store_t *store, bool *migrated)
         if (FAILED(read_result)) {
             break;
         }
-        if (node_type != XmlNodeType_Element) continue;
+        if (node_type != XmlNodeType_Element)
+            continue;
         const WCHAR *name = NULL;
-        if (FAILED(IXmlReader_GetQualifiedName(reader, &name, NULL)) || name == NULL) continue;
+        if (FAILED(IXmlReader_GetQualifiedName(reader, &name, NULL)) || name == NULL)
+            continue;
         char name_utf8[64];
-        if (!wide_to_utf8(name, name_utf8, sizeof(name_utf8))) continue;
+        if (!wide_to_utf8(name, name_utf8, sizeof(name_utf8)))
+            continue;
 
         if (!root_seen) {
             root_seen = true;
@@ -430,10 +466,12 @@ static void load_store(lp_device_store_t *store, bool *migrated)
                 current_network =
                     find_or_create_network(store, LP_DEVICE_STORE_UNKNOWN_NETWORK_KEY);
             }
-            if (current_network == NULL) continue;
+            if (current_network == NULL)
+                continue;
             lp_device_record_t header = {0};
             read_device_attributes(reader, &header);
-            if (header.mac[0] == '\0') continue;
+            if (header.mac[0] == '\0')
+                continue;
             lp_device_record_t *device = find_or_create_device(current_network, header.mac);
             if (device != NULL) {
                 *device = header;
@@ -442,7 +480,8 @@ static void load_store(lp_device_store_t *store, bool *migrated)
     }
     IXmlReader_Release(reader);
     IStream_Release(stream);
-    if (uninitialize) CoUninitialize();
+    if (uninitialize)
+        CoUninitialize();
 
     if (declared_version < LP_DEVICE_STORE_SCHEMA_VERSION) {
         LP_INFO("migrating device store from schema v%d to v%d", declared_version,
@@ -467,7 +506,8 @@ static HRESULT write_attribute(IXmlWriter *writer, const char *name, const char 
 /* Chains writer calls so the first failure short-circuits the rest. */
 #define LP_XML_WRITE(call)                                                                         \
     do {                                                                                           \
-        if (SUCCEEDED(hr)) hr = (call);                                                            \
+        if (SUCCEEDED(hr))                                                                         \
+            hr = (call);                                                                           \
     } while (0)
 
 /* Serializes the whole store; stops at the first failed write and returns it. */
@@ -549,21 +589,27 @@ static bool save_store(const lp_device_store_t *store)
     IStream *stream = NULL;
     if (FAILED(SHCreateStreamOnFileEx(temp_wide, STGM_CREATE | STGM_WRITE | STGM_SHARE_DENY_NONE,
                                       FILE_ATTRIBUTE_NORMAL, TRUE, NULL, &stream))) {
-        if (uninitialize) CoUninitialize();
+        if (uninitialize)
+            CoUninitialize();
         return false;
     }
     IXmlWriter *writer = NULL;
     HRESULT hr = CreateXmlWriter(&IID_IXmlWriter, (void **)&writer, NULL);
-    if (SUCCEEDED(hr)) hr = IXmlWriter_SetOutput(writer, (IUnknown *)stream);
-    if (SUCCEEDED(hr)) hr = write_store_xml(writer, store);
-    if (writer != NULL) IXmlWriter_Release(writer);
-    if (SUCCEEDED(hr)) hr = IStream_Commit(stream, STGC_DEFAULT);
+    if (SUCCEEDED(hr))
+        hr = IXmlWriter_SetOutput(writer, (IUnknown *)stream);
+    if (SUCCEEDED(hr))
+        hr = write_store_xml(writer, store);
+    if (writer != NULL)
+        IXmlWriter_Release(writer);
+    if (SUCCEEDED(hr))
+        hr = IStream_Commit(stream, STGC_DEFAULT);
     IStream_Release(stream);
-    if (uninitialize) CoUninitialize();
+    if (uninitialize)
+        CoUninitialize();
 
     const bool saved = SUCCEEDED(hr) && flush_file_to_disk(temp_wide) &&
-                 MoveFileExW(temp_wide, store->path,
-                             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+                       MoveFileExW(temp_wide, store->path,
+                                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
     if (!saved) {
         LP_WARN("device store save failed (hr=0x%08lx, error %lu); keeping previous file",
                 (unsigned long)hr, GetLastError());
@@ -574,7 +620,8 @@ static bool save_store(const lp_device_store_t *store)
 
 int lp_win32_device_store_open(void **store_out)
 {
-    if (store_out == NULL) return 1;
+    if (store_out == NULL)
+        return 1;
     *store_out = NULL;
     lp_device_store_t *store = calloc(1, sizeof(*store));
     if (store == NULL || !store_path(store->path, ARRAYSIZE(store->path))) {
@@ -595,12 +642,14 @@ int lp_win32_device_store_open(void **store_out)
 void lp_win32_device_store_apply(void *opaque, const char *gateway_mac, lp_neighbor_t *neighbor)
 {
     lp_device_store_t *store = opaque;
-    if (store == NULL || neighbor == NULL || neighbor->mac[0] == '\0') return;
+    if (store == NULL || neighbor == NULL || neighbor->mac[0] == '\0')
+        return;
     AcquireSRWLockShared(&store->lock);
-    lp_network_record_t *network =
-        find_network(store, gateway_mac != NULL ? gateway_mac : LP_DEVICE_STORE_UNKNOWN_NETWORK_KEY);
+    lp_network_record_t *network = find_network(
+        store, gateway_mac != NULL ? gateway_mac : LP_DEVICE_STORE_UNKNOWN_NETWORK_KEY);
     const lp_device_record_t *device = network != NULL ? find_device(network, neighbor->mac) : NULL;
-    if (device != NULL) apply_record(device, neighbor);
+    if (device != NULL)
+        apply_record(device, neighbor);
     ReleaseSRWLockShared(&store->lock);
 }
 
@@ -608,22 +657,24 @@ void lp_win32_device_store_apply(void *opaque, const char *gateway_mac, lp_neigh
 static void observe_locked(lp_device_store_t *store, const lp_network_context_t *network_context,
                            const lp_neighbor_t *neighbor)
 {
-    const char *gateway_mac =
-        (network_context != NULL && network_context->gateway_mac != NULL)
-            ? network_context->gateway_mac
-            : LP_DEVICE_STORE_UNKNOWN_NETWORK_KEY;
+    const char *gateway_mac = (network_context != NULL && network_context->gateway_mac != NULL)
+                                  ? network_context->gateway_mac
+                                  : LP_DEVICE_STORE_UNKNOWN_NETWORK_KEY;
     lp_network_record_t *network = find_or_create_network(store, gateway_mac);
-    if (network == NULL) return;
-    if (network->first_seen == 0) network->first_seen = now_seconds();
+    if (network == NULL)
+        return;
+    if (network->first_seen == 0)
+        network->first_seen = now_seconds();
     network->last_seen = now_seconds();
     if (network_context != NULL) {
-        if (network_context->gateway_hostname != NULL && network_context->gateway_hostname[0] != '\0') {
+        if (network_context->gateway_hostname != NULL &&
+            network_context->gateway_hostname[0] != '\0') {
             copy_text(network->gateway_hostname, sizeof(network->gateway_hostname),
-                     network_context->gateway_hostname);
+                      network_context->gateway_hostname);
         }
         if (network_context->gateway_vendor != NULL && network_context->gateway_vendor[0] != '\0') {
             copy_text(network->gateway_vendor, sizeof(network->gateway_vendor),
-                     network_context->gateway_vendor);
+                      network_context->gateway_vendor);
         }
         if (network_context->isp != NULL && network_context->isp->isp[0] != '\0') {
             network->isp = *network_context->isp;
@@ -631,8 +682,10 @@ static void observe_locked(lp_device_store_t *store, const lp_network_context_t 
     }
 
     lp_device_record_t *device = find_or_create_device(network, neighbor->mac);
-    if (device == NULL) return;
-    if (device->first_seen == 0) device->first_seen = now_seconds();
+    if (device == NULL)
+        return;
+    if (device->first_seen == 0)
+        device->first_seen = now_seconds();
     copy_text(device->hostname, sizeof(device->hostname), neighbor->hostname);
     copy_text(device->vendor, sizeof(device->vendor), neighbor->vendor);
     if (!device->has_device_type && neighbor->device_type != LP_DEVICE_UNKNOWN &&
@@ -645,10 +698,11 @@ static void observe_locked(lp_device_store_t *store, const lp_network_context_t 
 }
 
 void lp_win32_device_store_observe(void *opaque, const lp_network_context_t *network_context,
-                                    const lp_neighbor_t *neighbor)
+                                   const lp_neighbor_t *neighbor)
 {
     lp_device_store_t *store = opaque;
-    if (store == NULL || neighbor == NULL || neighbor->mac[0] == '\0') return;
+    if (store == NULL || neighbor == NULL || neighbor->mac[0] == '\0')
+        return;
     AcquireSRWLockExclusive(&store->lock);
     observe_locked(store, network_context, neighbor);
     ReleaseSRWLockExclusive(&store->lock);
@@ -657,7 +711,8 @@ void lp_win32_device_store_observe(void *opaque, const lp_network_context_t *net
 void lp_win32_device_store_flush(void *opaque)
 {
     lp_device_store_t *store = opaque;
-    if (store == NULL) return;
+    if (store == NULL)
+        return;
     AcquireSRWLockExclusive(&store->lock);
     if (store->dirty && save_store(store)) {
         store->dirty = false;
@@ -668,7 +723,8 @@ void lp_win32_device_store_flush(void *opaque)
 void lp_win32_device_store_close(void *opaque)
 {
     lp_device_store_t *store = opaque;
-    if (store == NULL) return;
+    if (store == NULL)
+        return;
     lp_win32_device_store_flush(store);
     for (size_t i = 0; i < store->network_count; ++i) {
         free(store->networks[i].devices);

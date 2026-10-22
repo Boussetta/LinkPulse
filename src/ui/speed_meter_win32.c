@@ -76,8 +76,7 @@ static void release_run(lp_speed_run_t *run)
 static bool run_is_active(const lp_speed_meter_state_t *state)
 {
     lp_speed_run_t *run = state->run;
-    return run != NULL && InterlockedCompareExchange(&run->running, 0, 0) != 0 &&
-           run->cancel == 0;
+    return run != NULL && InterlockedCompareExchange(&run->running, 0, 0) != 0 && run->cancel == 0;
 }
 
 /* Copies the current run's progress, or a blank one when no test has run. */
@@ -129,10 +128,10 @@ static bool is_taskbar_light_theme(void)
 {
     DWORD value = 1;
     DWORD size = sizeof(value);
-    return RegGetValueA(
-               HKEY_CURRENT_USER,
-               "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-               "SystemUsesLightTheme", RRF_RT_REG_DWORD, NULL, &value, &size) != ERROR_SUCCESS ||
+    return RegGetValueA(HKEY_CURRENT_USER,
+                        "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                        "SystemUsesLightTheme", RRF_RT_REG_DWORD, NULL, &value,
+                        &size) != ERROR_SUCCESS ||
            value != 0;
 }
 
@@ -183,8 +182,8 @@ static double gauge_fraction(uint64_t bytes_per_sec)
     return fraction > 1.0 ? 1.0 : fraction;
 }
 
-static void draw_arc(HDC dc, int center_x, int center_y, int radius, int thickness,
-                     COLORREF color, float start_deg, float sweep_deg)
+static void draw_arc(HDC dc, int center_x, int center_y, int radius, int thickness, COLORREF color,
+                     float start_deg, float sweep_deg)
 {
     if (sweep_deg == 0.0f) {
         return;
@@ -357,12 +356,12 @@ static void paint_meter(HWND window, HDC target_dc)
     draw_text(dc, state->small_font, muted, subtitle, subtitle_rect, DT_LEFT | DT_VCENTER);
 
     const int center_x = client.right / 2;
-    draw_arc(dc, center_x, LP_SPEED_GAUGE_CENTER_Y, LP_SPEED_GAUGE_RADIUS,
-             LP_SPEED_GAUGE_THICKNESS, track, LP_SPEED_GAUGE_START_DEG, LP_SPEED_GAUGE_SWEEP_DEG);
+    draw_arc(dc, center_x, LP_SPEED_GAUGE_CENTER_Y, LP_SPEED_GAUGE_RADIUS, LP_SPEED_GAUGE_THICKNESS,
+             track, LP_SPEED_GAUGE_START_DEG, LP_SPEED_GAUGE_SWEEP_DEG);
     draw_gauge_ticks(dc, center_x, LP_SPEED_GAUGE_CENTER_Y, line);
     const double fraction = gauge_fraction(progress.live_bytes_per_sec);
-    draw_arc(dc, center_x, LP_SPEED_GAUGE_CENTER_Y, LP_SPEED_GAUGE_RADIUS,
-             LP_SPEED_GAUGE_THICKNESS, accent, LP_SPEED_GAUGE_START_DEG,
+    draw_arc(dc, center_x, LP_SPEED_GAUGE_CENTER_Y, LP_SPEED_GAUGE_RADIUS, LP_SPEED_GAUGE_THICKNESS,
+             accent, LP_SPEED_GAUGE_START_DEG,
              (float)((double)LP_SPEED_GAUGE_SWEEP_DEG * fraction));
 
     char value[32];
@@ -397,8 +396,8 @@ static void paint_meter(HWND window, HDC target_dc)
     char jitter[32];
     format_rate_or_dash(progress.download_bytes_per_sec, progress.has_download, state->use_bits,
                         download, sizeof(download));
-    format_rate_or_dash(progress.upload_bytes_per_sec, progress.has_upload, state->use_bits,
-                        upload, sizeof(upload));
+    format_rate_or_dash(progress.upload_bytes_per_sec, progress.has_upload, state->use_bits, upload,
+                        sizeof(upload));
     format_millis(progress.latency_us, progress.has_latency, ping, sizeof(ping));
     format_millis(progress.jitter_us, progress.has_latency, jitter, sizeof(jitter));
 
@@ -440,8 +439,7 @@ static void paint_meter(HWND window, HDC target_dc)
         SelectObject(dc, old_divider_pen);
         DeleteObject(divider_pen);
 
-        RECT quality_label = {32, LP_SPEED_QUALITY_TOP + 14, center_x,
-                              LP_SPEED_QUALITY_TOP + 42};
+        RECT quality_label = {32, LP_SPEED_QUALITY_TOP + 14, center_x, LP_SPEED_QUALITY_TOP + 42};
         RECT quality_value = {center_x, LP_SPEED_QUALITY_TOP + 14, client.right - 32,
                               LP_SPEED_QUALITY_TOP + 42};
         draw_text(dc, state->label_font, muted, "Connection quality", quality_label,
@@ -452,8 +450,8 @@ static void paint_meter(HWND window, HDC target_dc)
         const int segment_top = LP_SPEED_QUALITY_TOP + 52;
         const int segment_span = (client.right - 64) / 4;
         for (int i = 0; i < 4; ++i) {
-            RECT segment = {32 + i * segment_span, segment_top,
-                            32 + (i + 1) * segment_span - 8, segment_top + 10};
+            RECT segment = {32 + i * segment_span, segment_top, 32 + (i + 1) * segment_span - 8,
+                            segment_top + 10};
             HBRUSH segment_brush = CreateSolidBrush((int)quality > i ? quality_tone : track);
             FillRect(dc, &segment, segment_brush);
             DeleteObject(segment_brush);
@@ -543,8 +541,7 @@ static void start_test(HWND window, lp_speed_meter_state_t *state)
     InvalidateRect(window, NULL, FALSE);
 }
 
-static LRESULT CALLBACK speed_meter_wndproc(HWND window, UINT message, WPARAM wparam,
-                                            LPARAM lparam)
+static LRESULT CALLBACK speed_meter_wndproc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
     switch (message) {
     case WM_CREATE: {

@@ -108,7 +108,7 @@ lp_status_t lp_update_check_latest(const char *current_version, char *latest_ver
     latest_version[0] = '\0';
 
     HINTERNET session = WinHttpOpen(L"LinkPulse", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (session == NULL) {
         return LP_ERR_IO;
     }
@@ -120,9 +120,9 @@ lp_status_t lp_update_check_latest(const char *current_version, char *latest_ver
         return LP_ERR_IO;
     }
 
-    HINTERNET request = WinHttpOpenRequest(connection, L"GET", LP_RELEASE_PATH, NULL,
-                                            WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                            WINHTTP_FLAG_SECURE);
+    HINTERNET request =
+        WinHttpOpenRequest(connection, L"GET", LP_RELEASE_PATH, NULL, WINHTTP_NO_REFERER,
+                           WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
     if (request == NULL) {
         WinHttpCloseHandle(connection);
         WinHttpCloseHandle(session);
@@ -130,8 +130,8 @@ lp_status_t lp_update_check_latest(const char *current_version, char *latest_ver
     }
 
     const wchar_t headers[] = L"Accept: application/vnd.github+json\r\n";
-    const BOOL sent = WinHttpSendRequest(request, headers, (DWORD)-1L, WINHTTP_NO_REQUEST_DATA, 0,
-                                         0, 0);
+    const BOOL sent =
+        WinHttpSendRequest(request, headers, (DWORD)-1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
     const BOOL received = sent && WinHttpReceiveResponse(request, NULL);
     if (!received) {
         WinHttpCloseHandle(request);
@@ -189,16 +189,16 @@ lp_status_t lp_update_download_latest(char *installer_path, size_t path_cap)
     installer_path[0] = '\0';
 
     char latest_version[32];
-    const lp_status_t check = lp_update_check_latest("0.0.0", latest_version,
-                                                      sizeof(latest_version));
+    const lp_status_t check =
+        lp_update_check_latest("0.0.0", latest_version, sizeof(latest_version));
     if (check != LP_OK) {
         return check;
     }
 
     wchar_t release_path[256];
-    const int path_length = swprintf(
-        release_path, sizeof(release_path) / sizeof(release_path[0]),
-        L"/Boussetta/LinkPulse/releases/download/%hs/%hs", latest_version, LP_INSTALLER_NAME);
+    const int path_length = swprintf(release_path, sizeof(release_path) / sizeof(release_path[0]),
+                                     L"/Boussetta/LinkPulse/releases/download/%hs/%hs",
+                                     latest_version, LP_INSTALLER_NAME);
     if (path_length < 0 || (size_t)path_length >= sizeof(release_path) / sizeof(release_path[0])) {
         return LP_ERR_IO;
     }
@@ -220,12 +220,10 @@ lp_status_t lp_update_download_latest(char *installer_path, size_t path_cap)
         *dot = L'\0';
     }
     wchar_t wide_installer[MAX_PATH + 4];
-    const int installer_written = swprintf(wide_installer,
-                                           sizeof(wide_installer) / sizeof(wide_installer[0]),
-                                           L"%ls.exe", temp_file);
-    if (installer_written < 0 ||
-        WideCharToMultiByte(CP_UTF8, 0, wide_installer, -1, installer_path, (int)path_cap, NULL,
-                            NULL) == 0) {
+    const int installer_written = swprintf(
+        wide_installer, sizeof(wide_installer) / sizeof(wide_installer[0]), L"%ls.exe", temp_file);
+    if (installer_written < 0 || WideCharToMultiByte(CP_UTF8, 0, wide_installer, -1, installer_path,
+                                                     (int)path_cap, NULL, NULL) == 0) {
         installer_path[0] = '\0';
         return LP_ERR_IO;
     }
@@ -238,7 +236,7 @@ lp_status_t lp_update_download_latest(char *installer_path, size_t path_cap)
     }
 
     HINTERNET session = WinHttpOpen(L"LinkPulse", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     HINTERNET connection = NULL;
     HINTERNET request = NULL;
     bool success = false;
@@ -247,12 +245,12 @@ lp_status_t lp_update_download_latest(char *installer_path, size_t path_cap)
         connection = WinHttpConnect(session, L"github.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
     }
     if (connection != NULL) {
-        request = WinHttpOpenRequest(connection, L"GET", release_path, NULL,
-                                     WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                     WINHTTP_FLAG_SECURE);
+        request = WinHttpOpenRequest(connection, L"GET", release_path, NULL, WINHTTP_NO_REFERER,
+                                     WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
     }
-    if (request != NULL && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                                               WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+    if (request != NULL &&
+        WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0,
+                           0) &&
         WinHttpReceiveResponse(request, NULL)) {
         DWORD status_code = 0;
         DWORD status_size = sizeof(status_code);

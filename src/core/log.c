@@ -47,9 +47,9 @@ static void format_timestamp(char *out, size_t out_cap)
         return;
     }
 
-    snprintf(out, out_cap, "%04d-%02d-%02d %02d:%02d:%02d.%03ld",
-             local_now.tm_year + 1900, local_now.tm_mon + 1, local_now.tm_mday,
-             local_now.tm_hour, local_now.tm_min, local_now.tm_sec, milliseconds);
+    snprintf(out, out_cap, "%04d-%02d-%02d %02d:%02d:%02d.%03ld", local_now.tm_year + 1900,
+             local_now.tm_mon + 1, local_now.tm_mday, local_now.tm_hour, local_now.tm_min,
+             local_now.tm_sec, milliseconds);
 }
 
 /* Publishes the threshold atomically because workers can log concurrently. */

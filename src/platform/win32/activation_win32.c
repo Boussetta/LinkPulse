@@ -15,10 +15,10 @@
 #include <objbase.h>
 #include <unknwn.h>
 
-DEFINE_GUID(CLSID_LinkPulseToastActivator,
-            0x7f2d2e64, 0x9b2a, 0x4b2d, 0x8b, 0x4d, 0x71, 0x4c, 0x5a, 0x83, 0x2e, 0x11);
-DEFINE_GUID(IID_LinkPulseNotificationActivationCallback,
-            0x53e31837, 0x6600, 0x4a81, 0x93, 0x95, 0x75, 0xcf, 0xfe, 0x74, 0x6f, 0x94);
+DEFINE_GUID(CLSID_LinkPulseToastActivator, 0x7f2d2e64, 0x9b2a, 0x4b2d, 0x8b, 0x4d, 0x71, 0x4c, 0x5a,
+            0x83, 0x2e, 0x11);
+DEFINE_GUID(IID_LinkPulseNotificationActivationCallback, 0x53e31837, 0x6600, 0x4a81, 0x93, 0x95,
+            0x75, 0xcf, 0xfe, 0x74, 0x6f, 0x94);
 
 #ifndef NOTIFICATION_USER_INPUT_DATA_DEFINED
 #define NOTIFICATION_USER_INPUT_DATA_DEFINED
@@ -31,11 +31,11 @@ typedef struct {
 typedef struct LP_NOTIFICATION_ACTIVATION_CALLBACK LP_NOTIFICATION_ACTIVATION_CALLBACK;
 typedef struct LP_NOTIFICATION_ACTIVATION_CALLBACK_VTBL {
     HRESULT(STDMETHODCALLTYPE *QueryInterface)(LP_NOTIFICATION_ACTIVATION_CALLBACK *, REFIID,
-                                                void **);
+                                               void **);
     ULONG(STDMETHODCALLTYPE *AddRef)(LP_NOTIFICATION_ACTIVATION_CALLBACK *);
     ULONG(STDMETHODCALLTYPE *Release)(LP_NOTIFICATION_ACTIVATION_CALLBACK *);
-    HRESULT(STDMETHODCALLTYPE *Activate)(LP_NOTIFICATION_ACTIVATION_CALLBACK *, LPCWSTR,
-                                         LPCWSTR, const LP_NOTIFICATION_USER_INPUT_DATA *, ULONG);
+    HRESULT(STDMETHODCALLTYPE *Activate)(LP_NOTIFICATION_ACTIVATION_CALLBACK *, LPCWSTR, LPCWSTR,
+                                         const LP_NOTIFICATION_USER_INPUT_DATA *, ULONG);
 } LP_NOTIFICATION_ACTIVATION_CALLBACK_VTBL;
 
 struct LP_NOTIFICATION_ACTIVATION_CALLBACK {
@@ -50,7 +50,7 @@ static LONG activation_download_started = 0;
 
 /* Exposes the COM interfaces implemented by the toast callback object. */
 static HRESULT STDMETHODCALLTYPE callback_query_interface(LP_NOTIFICATION_ACTIVATION_CALLBACK *self,
-                                                            REFIID iid, void **object)
+                                                          REFIID iid, void **object)
 {
     if (object == NULL) {
         return E_POINTER;
@@ -162,7 +162,7 @@ struct LP_ACTIVATOR_FACTORY {
 
 /* Exposes the IClassFactory interfaces required by COM local-server registration. */
 static HRESULT STDMETHODCALLTYPE factory_query_interface(LP_ACTIVATOR_FACTORY *self, REFIID iid,
-                                                          void **object)
+                                                         void **object)
 {
     if (object == NULL) {
         return E_POINTER;
@@ -189,8 +189,8 @@ static ULONG STDMETHODCALLTYPE factory_release(LP_ACTIVATOR_FACTORY *self)
 }
 
 /* Creates a callback object for the COM toast activation request. */
-static HRESULT STDMETHODCALLTYPE factory_create_instance(LP_ACTIVATOR_FACTORY *self, IUnknown *outer,
-                                                           REFIID iid, void **object)
+static HRESULT STDMETHODCALLTYPE factory_create_instance(LP_ACTIVATOR_FACTORY *self,
+                                                         IUnknown *outer, REFIID iid, void **object)
 {
     (void)self;
     if (outer != NULL) {
@@ -216,9 +216,9 @@ static HRESULT STDMETHODCALLTYPE factory_lock_server(LP_ACTIVATOR_FACTORY *self,
     return S_OK;
 }
 
-static const LP_ACTIVATOR_FACTORY_VTBL factory_vtbl = {
-    factory_query_interface, factory_add_ref, factory_release, factory_create_instance,
-    factory_lock_server};
+static const LP_ACTIVATOR_FACTORY_VTBL factory_vtbl = {factory_query_interface, factory_add_ref,
+                                                       factory_release, factory_create_instance,
+                                                       factory_lock_server};
 
 /* Registers the COM class factory and services toast activations until WM_QUIT. */
 int lp_win32_run_toast_activator(void)

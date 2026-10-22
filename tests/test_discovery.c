@@ -44,11 +44,11 @@ static void test_baseline_and_neighbor_changes(void)
 
     /* The first neighbor keeps its identity while its IP address changes. */
     set_neighbor(&g_fake_snapshots[1].items[0], "192.168.1.20", "AA:BB:CC:DD:EE:01");
-    snprintf(g_fake_snapshots[1].items[0].hostname,
-             sizeof(g_fake_snapshots[1].items[0].hostname), "living-room-tv");
+    snprintf(g_fake_snapshots[1].items[0].hostname, sizeof(g_fake_snapshots[1].items[0].hostname),
+             "living-room-tv");
     g_fake_snapshots[1].items[0].connection_type = LP_CONNECTION_WIFI;
-    snprintf(g_fake_snapshots[1].items[0].vendor,
-             sizeof(g_fake_snapshots[1].items[0].vendor), "Epson");
+    snprintf(g_fake_snapshots[1].items[0].vendor, sizeof(g_fake_snapshots[1].items[0].vendor),
+             "Epson");
     g_fake_snapshots[1].items[0].device_type = LP_DEVICE_PRINTER;
     g_fake_snapshots[1].items[0].device_confidence = 95;
     set_neighbor(&g_fake_snapshots[1].items[1], "192.168.1.4", "AA:BB:CC:DD:EE:03");
@@ -93,7 +93,8 @@ static void test_baseline_and_neighbor_changes(void)
     LP_CHECK(events[0].neighbor.device_type == LP_DEVICE_PRINTER);
     LP_CHECK(events[0].neighbor.device_confidence == 95);
     LP_CHECK(discovery.known_count == 3);
-    LP_CHECK(!discovery.known[0].active || !discovery.known[1].active || !discovery.known[2].active);
+    LP_CHECK(!discovery.known[0].active || !discovery.known[1].active ||
+             !discovery.known[2].active);
 }
 
 /* Verifies discovery reports an unconfigured provider instead of dereferencing it. */

@@ -16,8 +16,8 @@
 /* Every field the lookup service can report for the internet-facing connection. */
 typedef struct {
     char public_ip[LP_ISP_IP_MAX];
-    char isp[LP_ISP_NAME_MAX];     /* organization name, without the leading ASxxxx */
-    char asn[LP_ISP_ASN_MAX];      /* e.g. "AS3209" */
+    char isp[LP_ISP_NAME_MAX]; /* organization name, without the leading ASxxxx */
+    char asn[LP_ISP_ASN_MAX];  /* e.g. "AS3209" */
     char hostname[LP_ISP_HOSTNAME_MAX];
     char city[LP_ISP_PLACE_MAX];
     char region[LP_ISP_PLACE_MAX];

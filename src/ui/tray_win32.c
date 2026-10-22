@@ -268,8 +268,7 @@ static DWORD WINAPI update_thread_proc(LPVOID param)
             LP_INFO("update available: version=%s", latest_version);
             bool notify = false;
             EnterCriticalSection(&state->lock);
-            notify = !state->update_available ||
-                     strcmp(state->update_version, latest_version) != 0;
+            notify = !state->update_available || strcmp(state->update_version, latest_version) != 0;
             snprintf(state->update_version, sizeof(state->update_version), "%s", latest_version);
             state->update_available = true;
             LeaveCriticalSection(&state->lock);
@@ -329,8 +328,8 @@ static DWORD WINAPI isp_thread_proc(LPVOID param)
         }
 
         const HANDLE wait_handles[2] = {state->update_stop_event, state->isp_refresh_event};
-        const DWORD wait_result = WaitForMultipleObjects(2, wait_handles, FALSE,
-                                                          LP_ISP_LOOKUP_INTERVAL_MS);
+        const DWORD wait_result =
+            WaitForMultipleObjects(2, wait_handles, FALSE, LP_ISP_LOOKUP_INTERVAL_MS);
         if (wait_result == WAIT_OBJECT_0) {
             break; /* stop event */
         }
@@ -383,7 +382,7 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                         strcmp(state->last_gateway_mac, gateway_mac) != 0)) {
                 LP_INFO("gateway changed to %s; refreshing ISP lookup", gateway_mac);
                 snprintf(state->last_gateway_mac, sizeof(state->last_gateway_mac), "%s",
-                        gateway_mac);
+                         gateway_mac);
                 state->last_gateway_mac_set = true;
                 if (state->isp_refresh_event != NULL) {
                     SetEvent(state->isp_refresh_event);
@@ -415,7 +414,7 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                         events[i].neighbor.ip[0] != '\0' ? events[i].neighbor.ip : "(unknown)",
                         events[i].neighbor.mac[0] != '\0' ? events[i].neighbor.mac : "(unknown)",
                         events[i].neighbor.hostname[0] != '\0' ? events[i].neighbor.hostname
-                                                                 : "(unknown)");
+                                                               : "(unknown)");
             }
             EnterCriticalSection(&state->lock);
             const lp_network_context_t network_context = {
@@ -423,7 +422,7 @@ static DWORD WINAPI discovery_thread_proc(LPVOID param)
                 state->isp_available ? &state->isp_info : NULL};
             state->map_neighbors.count = 0;
             for (size_t i = 0; i < state->discovery.known_count &&
-                                state->map_neighbors.count < LP_DISCOVERY_MAX_NEIGHBORS;
+                               state->map_neighbors.count < LP_DISCOVERY_MAX_NEIGHBORS;
                  ++i) {
                 if (state->discovery.known[i].active) {
                     lp_neighbor_t neighbor = state->discovery.known[i];
@@ -553,7 +552,7 @@ static void show_discovery_notifications(lp_tray_state_t *state)
 
     for (size_t i = 0; i < event_count; ++i) {
         const bool joined = events[i].type == LP_DISCOVERY_EVENT_JOINED;
-        const char *name = events[i].neighbor.label[0] != '\0'   ? events[i].neighbor.label
+        const char *name = events[i].neighbor.label[0] != '\0'      ? events[i].neighbor.label
                            : events[i].neighbor.hostname[0] != '\0' ? events[i].neighbor.hostname
                                                                     : NULL;
         char message[512];
@@ -562,8 +561,8 @@ static void show_discovery_notifications(lp_tray_state_t *state)
                      joined ? "Connected" : "Disconnected", name, events[i].neighbor.ip,
                      events[i].neighbor.mac);
         } else if (name != NULL) {
-            snprintf(message, sizeof(message), "%s\n%s\nIP: %s", joined ? "Connected" : "Disconnected",
-                     name, events[i].neighbor.ip);
+            snprintf(message, sizeof(message), "%s\n%s\nIP: %s",
+                     joined ? "Connected" : "Disconnected", name, events[i].neighbor.ip);
         } else if (events[i].neighbor.mac[0] != '\0') {
             snprintf(message, sizeof(message), "%s\nIP: %s\nMAC: %s",
                      joined ? "Connected" : "Disconnected", events[i].neighbor.ip,
@@ -668,8 +667,7 @@ typedef struct {
 } lp_device_refresh_request_t;
 
 static void network_context_from_snapshot(const lp_local_network_list_t *networks,
-                                          const lp_isp_info_t *isp,
-                                          lp_network_context_t *out)
+                                          const lp_isp_info_t *isp, lp_network_context_t *out)
 {
     memset(out, 0, sizeof(*out));
     out->gateway_mac = "";
@@ -760,7 +758,8 @@ static void refresh_selected_device_identity(lp_tray_state_t *state, const char 
     }
     request->state = state;
     snprintf(request->ip, sizeof(request->ip), "%s", ip);
-    state->device_refresh_thread = CreateThread(NULL, 0, device_refresh_thread_proc, request, 0, NULL);
+    state->device_refresh_thread =
+        CreateThread(NULL, 0, device_refresh_thread_proc, request, 0, NULL);
     if (state->device_refresh_thread == NULL) {
         free(request);
         return;
@@ -831,9 +830,9 @@ static void show_context_menu(lp_tray_state_t *state)
         break;
     case IDM_SUPPORT: {
         /* Opt-in only: never shown automatically, no telemetry, just a link. */
-        const INT_PTR rc = (INT_PTR)ShellExecuteA(state->hwnd, "open",
-                                                "https://github.com/sponsors/Boussetta", NULL,
-                                                NULL, SW_SHOWNORMAL);
+        const INT_PTR rc =
+            (INT_PTR)ShellExecuteA(state->hwnd, "open", "https://github.com/sponsors/Boussetta",
+                                   NULL, NULL, SW_SHOWNORMAL);
         if (rc <= 32) {
             MessageBoxA(state->hwnd, "Could not open the LinkPulse support page.", "LinkPulse",
                         MB_OK | MB_ICONERROR);
@@ -935,8 +934,7 @@ static void measure_sponsor_item(MEASUREITEMSTRUCT *item)
 static void draw_sponsor_item(const DRAWITEMSTRUCT *item)
 {
     const bool selected = (item->itemState & ODS_SELECTED) != 0;
-    FillRect(item->hDC, &item->rcItem,
-            GetSysColorBrush(selected ? COLOR_HIGHLIGHT : COLOR_MENU));
+    FillRect(item->hDC, &item->rcItem, GetSysColorBrush(selected ? COLOR_HIGHLIGHT : COLOR_MENU));
 
     HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
     HFONT previous_font = (HFONT)SelectObject(item->hDC, font);
@@ -949,7 +947,7 @@ static void draw_sponsor_item(const DRAWITEMSTRUCT *item)
        not) menu text color instead of also being tinted pink. */
     SetTextColor(item->hDC, RGB(0xEA, 0x4A, 0xAA));
     DrawTextW(item->hDC, LP_SPONSOR_ITEM_TEXT, LP_SPONSOR_HEART_LEN, &text_rect,
-             DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+              DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
 
     SIZE heart_extent;
     GetTextExtentPoint32W(item->hDC, LP_SPONSOR_ITEM_TEXT, LP_SPONSOR_HEART_LEN, &heart_extent);
@@ -957,8 +955,8 @@ static void draw_sponsor_item(const DRAWITEMSTRUCT *item)
 
     SetTextColor(item->hDC, GetSysColor(selected ? COLOR_HIGHLIGHTTEXT : COLOR_MENUTEXT));
     DrawTextW(item->hDC, LP_SPONSOR_ITEM_TEXT + LP_SPONSOR_HEART_LEN,
-             (int)(sizeof(LP_SPONSOR_ITEM_TEXT) / sizeof(wchar_t)) - 1 - LP_SPONSOR_HEART_LEN,
-             &text_rect, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+              (int)(sizeof(LP_SPONSOR_ITEM_TEXT) / sizeof(wchar_t)) - 1 - LP_SPONSOR_HEART_LEN,
+              &text_rect, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
 
     SelectObject(item->hDC, previous_font);
 }
@@ -1054,10 +1052,9 @@ static LRESULT CALLBACK tray_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
                SendMessage, and activating a window from there re-enters the
                map's own deactivate handling. */
             const size_t data_size = copy_data->cbData < sizeof(state->pending_speed_meter_ip)
-                                          ? copy_data->cbData
-                                          : sizeof(state->pending_speed_meter_ip);
-            const char *terminator =
-                (const char *)memchr(copy_data->lpData, '\0', data_size);
+                                         ? copy_data->cbData
+                                         : sizeof(state->pending_speed_meter_ip);
+            const char *terminator = (const char *)memchr(copy_data->lpData, '\0', data_size);
             if (terminator == NULL) {
                 return FALSE;
             }

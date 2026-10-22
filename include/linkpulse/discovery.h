@@ -116,8 +116,7 @@ typedef struct {
 void lp_discovery_init(lp_discovery_t *discovery);
 
 /* Replaces non-NULL provider callbacks while retaining the current baseline. */
-void lp_discovery_set_sources(lp_discovery_t *discovery,
-                              const lp_discovery_sources_t *sources);
+void lp_discovery_set_sources(lp_discovery_t *discovery, const lp_discovery_sources_t *sources);
 
 /* Polls current neighbors and writes at most max_events join/leave events; any
    further events are counted in discovery->dropped_events. */

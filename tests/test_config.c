@@ -52,7 +52,8 @@ static void test_parse_ignores_unknown_and_malformed(void)
                              "interval_ms=not_a_number\n"
                              "interval_ms=0\n");
 
-    /* All malformed/unknown: known keys with malformed values must leave existing fields unchanged. */
+    /* All malformed/unknown: known keys with malformed values must leave existing fields unchanged.
+     */
     LP_CHECK(config.mode == LP_IFACE_SELECT_AUTO);
     LP_CHECK(config.include_virtual);
     LP_CHECK(config.use_bits);

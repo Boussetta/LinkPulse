@@ -146,15 +146,14 @@ static void paint_isp_view(HWND window, HDC target_dc)
         char place[LP_ISP_VIEW_PLACE_MAX];
         format_place(info, place, sizeof(place));
         int row_y = 128;
-        row_y = draw_info_row(dc, state->label_font, muted, text, "Provider", info->isp, client,
-                              row_y);
+        row_y =
+            draw_info_row(dc, state->label_font, muted, text, "Provider", info->isp, client, row_y);
         row_y = draw_info_row(dc, state->label_font, muted, text, "ASN", info->asn, client, row_y);
         row_y = draw_info_row(dc, state->label_font, muted, text, "Public IP", info->public_ip,
                               client, row_y);
         row_y = draw_info_row(dc, state->label_font, muted, text, "Hostname", info->hostname,
                               client, row_y);
-        row_y = draw_info_row(dc, state->label_font, muted, text, "Location", place, client,
-                              row_y);
+        row_y = draw_info_row(dc, state->label_font, muted, text, "Location", place, client, row_y);
         row_y = draw_info_row(dc, state->label_font, muted, text, "Postal code", info->postal,
                               client, row_y);
         row_y = draw_info_row(dc, state->label_font, muted, text, "Time zone", info->timezone,

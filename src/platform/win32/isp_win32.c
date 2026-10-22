@@ -89,7 +89,7 @@ lp_status_t lp_isp_lookup(lp_isp_info_t *out)
     memset(out, 0, sizeof(*out));
 
     HINTERNET session = WinHttpOpen(L"LinkPulse", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (session == NULL) {
         return LP_ERR_IO;
     }
@@ -101,9 +101,9 @@ lp_status_t lp_isp_lookup(lp_isp_info_t *out)
         return LP_ERR_IO;
     }
 
-    HINTERNET request = WinHttpOpenRequest(connection, L"GET", LP_ISP_PATH, NULL,
-                                            WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                            WINHTTP_FLAG_SECURE);
+    HINTERNET request =
+        WinHttpOpenRequest(connection, L"GET", LP_ISP_PATH, NULL, WINHTTP_NO_REFERER,
+                           WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
     if (request == NULL) {
         close_http_handles(NULL, connection, session);
         return LP_ERR_IO;
@@ -166,4 +166,3 @@ lp_status_t lp_isp_lookup(lp_isp_info_t *out)
 
     return any_field_status;
 }
-

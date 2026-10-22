@@ -38,3 +38,16 @@ jobs:
         run: wineboot --init
       - name: Test under Wine
         run: ctest --test-dir build --output-on-failure
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        # Pinned to the version bundled with Visual Studio 2022 Build Tools, which is
+        # what local `format` runs use; other versions wrap some lines differently.
+        run: pipx install clang-format==19.1.5
+      - name: Check formatting
+        run: >
+          git ls-files 'include/*.h' 'src/*.c' 'src/*.h' 'tests/*.c' 'tests/*.h'
+          | xargs clang-format --style=file --fallback-style=none --dry-run --Werror

@@ -26,15 +26,15 @@ typedef enum {
 
 typedef struct {
     lp_speedtest_phase_t phase;
-    unsigned phase_percent;          /* 0-100 completion of the running phase */
+    unsigned phase_percent; /* 0-100 completion of the running phase */
     bool has_latency;
     bool has_download;
     bool has_upload;
-    uint64_t latency_us;             /* median HTTP round trip */
-    uint64_t jitter_us;              /* mean deviation between consecutive probes */
+    uint64_t latency_us; /* median HTTP round trip */
+    uint64_t jitter_us;  /* mean deviation between consecutive probes */
     uint64_t download_bytes_per_sec;
     uint64_t upload_bytes_per_sec;
-    uint64_t live_bytes_per_sec;     /* throughput of the phase currently running */
+    uint64_t live_bytes_per_sec; /* throughput of the phase currently running */
     lp_status_t status;
 } lp_speedtest_progress_t;
 

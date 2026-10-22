@@ -22,14 +22,14 @@
 #include <windows.ui.notifications.h>
 #include <winstring.h>
 
-DEFINE_GUID(IID___x_ABI_CWindows_CData_CXml_CDom_CIXmlDocument,
-            0xf7f3a506, 0x1e87, 0x42d6, 0xbc, 0xfb, 0xb8, 0xc8, 0x09, 0xfa, 0x54, 0x94);
-DEFINE_GUID(IID___x_ABI_CWindows_CData_CXml_CDom_CIXmlDocumentIO,
-            0x6cd0e74e, 0xee65, 0x4489, 0x9e, 0xbf, 0xca, 0x43, 0xe8, 0x7b, 0xa6, 0x37);
-DEFINE_GUID(IID___x_ABI_CWindows_CUI_CNotifications_CIToastNotificationFactory,
-            0x04124b20, 0x82c6, 0x4229, 0xb1, 0x09, 0xfd, 0x9e, 0xd4, 0x66, 0x2b, 0x53);
-DEFINE_GUID(IID___x_ABI_CWindows_CUI_CNotifications_CIToastNotificationManagerStatics,
-            0x50ac103f, 0xd235, 0x4598, 0xbb, 0xef, 0x98, 0xfe, 0x4d, 0x1a, 0x3a, 0xd4);
+DEFINE_GUID(IID___x_ABI_CWindows_CData_CXml_CDom_CIXmlDocument, 0xf7f3a506, 0x1e87, 0x42d6, 0xbc,
+            0xfb, 0xb8, 0xc8, 0x09, 0xfa, 0x54, 0x94);
+DEFINE_GUID(IID___x_ABI_CWindows_CData_CXml_CDom_CIXmlDocumentIO, 0x6cd0e74e, 0xee65, 0x4489, 0x9e,
+            0xbf, 0xca, 0x43, 0xe8, 0x7b, 0xa6, 0x37);
+DEFINE_GUID(IID___x_ABI_CWindows_CUI_CNotifications_CIToastNotificationFactory, 0x04124b20, 0x82c6,
+            0x4229, 0xb1, 0x09, 0xfd, 0x9e, 0xd4, 0x66, 0x2b, 0x53);
+DEFINE_GUID(IID___x_ABI_CWindows_CUI_CNotifications_CIToastNotificationManagerStatics, 0x50ac103f,
+            0xd235, 0x4598, 0xbb, 0xef, 0x98, 0xfe, 0x4d, 0x1a, 0x3a, 0xd4);
 #endif
 
 #if defined(_MSC_VER)
@@ -154,9 +154,9 @@ static bool show_toast_internal(const char *title, const char *message, const ch
         result = RoActivateInstance(xml_class_id, &xml_inspectable);
     }
     if (SUCCEEDED(result)) {
-        result = IInspectable_QueryInterface(
-            xml_inspectable, &IID___x_ABI_CWindows_CData_CXml_CDom_CIXmlDocumentIO,
-            (void **)&xml_io);
+        result = IInspectable_QueryInterface(xml_inspectable,
+                                             &IID___x_ABI_CWindows_CData_CXml_CDom_CIXmlDocumentIO,
+                                             (void **)&xml_io);
     }
     if (SUCCEEDED(result)) {
         result = make_hstring(xml, &xml_text);
@@ -169,8 +169,8 @@ static bool show_toast_internal(const char *title, const char *message, const ch
             xml_io, &IID___x_ABI_CWindows_CData_CXml_CDom_CIXmlDocument, (void **)&document);
     }
     if (SUCCEEDED(result)) {
-        result = make_hstring(L"Windows.UI.Notifications.ToastNotificationManager",
-                              &manager_class_id);
+        result =
+            make_hstring(L"Windows.UI.Notifications.ToastNotificationManager", &manager_class_id);
     }
     if (SUCCEEDED(result)) {
         result = RoGetActivationFactory(
@@ -182,22 +182,23 @@ static bool show_toast_internal(const char *title, const char *message, const ch
         result = make_hstring(L"LinkPulse.NetworkMonitor", &app_id);
     }
     if (SUCCEEDED(result)) {
-        result = __x_ABI_CWindows_CUI_CNotifications_CIToastNotificationManagerStatics_CreateToastNotifierWithId(
-            manager, app_id, &notifier);
+        result =
+            __x_ABI_CWindows_CUI_CNotifications_CIToastNotificationManagerStatics_CreateToastNotifierWithId(
+                manager, app_id, &notifier);
     }
     if (SUCCEEDED(result)) {
-        result = make_hstring(L"Windows.UI.Notifications.ToastNotification",
-                              &notification_class_id);
+        result =
+            make_hstring(L"Windows.UI.Notifications.ToastNotification", &notification_class_id);
     }
     if (SUCCEEDED(result)) {
         result = RoGetActivationFactory(
             notification_class_id,
-            &IID___x_ABI_CWindows_CUI_CNotifications_CIToastNotificationFactory,
-            (void **)&factory);
+            &IID___x_ABI_CWindows_CUI_CNotifications_CIToastNotificationFactory, (void **)&factory);
     }
     if (SUCCEEDED(result)) {
-        result = __x_ABI_CWindows_CUI_CNotifications_CIToastNotificationFactory_CreateToastNotification(
-            factory, document, &notification);
+        result =
+            __x_ABI_CWindows_CUI_CNotifications_CIToastNotificationFactory_CreateToastNotification(
+                factory, document, &notification);
     }
     if (SUCCEEDED(result)) {
         result = __x_ABI_CWindows_CUI_CNotifications_CIToastNotifier_Show(notifier, notification);
