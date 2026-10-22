@@ -20,6 +20,7 @@ typedef struct {
     bool is_up;
     bool is_loopback;
     bool is_virtual; /* WSL vEthernet, Docker, VPN, tunnels */
+    bool is_filter;  /* packet-filter layer stacked on another adapter; repeats its counters */
 } lp_iface_t;
 
 typedef struct {
